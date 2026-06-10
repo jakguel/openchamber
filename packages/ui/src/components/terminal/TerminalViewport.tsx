@@ -116,6 +116,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
     const writeScheduledRef = React.useRef<number | null>(null);
     const isWritingRef = React.useRef(false);
     const lastProcessedChunkIdRef = React.useRef<number | null>(null);
+    const replaySessionKeyRef = React.useRef<string | null>(null);
     const followOutputRef = React.useRef(true);
     const touchScrollCleanupRef = React.useRef<(() => void) | null>(null);
     const viewportDiscoveryTimeoutRef = React.useRef<number | null>(null);
@@ -484,6 +485,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       writeScheduledRef.current = null;
       isWritingRef.current = false;
       lastProcessedChunkIdRef.current = null;
+      replaySessionKeyRef.current = null;
     }, []);
 
     const fitTerminal = React.useCallback(() => {
@@ -1244,10 +1246,22 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
         return;
       }
 
+      // Strictly scope replay to the current session. When sessionKey changes,
+      // the chunks belong to a different directory/tab/session: drop any
+      // last-processed marker so we never match a stale cross-session chunk id
+      // and never bleed the previous session's text into this instance.
+      const sessionChanged = replaySessionKeyRef.current !== sessionKey;
+      if (sessionChanged) {
+        terminal.reset();
+        resetWriteState();
+        replaySessionKeyRef.current = sessionKey;
+      }
+
       if (chunks.length === 0) {
         if (lastProcessedChunkIdRef.current !== null) {
           terminal.reset();
           resetWriteState();
+          replaySessionKeyRef.current = sessionKey;
           fitTerminal();
         }
         return;
@@ -1268,7 +1282,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       }
 
       lastProcessedChunkIdRef.current = chunks[chunks.length - 1].id;
-    }, [chunks, terminalReadyVersion, enqueueWrite, fitTerminal, resetWriteState]);
+    }, [chunks, sessionKey, terminalReadyVersion, enqueueWrite, fitTerminal, resetWriteState]);
 
     React.useImperativeHandle(
       ref,
