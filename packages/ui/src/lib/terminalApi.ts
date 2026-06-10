@@ -89,6 +89,26 @@ const GLOBAL_TERMINAL_TRANSPORT_STATE_KEY = '__openchamberTerminalTransportState
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+const TERMINAL_DEBUG_STORAGE_KEY = 'openchamber_terminal_debug';
+
+const terminalDebugEnabled = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(TERMINAL_DEBUG_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+const terminalDebug = (event: string, detail?: Record<string, unknown>): void => {
+  if (!terminalDebugEnabled()) return;
+  if (detail) {
+    console.debug(`[terminal-transport] ${event}`, detail);
+  } else {
+    console.debug(`[terminal-transport] ${event}`);
+  }
+};
+
 const normalizeWebSocketPath = (pathValue: string): string => {
   return getRuntimeUrlResolver().websocket(pathValue);
 };
@@ -244,6 +264,11 @@ export class TerminalTransportManager {
     if (!sessionId) {
       return;
     }
+    terminalDebug('unbind', {
+      sessionId,
+      boundSessionId: this.boundSessionId,
+      requestedSessionId: this.requestedSessionId,
+    });
     if (this.boundSessionId === sessionId) {
       this.boundSessionId = null;
     }
@@ -451,8 +476,15 @@ export class TerminalTransportManager {
       return;
     }
 
+    const isRebind = this.lastBindSessionId !== null && this.lastBindSessionId !== targetSessionId;
+
     try {
       this.socket.send(encodeControlFrame({ t: 'b', s: targetSessionId, r: this.replayCursorBySession.get(targetSessionId) ?? 0, v: 2 }));
+      terminalDebug(isRebind ? 'rebind' : 'bind', {
+        targetSessionId,
+        previousSessionId: this.lastBindSessionId,
+        boundSessionId: this.boundSessionId,
+      });
       this.lastBindSocket = this.socket;
       this.lastBindSessionId = targetSessionId;
     } catch {
@@ -586,13 +618,21 @@ export class TerminalTransportManager {
       case 'po':
         return;
       case 'd': {
-        const sessionId = payload.s ?? this.boundSessionId ?? this.requestedSessionId;
-        if (!activeSubscription || !sessionId || sessionId !== activeSubscription.sessionId) {
+        const frameSessionId = payload.s ?? null;
+        if (!activeSubscription || !frameSessionId || frameSessionId !== activeSubscription.sessionId) {
+          if (activeSubscription && frameSessionId && frameSessionId !== activeSubscription.sessionId) {
+            terminalDebug('drop-data-session-mismatch', {
+              frameSessionId,
+              activeSessionId: activeSubscription.sessionId,
+              boundSessionId: this.boundSessionId,
+              requestedSessionId: this.requestedSessionId,
+            });
+          }
           return;
         }
 
         if (typeof payload.i === 'number' && Number.isFinite(payload.i)) {
-          this.replayCursorBySession.set(sessionId, Math.max(this.replayCursorBySession.get(sessionId) ?? 0, Math.trunc(payload.i)));
+          this.replayCursorBySession.set(frameSessionId, Math.max(this.replayCursorBySession.get(frameSessionId) ?? 0, Math.trunc(payload.i)));
         }
 
         if (typeof payload.d === 'string' && payload.d.length > 0) {
@@ -602,6 +642,7 @@ export class TerminalTransportManager {
       }
       case 'bok': {
         this.boundSessionId = payload.s ?? this.requestedSessionId;
+        terminalDebug('bok', { boundSessionId: this.boundSessionId, requestedSessionId: this.requestedSessionId });
         if (!activeSubscription) {
           return;
         }
@@ -623,7 +664,11 @@ export class TerminalTransportManager {
           return;
         }
 
-        if (payload.s && payload.s !== activeSubscription.sessionId) {
+        if (payload.s !== activeSubscription.sessionId) {
+          terminalDebug('drop-exit-session-mismatch', {
+            frameSessionId: payload.s ?? null,
+            activeSessionId: activeSubscription.sessionId,
+          });
           return;
         }
 

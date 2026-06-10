@@ -157,3 +157,69 @@ describe('TerminalTransportManager bind timing', () => {
     });
   });
 });
+
+const withFakeWebSocketAsync = async (run: () => Promise<void>): Promise<void> => {
+  const originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
+  FakeWebSocket.instances = [];
+  (globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket as unknown as typeof globalThis.WebSocket;
+  try {
+    await run();
+  } finally {
+    (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
+  }
+};
+
+const flushMicrotasks = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+describe('TerminalTransportManager session-mismatch guard', () => {
+  test('drops a data frame whose session id differs from the active subscription', async () => {
+    await withFakeWebSocketAsync(async () => {
+      const manager = new TerminalTransportManager();
+      manager.configure('ws://test/api/terminal/ws');
+
+      const received: string[] = [];
+      const socket = FakeWebSocket.instances[0];
+      const unsubscribe = manager.subscribe('session-active', (event) => {
+        if (event.type === 'data' && typeof event.data === 'string') {
+          received.push(event.data);
+        }
+      }, () => {});
+
+      socket.triggerOpen();
+      socket.triggerControl({ t: 'bok', s: 'session-active', v: 2 });
+
+      socket.triggerControl({ t: 'd', s: 'session-stale', i: 1, d: 'GHOST', v: 2 });
+      socket.triggerControl({ t: 'd', s: 'session-active', i: 1, d: 'LIVE', v: 2 });
+      await flushMicrotasks();
+
+      expect(received).toEqual(['LIVE']);
+
+      unsubscribe();
+    });
+  });
+
+  test('drops a data frame with no session id instead of falling back to the active session', async () => {
+    await withFakeWebSocketAsync(async () => {
+      const manager = new TerminalTransportManager();
+      manager.configure('ws://test/api/terminal/ws');
+
+      const received: string[] = [];
+      const socket = FakeWebSocket.instances[0];
+      const unsubscribe = manager.subscribe('session-active', (event) => {
+        if (event.type === 'data' && typeof event.data === 'string') {
+          received.push(event.data);
+        }
+      }, () => {});
+
+      socket.triggerOpen();
+      socket.triggerControl({ t: 'bok', s: 'session-active', v: 2 });
+
+      socket.triggerControl({ t: 'd', i: 1, d: 'GHOST', v: 2 });
+      await flushMicrotasks();
+
+      expect(received).toEqual([]);
+
+      unsubscribe();
+    });
+  });
+});
