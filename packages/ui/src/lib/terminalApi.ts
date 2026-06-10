@@ -131,7 +131,7 @@ const createTransportError = (code: string | undefined): Error => {
   }
 };
 
-class TerminalTransportManager {
+export class TerminalTransportManager {
   private socket: WebSocket | null = null;
   private socketUrl = '';
   private boundSessionId: string | null = null;
@@ -143,6 +143,8 @@ class TerminalTransportManager {
   private subscriptions = new Map<symbol, StreamSubscription>();
   private activeSubscriptionToken: symbol | null = null;
   private replayCursorBySession = new Map<string, number>();
+  private lastBindSocket: WebSocket | null = null;
+  private lastBindSessionId: string | null = null;
 
   configure(socketUrl: string): void {
     if (!socketUrl) {
@@ -188,6 +190,10 @@ class TerminalTransportManager {
     this.activeSubscriptionToken = token;
     this.boundSessionId = null;
     this.requestedSessionId = sessionId;
+    if (this.lastBindSessionId !== sessionId) {
+      this.lastBindSocket = null;
+      this.lastBindSessionId = null;
+    }
     this.ensureConnected();
     this.startConnectionTimeout(subscription);
     this.bindActiveSession();
@@ -243,6 +249,10 @@ class TerminalTransportManager {
     }
     if (this.requestedSessionId === sessionId) {
       this.requestedSessionId = null;
+    }
+    if (this.lastBindSessionId === sessionId) {
+      this.lastBindSocket = null;
+      this.lastBindSessionId = null;
     }
   }
 
@@ -380,6 +390,7 @@ class TerminalTransportManager {
           this.socket = socket;
           this.startKeepalive();
           settle(socket);
+          this.bindActiveSession();
         };
 
         socket.onmessage = (event) => {
@@ -396,6 +407,8 @@ class TerminalTransportManager {
           if (this.socket === socket) {
             this.socket = null;
             this.boundSessionId = null;
+            this.lastBindSocket = null;
+            this.lastBindSessionId = null;
             this.stopKeepalive();
             if (!this.closed) {
               this.scheduleReconnect(new Error('Terminal stream connection error'));
@@ -427,10 +440,21 @@ class TerminalTransportManager {
       return;
     }
 
-    this.requestedSessionId = activeSubscription.sessionId;
+    const targetSessionId = activeSubscription.sessionId;
+    this.requestedSessionId = targetSessionId;
+
+    if (this.boundSessionId === targetSessionId) {
+      return;
+    }
+
+    if (this.lastBindSocket === this.socket && this.lastBindSessionId === targetSessionId) {
+      return;
+    }
 
     try {
-      this.socket.send(encodeControlFrame({ t: 'b', s: activeSubscription.sessionId, r: this.replayCursorBySession.get(activeSubscription.sessionId) ?? 0, v: 2 }));
+      this.socket.send(encodeControlFrame({ t: 'b', s: targetSessionId, r: this.replayCursorBySession.get(targetSessionId) ?? 0, v: 2 }));
+      this.lastBindSocket = this.socket;
+      this.lastBindSessionId = targetSessionId;
     } catch {
       this.handleSocketFailure(new Error('Terminal websocket bind failed'));
     }
@@ -594,6 +618,8 @@ class TerminalTransportManager {
       case 'x': {
         if (!activeSubscription) {
           this.boundSessionId = null;
+          this.lastBindSocket = null;
+          this.lastBindSessionId = null;
           return;
         }
 
@@ -605,6 +631,8 @@ class TerminalTransportManager {
         this.clearConnectionTimeout(activeSubscription);
         this.boundSessionId = null;
         this.requestedSessionId = null;
+        this.lastBindSocket = null;
+        this.lastBindSessionId = null;
         this.replayCursorBySession.delete(activeSubscription.sessionId);
         activeSubscription.onEvent({
           type: 'exit',
@@ -619,6 +647,8 @@ class TerminalTransportManager {
 
         if (payload.c === 'NOT_BOUND' || payload.c === 'SESSION_NOT_FOUND') {
           this.boundSessionId = null;
+          this.lastBindSocket = null;
+          this.lastBindSessionId = null;
         }
 
         if (activeSubscription) {
@@ -691,6 +721,8 @@ class TerminalTransportManager {
       }
     }
     this.boundSessionId = null;
+    this.lastBindSocket = null;
+    this.lastBindSessionId = null;
   }
 }
 
