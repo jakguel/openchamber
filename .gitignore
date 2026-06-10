@@ -63,3 +63,7 @@ data/
 workspaces/
 *.pid
 .worktrees/
+
+# Serena LSP cache + project memories (per-machine, never commit)
+.serena/cache/
+.serena/memories/

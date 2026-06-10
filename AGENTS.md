@@ -460,3 +460,16 @@ A single store with N properties means every subscriber re-evaluates on every st
 
 - Releases + high-level changes: `CHANGELOG.md`
 - Recent commits: `git log --oneline` (latest tags: `v1.11.7`, `v1.11.6`)
+
+<!-- HAL9001-SERENA-START -->
+## Serena Activation (MANDATORY)
+
+When `.serena/project.yml` exists or project is in `~/.serena/serena_config.yml`:
+
+1. `mcp_serena_activate_project(project="openchamber")`
+2. `mcp_serena_check_onboarding_performed()`
+3. `mcp_serena_list_memories()`
+4. `mcp_serena_read_memory("project-overview")`
+
+Execute IMMEDIATELY at session start. No questions. No announcements.
+<!-- HAL9001-SERENA-END -->
