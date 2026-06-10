@@ -20,6 +20,7 @@ import { primeTerminalInputTransport } from '@/lib/terminalApi';
 import { extractTerminalPreviewUrl, isTerminalPreviewUrlAvailable } from '@/lib/terminalPreview';
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_ACTION_ICON_MAP, type ProjectActionIconKey } from '@/lib/projectActions';
+import { shouldTeardownStreamOnCleanup, type TerminalStreamContext } from './terminalStreamTeardown';
 
 type Modifier = 'ctrl' | 'cmd';
 type MobileKey =
@@ -168,6 +169,7 @@ export const TerminalView: React.FC = () => {
     const [viewportSizeVersion, setViewportSizeVersion] = React.useState(0);
 
     const streamCleanupRef = React.useRef<(() => void) | null>(null);
+    const streamContextRef = React.useRef<TerminalStreamContext | null>(null);
     const activeTerminalIdRef = React.useRef<string | null>(null);
     const activeTabIdRef = React.useRef<string | null>(activeTabId);
     const terminalIdRef = React.useRef<string | null>(terminalSessionId);
@@ -280,6 +282,7 @@ export const TerminalView: React.FC = () => {
     const disconnectStream = React.useCallback(() => {
         streamCleanupRef.current?.();
         streamCleanupRef.current = null;
+        streamContextRef.current = null;
         activeTerminalIdRef.current = null;
         setIsReconnectPending(false);
     }, []);
@@ -448,8 +451,10 @@ export const TerminalView: React.FC = () => {
                 streamOptions
             );
 
+            streamContextRef.current = { directory, tabId, terminalId };
             streamCleanupRef.current = () => {
                 subscription.close();
+                streamContextRef.current = null;
                 activeTerminalIdRef.current = null;
             };
         },
@@ -469,6 +474,12 @@ export const TerminalView: React.FC = () => {
 
     React.useEffect(() => {
         let cancelled = false;
+
+        // Cleanup must NOT tear down the live stream on a same-context re-run
+        // (ensureSession's own setTabSessionId retriggers this effect); doing so
+        // closes the just-subscribed transport and leaves it stuck connecting.
+        const effectDirectory = effectiveDirectory;
+        const effectTabId = activeTabId;
 
         if (!terminalHydrated || !hasOpenedTerminalViewport) {
             return;
@@ -597,7 +608,17 @@ export const TerminalView: React.FC = () => {
         return () => {
             cancelled = true;
             terminalIdRef.current = null;
-            disconnectStream();
+
+            if (
+                shouldTeardownStreamOnCleanup(
+                    streamContextRef.current,
+                    effectDirectory,
+                    effectTabId,
+                    activeTerminalIdRef.current
+                )
+            ) {
+                disconnectStream();
+            }
         };
     }, [
         hasActiveContext,
