@@ -1029,9 +1029,21 @@ export async function resyncBlockingRequestsForDirectory(
     )
     const pendingQuestions = await opencodeClient.listPendingQuestions({ directories: [directory] })
     const grouped: Record<string, QuestionRequest[]> = {}
+    const answeredQuestionIds = sessionActions.answeredRequestIds.get(directory)
     for (const q of pendingQuestions) {
       if (!q?.id || !q.sessionID) continue
       if (!knownSessionIds.has(q.sessionID)) continue
+      // AC3: never restore a question the user already answered — keep it out of
+      // `grouped` so the store.setState below cannot re-add it to the store.
+      // AC6: dismiss any zombie toast that was shown before the answer resolved.
+      if (answeredQuestionIds?.has(q.id)) {
+        const zombieKey = getQuestionToastKey(q.sessionID, q.id)
+        if (zombieKey) {
+          pendingQuestionToastIds.delete(zombieKey)
+          toast.dismiss(`question-${zombieKey}`)
+        }
+        continue
+      }
       const list = grouped[q.sessionID]
       if (list) list.push(q)
       else grouped[q.sessionID] = [q]
@@ -1411,6 +1423,11 @@ function handleEvent(
     if (toastKey) {
       pendingQuestionToastIds.delete(toastKey)
       toast.dismiss(`question-${toastKey}`)
+    }
+    // AC4: the server confirmed the answer — drop the resync guard for this
+    // requestId so it no longer needs tracking (and frees the Set entry).
+    if (props.requestID && resolvedDirectory) {
+      sessionActions.clearAnsweredRequestId(resolvedDirectory, props.requestID)
     }
   }
 

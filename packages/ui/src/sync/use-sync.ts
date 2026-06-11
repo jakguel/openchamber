@@ -10,6 +10,7 @@ import {
 } from "./optimistic"
 import { dropCachedSessionMessageRecordsSnapshots, useDirectoryStore, useSyncSDK, useSyncDirectory, useChildStoreManager } from "./sync-context"
 import { dropSessionCaches, getProtectedSessionCacheIds } from "./session-cache"
+import { clearAnsweredRequestIds } from "./session-actions"
 import { stripMessageDiffSnapshots } from "./sanitize"
 import { isVSCodeRuntime } from "@/lib/desktop"
 import { isMobileSurfaceRuntime } from "@/lib/runtimeSurface"
@@ -180,6 +181,9 @@ export function useSync() {
       }
       dropSessionCaches(draft, sessionIDs)
       dropCachedSessionMessageRecordsSnapshots(dirStore, sessionIDs)
+      // AC5: drop the answered-question guard for this directory so a freshly
+      // re-opened directory can resync genuinely-pending questions.
+      clearAnsweredRequestIds(dir)
       dirStore.setState(draft)
 
       // Clear meta + optimistic + prefetch cache for evicted sessions

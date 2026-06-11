@@ -40,6 +40,35 @@ type OptimisticRemoveInput = { sessionID: string; directory?: string | null; mes
 let _optimisticAdd: ((input: OptimisticAddInput) => void) | null = null
 let _optimisticRemove: ((input: OptimisticRemoveInput) => void) | null = null
 
+/**
+ * Tracks requestIds the user has already answered, keyed by directory, so a
+ * resync (SSE gap, reconnect, or directory materialization) cannot restore a
+ * question the user just dismissed. Entries are removed when the server
+ * confirms the answer (SSE question.replied/rejected) or when the directory's
+ * caches are evicted.
+ */
+export const answeredRequestIds = new Map<string, Set<string>>()
+
+/** Record that the user answered `requestId` in `directory`. Idempotent. */
+export function addAnsweredRequestId(directory: string, requestId: string): void {
+  let set = answeredRequestIds.get(directory)
+  if (!set) {
+    set = new Set<string>()
+    answeredRequestIds.set(directory, set)
+  }
+  set.add(requestId)
+}
+
+/** Drop a single answered requestId once the server confirms it. */
+export function clearAnsweredRequestId(directory: string, requestId: string): void {
+  answeredRequestIds.get(directory)?.delete(requestId)
+}
+
+/** Drop the whole answered set for a directory (called on cache eviction). */
+export function clearAnsweredRequestIds(directory: string): void {
+  answeredRequestIds.delete(directory)
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 type SdkResult<T> = {
@@ -866,6 +895,9 @@ export async function respondToQuestion(
   const directory = resolveDirectoryForBlockingRequest("question", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Record the answer before optimistic removal so a concurrent resync cannot
+  // restore this question while the reply is in flight (see answeredRequestIds).
+  if (directory) addAnsweredRequestId(directory, requestId)
   // Optimistically remove the question from the store before the SDK call so the
   // card disappears immediately and cannot reappear on remount while in flight.
   const rollback = optimisticRemoveQuestion(sessionId, requestId, directory)
@@ -903,6 +935,9 @@ export async function rejectQuestion(
   const directory = resolveDirectoryForBlockingRequest("question", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Record the answer before optimistic removal so a concurrent resync cannot
+  // restore this question while the reply is in flight (see answeredRequestIds).
+  if (directory) addAnsweredRequestId(directory, requestId)
   // Optimistically remove the question from the store before the SDK call so the
   // card disappears immediately and cannot reappear on remount while in flight.
   const rollback = optimisticRemoveQuestion(sessionId, requestId, directory)
