@@ -119,6 +119,52 @@ const runtimeMemoryKey = (value?: string | null): string => {
   return key || 'default';
 };
 
+export type SessionWindowState = {
+  isBottomTerminalOpen: boolean;
+  isBottomTerminalExpanded: boolean;
+  activeMainTab: MainTab;
+};
+
+const DEFAULT_SESSION_WINDOW_STATE: SessionWindowState = {
+  isBottomTerminalOpen: false,
+  isBottomTerminalExpanded: false,
+  activeMainTab: 'chat',
+};
+
+const sessionWindowStateBySession = new Map<string, SessionWindowState>();
+
+const isMainTab = (value: unknown): value is MainTab =>
+  value === 'chat'
+  || value === 'plan'
+  || value === 'git'
+  || value === 'diff'
+  || value === 'terminal'
+  || value === 'files'
+  || value === 'context'
+  || value === 'diagram';
+
+const isSessionWindowState = (value: unknown): value is SessionWindowState => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.isBottomTerminalOpen === 'boolean'
+    && typeof candidate.isBottomTerminalExpanded === 'boolean'
+    && isMainTab(candidate.activeMainTab)
+  );
+};
+
+const rehydrateSessionWindowStates = (raw: unknown): void => {
+  if (!Array.isArray(raw)) return;
+  for (const entry of raw) {
+    if (!Array.isArray(entry) || entry.length !== 2) continue;
+    const id: unknown = entry[0];
+    const value: unknown = entry[1];
+    if (typeof id === 'string' && isSessionWindowState(value)) {
+      sessionWindowStateBySession.set(id, value);
+    }
+  }
+};
+
 const normalizeDirectoryPath = (value: string): string => {
   if (!value) return '';
 
@@ -662,6 +708,8 @@ interface UIStore {
   setActiveMainTab: (tab: MainTab) => void;
   prepareForRuntimeSwitch: (runtimeKey?: string | null) => void;
   restoreForRuntimeSwitch: (runtimeKey?: string | null) => void;
+  prepareForSessionSwitch: (sessionId: string | null) => void;
+  restoreForSessionSwitch: (sessionId: string | null) => void;
   setMainTabGuard: (guard: MainTabGuard | null) => void;
   setPendingDiffFile: (filePath: string | null, staged?: boolean) => void;
   setPendingDiagramFile: (filePath: string | null) => void;
@@ -1387,6 +1435,24 @@ export const useUIStore = create<UIStore>()(
         restoreForRuntimeSwitch: (runtimeKey?: string | null) => {
           const restored = activeMainTabByRuntime.get(runtimeMemoryKey(runtimeKey)) ?? 'chat';
           set({ activeMainTab: restored });
+        },
+
+        prepareForSessionSwitch: (sessionId: string | null) => {
+          if (!sessionId) return;
+          sessionWindowStateBySession.set(sessionId, {
+            isBottomTerminalOpen: get().isBottomTerminalOpen,
+            isBottomTerminalExpanded: get().isBottomTerminalExpanded,
+            activeMainTab: get().activeMainTab,
+          });
+        },
+
+        restoreForSessionSwitch: (sessionId: string | null) => {
+          const restored = (sessionId ? sessionWindowStateBySession.get(sessionId) : null) ?? DEFAULT_SESSION_WINDOW_STATE;
+          set({
+            isBottomTerminalOpen: restored.isBottomTerminalOpen,
+            isBottomTerminalExpanded: restored.isBottomTerminalExpanded,
+            activeMainTab: restored.activeMainTab,
+          });
         },
 
         setPendingDiffFile: (filePath, staged = false) => {
@@ -2174,6 +2240,7 @@ export const useUIStore = create<UIStore>()(
           todoPanelHeight: state.todoPanelHeight,
           isSessionSwitcherOpen: state.isSessionSwitcherOpen,
           activeMainTab: state.activeMainTab,
+          sessionWindowStates: Array.from(sessionWindowStateBySession.entries()),
           sidebarSection: state.sidebarSection,
           settingsPage: state.settingsPage,
           settingsHasOpenedOnce: state.settingsHasOpenedOnce,
@@ -2238,7 +2305,11 @@ export const useUIStore = create<UIStore>()(
           mobileSessionFilterProjectId: state.mobileSessionFilterProjectId,
           shortcutOverrides: state.shortcutOverrides,
           fileEditorKeymap: state.fileEditorKeymap,
-        })
+        }),
+        onRehydrateStorage: () => (state) => {
+          if (!state) return;
+          rehydrateSessionWindowStates((state as { sessionWindowStates?: unknown }).sessionWindowStates);
+        }
       }
     ),
     {
