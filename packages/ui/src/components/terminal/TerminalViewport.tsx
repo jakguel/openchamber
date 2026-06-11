@@ -984,7 +984,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       let restorePatchedScrollToBottom: (() => void) | null = null;
       let restorePatchedScrollbar: (() => void) | null = null;
       let restoreContainerFocus: (() => void) | null = null;
-      let altArrowCleanup: (() => void) | null = null;
+      let specialKeysCleanup: (() => void) | null = null;
 
       const container = containerRef.current;
       if (!container) {
@@ -1174,26 +1174,87 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
 
       void initialize();
 
-      // On desktop (non-touch), intercept Option+Arrow before ghostty processes them.
-      // ghostty sends \x1b[1;3D for Alt+Left which readline doesn't bind by default;
-      // \x1bb/\x1bf match what iTerm2 sends and are natively bound in bash/zsh emacs mode.
+      // On desktop (non-touch), intercept macOS terminal shortcuts before ghostty,
+      // matching iTerm2. Control sequences: \x1bb/\x1bf = word jump (bash/zsh emacs
+      // bindings), \x01/\x05 = readline line start/end. Cmd+Up/Down and PageUp/Down
+      // scroll the ghostty viewport and are never forwarded to the PTY.
       if (!useHiddenInputOverlay) {
-        const handleAltArrow = (event: KeyboardEvent): void => {
-          if (!event.altKey || event.ctrlKey || event.metaKey) return;
-          const altArrowSequences: Record<string, string> = {
-            ArrowLeft: '\x1bb',
-            ArrowRight: '\x1bf',
-            ArrowUp: '\x1b[1;3A',
-            ArrowDown: '\x1b[1;3B',
-          };
-          const seq = altArrowSequences[event.key];
-          if (!seq) return;
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          inputHandlerRef.current(seq);
+        const handleSpecialKeys = (event: KeyboardEvent): void => {
+          if (event.ctrlKey) return;
+
+          if (event.altKey && !event.metaKey) {
+            const seq: string | undefined = ({
+              ArrowLeft: '\x1bb',
+              ArrowRight: '\x1bf',
+              ArrowUp: '\x1b[1;3A',
+              ArrowDown: '\x1b[1;3B',
+            } as Record<string, string>)[event.key];
+            if (!seq) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            inputHandlerRef.current(seq);
+            return;
+          }
+
+          if (event.metaKey && !event.altKey) {
+            // Skip Cmd+C so the existing copy handler keeps working.
+            if (event.key === 'c' || event.key === 'C') return;
+
+            const ptySeq: string | undefined = ({
+              ArrowLeft: '\x01',
+              ArrowRight: '\x05',
+            } as Record<string, string>)[event.key];
+            if (ptySeq) {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              inputHandlerRef.current(ptySeq);
+              return;
+            }
+
+            if (event.key === 'ArrowUp') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              localTerminal?.scrollLines(-3);
+              return;
+            }
+            if (event.key === 'ArrowDown') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              localTerminal?.scrollLines(3);
+              return;
+            }
+            return;
+          }
+
+          if (!event.altKey && !event.metaKey) {
+            if (event.key === 'Home') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              inputHandlerRef.current('\x01');
+              return;
+            }
+            if (event.key === 'End') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              inputHandlerRef.current('\x05');
+              return;
+            }
+            if (event.key === 'PageUp') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              localTerminal?.scrollPages(-1);
+              return;
+            }
+            if (event.key === 'PageDown') {
+              event.preventDefault();
+              event.stopImmediatePropagation();
+              localTerminal?.scrollPages(1);
+              return;
+            }
+          }
         };
-        container.addEventListener('keydown', handleAltArrow, { capture: true });
-        altArrowCleanup = () => container.removeEventListener('keydown', handleAltArrow, { capture: true });
+        container.addEventListener('keydown', handleSpecialKeys, { capture: true });
+        specialKeysCleanup = () => container.removeEventListener('keydown', handleSpecialKeys, { capture: true });
       }
 
       document.addEventListener('focusin', handleDocumentFocusIn, true);
@@ -1206,8 +1267,8 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
 
         document.removeEventListener('focusin', handleDocumentFocusIn, true);
         window.removeEventListener('blur', handleWindowBlur);
-        altArrowCleanup?.();
-        altArrowCleanup = null;
+        specialKeysCleanup?.();
+        specialKeysCleanup = null;
 
         localDisposables.forEach((disposable) => disposable.dispose());
         restorePatchedScrollToBottom?.();
