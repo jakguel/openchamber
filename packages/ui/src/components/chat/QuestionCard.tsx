@@ -36,7 +36,6 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
   }, [question.sessionID, currentSessionId, sessions]);
   const [activeTab, setActiveTab] = React.useState<TabKey>('0');
   const [isResponding, setIsResponding] = React.useState(false);
-  const [hasResponded, setHasResponded] = React.useState(false);
 
   const [selectedOptions, setSelectedOptions] = React.useState<Record<number, string[]>>({});
   const [customMode, setCustomMode] = React.useState<Record<number, boolean>>({});
@@ -57,7 +56,6 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
     setSelectedOptions({});
     setCustomMode({});
     setCustomText({});
-    setHasResponded(false);
   }, [question.id]);
 
   const tabs = React.useMemo(() => {
@@ -173,12 +171,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
     try {
       const answers = buildAnswersPayload();
       await respondToQuestion(question.sessionID, question.id, answers);
-      setHasResponded(true);
     } catch (error) {
       if (sessionActions.isQuestionRequestNotFoundError(error)) {
         toast.info(t('chat.questionCard.noLongerPending'));
-        setHasResponded(true);
       } else {
+        console.error('[QuestionCard] respondToQuestion failed', error);
         toast.error(t('chat.questionCard.submitFailed'), {
           description: t('chat.questionCard.tryAgain'),
         });
@@ -208,12 +205,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
     setIsResponding(true);
     try {
       await rejectQuestion(question.sessionID, question.id);
-      setHasResponded(true);
     } catch (error) {
       if (sessionActions.isQuestionRequestNotFoundError(error)) {
         toast.info(t('chat.questionCard.noLongerPending'));
-        setHasResponded(true);
       } else {
+        console.error('[QuestionCard] rejectQuestion failed', error);
         toast.error(t('chat.questionCard.dismissFailed'), {
           description: t('chat.questionCard.tryAgain'),
         });
@@ -243,7 +239,10 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
     toast.error(t('chat.questionCard.copyFailed'));
   }, [question, t]);
 
-  if (hasResponded || questions.length === 0) {
+  // Visibility is controlled entirely by the store: when the question is answered
+  // or dismissed, session-actions removes it optimistically and the parent unmounts
+  // this card. No local "responded" flag — that caused the card to reappear on remount.
+  if (questions.length === 0) {
     return null;
   }
 

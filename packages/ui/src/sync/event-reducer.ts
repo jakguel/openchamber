@@ -526,6 +526,53 @@ export function applyDirectoryEvent(
   }
 }
 
+/**
+ * Optimistic question store actions dispatched directly from session-actions
+ * (NOT server SSE events). They let the UI remove a question immediately when the
+ * user answers or dismisses it, and roll the removal back if the SDK call fails —
+ * preventing the card from reappearing on remount while the request is in flight.
+ */
+export type OptimisticQuestionAction =
+  | { type: "question.optimistic-remove"; sessionID: string; requestID: string }
+  | { type: "question.optimistic-restore"; question: QuestionRequest }
+
+/**
+ * Applies an optimistic question action to a store draft, mirroring the
+ * immutable-update pattern of the question.asked / question.replied SSE handlers
+ * so optimistic UI stays consistent with server-driven updates.
+ * Returns true when the draft changed.
+ */
+export function applyOptimisticQuestionAction(
+  draft: Pick<State, "question">,
+  action: OptimisticQuestionAction,
+): boolean {
+  switch (action.type) {
+    case "question.optimistic-remove": {
+      const questions = draft.question[action.sessionID]
+      if (!questions) return false
+      const result = Binary.search(questions, action.requestID, (q) => q.id)
+      if (!result.found) return false
+      const next = [...questions]
+      next.splice(result.index, 1)
+      draft.question[action.sessionID] = next
+      return true
+    }
+    case "question.optimistic-restore": {
+      const { question } = action
+      const questions = draft.question[question.sessionID] ?? []
+      const next = [...questions]
+      const result = Binary.search(next, question.id, (q) => q.id)
+      if (result.found) {
+        next[result.index] = question
+      } else {
+        next.splice(result.index, 0, question)
+      }
+      draft.question[question.sessionID] = next
+      return true
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

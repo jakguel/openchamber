@@ -3,8 +3,9 @@
  * Replaces the action methods from the old useSessionStore.
  */
 
-import type { OpencodeClient, Session, Message, Part } from "@opencode-ai/sdk/v2/client"
+import type { OpencodeClient, Session, Message, Part, QuestionRequest } from "@opencode-ai/sdk/v2/client"
 import { Binary } from "./binary"
+import { applyOptimisticQuestionAction } from "./event-reducer"
 import { useSessionUIStore } from "./session-ui-store"
 import { useInputStore } from "./input-store"
 import type { ChildStoreManager } from "./child-store"
@@ -337,6 +338,50 @@ function removeQuestionRequestFromChildStores(sessionId: string, requestId: stri
   }
 
   return removed
+}
+
+type QuestionRollbackSnapshot = { store: DirectoryStoreApi; question: QuestionRequest }
+
+/**
+ * Optimistically removes a question from its directory store before the reply/reject
+ * SDK call, so the card disappears immediately and cannot reappear on remount while
+ * the request is in flight. Returns a snapshot for rollback, or null when the store
+ * or question can't be resolved (removal is then left to the server SSE event).
+ */
+function optimisticRemoveQuestion(
+  sessionId: string,
+  requestId: string,
+  directory: string | undefined,
+): QuestionRollbackSnapshot | null {
+  if (!_childStores || !requestId || !directory) return null
+  let store: DirectoryStoreApi
+  try {
+    store = dirStoreForDirectory(directory)
+  } catch (error) {
+    console.error("[session-actions] optimistic question removal skipped: store unavailable", error)
+    return null
+  }
+  const question = store.getState().question[sessionId]?.find((entry) => entry.id === requestId)
+  if (!question) return null
+  const draft = { question: { ...store.getState().question } }
+  const changed = applyOptimisticQuestionAction(draft, {
+    type: "question.optimistic-remove",
+    sessionID: sessionId,
+    requestID: requestId,
+  })
+  if (!changed) return null
+  store.setState({ question: draft.question })
+  return { store, question }
+}
+
+/** Rolls back an optimistic question removal when the SDK reply/reject fails. */
+function restoreQuestion(snapshot: QuestionRollbackSnapshot): void {
+  const draft = { question: { ...snapshot.store.getState().question } }
+  const changed = applyOptimisticQuestionAction(draft, {
+    type: "question.optimistic-restore",
+    question: snapshot.question,
+  })
+  if (changed) snapshot.store.setState({ question: draft.question })
 }
 
 function getRequestReplyClient(
@@ -757,6 +802,9 @@ export async function respondToQuestion(
   const directory = resolveDirectoryForBlockingRequest("question", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Optimistically remove the question from the store before the SDK call so the
+  // card disappears immediately and cannot reappear on remount while in flight.
+  const rollback = optimisticRemoveQuestion(sessionId, requestId, directory)
   try {
     const normalizedAnswers = answers.length === 0
       ? []
@@ -773,7 +821,11 @@ export async function respondToQuestion(
     }
   } catch (error) {
     if (isQuestionRequestNotFoundError(error)) {
+      // Server already cleared the request — keep it removed everywhere.
       removeQuestionRequestFromChildStores(sessionId, requestId)
+    } else if (rollback) {
+      // Reply failed — restore the question so the user can retry.
+      restoreQuestion(rollback)
     }
     throw error
   }
@@ -787,6 +839,9 @@ export async function rejectQuestion(
   const directory = resolveDirectoryForBlockingRequest("question", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Optimistically remove the question from the store before the SDK call so the
+  // card disappears immediately and cannot reappear on remount while in flight.
+  const rollback = optimisticRemoveQuestion(sessionId, requestId, directory)
   try {
     const result = await getRequestReplyClient("question", sessionId, requestId).question.reject({
       requestID: requestId,
@@ -797,7 +852,11 @@ export async function rejectQuestion(
     }
   } catch (error) {
     if (isQuestionRequestNotFoundError(error)) {
+      // Server already cleared the request — keep it removed everywhere.
       removeQuestionRequestFromChildStores(sessionId, requestId)
+    } else if (rollback) {
+      // Rejection failed — restore the question so the user can retry.
+      restoreQuestion(rollback)
     }
     throw error
   }
