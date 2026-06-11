@@ -984,6 +984,7 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       let restorePatchedScrollToBottom: (() => void) | null = null;
       let restorePatchedScrollbar: (() => void) | null = null;
       let restoreContainerFocus: (() => void) | null = null;
+      let altArrowCleanup: (() => void) | null = null;
 
       const container = containerRef.current;
       if (!container) {
@@ -1173,6 +1174,28 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
 
       void initialize();
 
+      // On desktop (non-touch), intercept Option+Arrow before ghostty processes them.
+      // ghostty sends \x1b[1;3D for Alt+Left which readline doesn't bind by default;
+      // \x1bb/\x1bf match what iTerm2 sends and are natively bound in bash/zsh emacs mode.
+      if (!useHiddenInputOverlay) {
+        const handleAltArrow = (event: KeyboardEvent): void => {
+          if (!event.altKey || event.ctrlKey || event.metaKey) return;
+          const altArrowSequences: Record<string, string> = {
+            ArrowLeft: '\x1bb',
+            ArrowRight: '\x1bf',
+            ArrowUp: '\x1b[1;3A',
+            ArrowDown: '\x1b[1;3B',
+          };
+          const seq = altArrowSequences[event.key];
+          if (!seq) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          inputHandlerRef.current(seq);
+        };
+        container.addEventListener('keydown', handleAltArrow, { capture: true });
+        altArrowCleanup = () => container.removeEventListener('keydown', handleAltArrow, { capture: true });
+      }
+
       document.addEventListener('focusin', handleDocumentFocusIn, true);
       window.addEventListener('blur', handleWindowBlur);
 
@@ -1183,6 +1206,8 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
 
         document.removeEventListener('focusin', handleDocumentFocusIn, true);
         window.removeEventListener('blur', handleWindowBlur);
+        altArrowCleanup?.();
+        altArrowCleanup = null;
 
         localDisposables.forEach((disposable) => disposable.dispose());
         restorePatchedScrollToBottom?.();
