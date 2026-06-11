@@ -45,12 +45,18 @@ mock.module("@/stores/useTodosPersistStore", () => ({
 }))
 
 mock.module("@/components/ui", () => ({
-  toast: { info: () => undefined, error: () => undefined, success: () => undefined },
+  toast: { info: () => undefined, error: () => undefined, success: () => undefined, dismiss: () => undefined },
 }))
 
 import { INITIAL_STATE, type State } from "../types"
 import type { DirectoryStore } from "../child-store"
 import { resyncBlockingRequestsForDirectory } from "../sync-context"
+import {
+  answeredRequestIds,
+  addAnsweredRequestId,
+  clearAnsweredRequestId,
+  clearAnsweredRequestIds,
+} from "../session-actions"
 
 function buildQuestion(overrides: Partial<QuestionRequest> = {}): QuestionRequest {
   return {
@@ -204,5 +210,80 @@ describe("resyncBlockingRequestsForDirectory", () => {
     expect(store.getState().question["ses_a"]).toHaveLength(1)
     expect(store.getState().question["ses_a"]?.[0]?.id).toBe("que_1")
     expect(listPendingPermissionsCalls).toHaveLength(1)
+  })
+})
+
+describe("answeredRequestIds guard", () => {
+  beforeEach(() => {
+    answeredRequestIds.clear()
+    listPendingQuestionsCalls.length = 0
+    listPendingPermissionsCalls.length = 0
+    pendingQuestionsResponse = []
+    pendingPermissionsResponse = []
+    pendingQuestionsShouldThrow = false
+    pendingPermissionsShouldThrow = false
+  })
+
+  // AC3: a question the user already answered must never be re-added by resync.
+  test("resync does NOT restore a question that is in answeredRequestIds", async () => {
+    const store = createDirectoryStore({})
+    pendingQuestionsResponse = [buildQuestion({ id: "que_answered" })]
+    addAnsweredRequestId("/repo", "que_answered")
+
+    await resyncBlockingRequestsForDirectory("/repo", store)
+
+    expect(store.getState().question["ses_a"]).toEqual(undefined)
+  })
+
+  // AC3: answered IDs are skipped while still-pending questions are restored.
+  test("resync restores questions NOT in answeredRequestIds while skipping answered ones", async () => {
+    const store = createDirectoryStore({})
+    pendingQuestionsResponse = [
+      buildQuestion({ id: "que_answered" }),
+      buildQuestion({ id: "que_pending", sessionID: "ses_a" }),
+    ]
+    addAnsweredRequestId("/repo", "que_answered")
+
+    await resyncBlockingRequestsForDirectory("/repo", store)
+
+    // Only the unanswered question survives the guard; answered one is dropped.
+    const ids = (store.getState().question["ses_a"] ?? []).map((q) => q.id)
+    expect(ids).toEqual(["que_pending"])
+  })
+
+  // AC4: SSE cleanup removes the specific answered id from the directory set.
+  test("clearAnsweredRequestId removes the specific requestId from the set", () => {
+    addAnsweredRequestId("/repo", "que_1")
+    addAnsweredRequestId("/repo", "que_2")
+
+    clearAnsweredRequestId("/repo", "que_1")
+
+    expect(answeredRequestIds.get("/repo")?.has("que_1")).toBe(false)
+    expect(answeredRequestIds.get("/repo")?.has("que_2")).toBe(true)
+  })
+
+  test("clearAnsweredRequestId is a no-op when the directory has no entry", () => {
+    clearAnsweredRequestId("/nonexistent", "que_1")
+    expect(answeredRequestIds.has("/nonexistent")).toBe(false)
+  })
+
+  // AC5: directory eviction drops the whole answered set for that directory.
+  test("clearAnsweredRequestIds removes the entire directory entry", () => {
+    addAnsweredRequestId("/repo", "que_1")
+    addAnsweredRequestId("/repo", "que_2")
+
+    clearAnsweredRequestIds("/repo")
+
+    expect(answeredRequestIds.has("/repo")).toBe(false)
+  })
+
+  test("clearAnsweredRequestIds on one directory does not affect another directory", () => {
+    addAnsweredRequestId("/repo-a", "que_1")
+    addAnsweredRequestId("/repo-b", "que_2")
+
+    clearAnsweredRequestIds("/repo-a")
+
+    expect(answeredRequestIds.has("/repo-a")).toBe(false)
+    expect(answeredRequestIds.get("/repo-b")?.has("que_2")).toBe(true)
   })
 })

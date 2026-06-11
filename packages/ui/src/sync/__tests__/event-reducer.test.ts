@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event, Part, PermissionRequest, QuestionRequest, SessionStatus } from "@opencode-ai/sdk/v2/client"
-import { applyDirectoryEvent } from "../event-reducer"
+import { applyDirectoryEvent, applyOptimisticQuestionAction } from "../event-reducer"
 import { INITIAL_STATE, type State } from "../types"
 
 function state(overrides: Partial<State> = {}): State {
@@ -254,5 +254,65 @@ describe("applyDirectoryEvent", () => {
 
     expect(draft.question.ses_1).not.toBe(afterReply)
     expect(draft.question.ses_1).toEqual([])
+  })
+})
+
+describe("applyOptimisticQuestionAction", () => {
+  test("removes question from store when question.optimistic-remove matches", () => {
+    const initialQuestions = [
+      { id: "que_1", sessionID: "ses_1" } as QuestionRequest,
+      { id: "que_2", sessionID: "ses_1" } as QuestionRequest,
+    ]
+    const draft = state({ question: { ses_1: initialQuestions } })
+
+    const changed = applyOptimisticQuestionAction(draft, {
+      type: "question.optimistic-remove",
+      sessionID: "ses_1",
+      requestID: "que_1",
+    })
+
+    expect(changed).toBe(true)
+    expect(draft.question.ses_1).not.toBe(initialQuestions)
+    expect(draft.question.ses_1.map((q) => q.id)).toEqual(["que_2"])
+  })
+
+  test("returns false when question.optimistic-remove targets an absent ID", () => {
+    const draft = state({ question: { ses_1: [{ id: "que_1", sessionID: "ses_1" } as QuestionRequest] } })
+
+    const changed = applyOptimisticQuestionAction(draft, {
+      type: "question.optimistic-remove",
+      sessionID: "ses_1",
+      requestID: "que_does_not_exist",
+    })
+
+    expect(changed).toBe(false)
+    expect(draft.question.ses_1).toHaveLength(1)
+  })
+
+  test("re-inserts question in sorted order on question.optimistic-restore (rollback)", () => {
+    const remaining = { id: "que_2", sessionID: "ses_1" } as QuestionRequest
+    const draft = state({ question: { ses_1: [remaining] } })
+    const removed = { id: "que_1", sessionID: "ses_1" } as QuestionRequest
+
+    const changed = applyOptimisticQuestionAction(draft, {
+      type: "question.optimistic-restore",
+      question: removed,
+    })
+
+    expect(changed).toBe(true)
+    expect(draft.question.ses_1.map((q) => q.id)).toEqual(["que_1", "que_2"])
+  })
+
+  test("initialises empty session array on question.optimistic-restore when none existed", () => {
+    const draft = state({ question: {} })
+    const question = { id: "que_1", sessionID: "ses_1" } as QuestionRequest
+
+    applyOptimisticQuestionAction(draft, {
+      type: "question.optimistic-restore",
+      question,
+    })
+
+    expect(draft.question.ses_1).toHaveLength(1)
+    expect(draft.question.ses_1.map((q) => q.id)).toEqual(["que_1"])
   })
 })
