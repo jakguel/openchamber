@@ -452,8 +452,10 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       )
       : null
 
+    const isSessionChange = previousSessionId !== id;
+
     // Save outgoing session's window layout before switching.
-    if (previousSessionId && previousSessionId !== id) {
+    if (isSessionChange && previousSessionId) {
       useUIStore.getState().prepareForSessionSwitch(previousSessionId)
     }
 
@@ -463,7 +465,10 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     writeRuntimeSessionMemory(key, { sessionId: id, directory: resolvedDir ?? null })
 
     // Restore incoming session's window layout (applies DEFAULT for new/unknown sessions).
-    useUIStore.getState().restoreForSessionSwitch(id)
+    // Skip on same-session switch to avoid clobbering current UI state (AC4).
+    if (isSessionChange) {
+      useUIStore.getState().restoreForSessionSwitch(id)
+    }
 
     try {
       if (resolvedDir && directoryState.currentDirectory !== resolvedDir) {
