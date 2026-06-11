@@ -573,6 +573,51 @@ export function applyOptimisticQuestionAction(
   }
 }
 
+/**
+ * Optimistic permission store actions dispatched directly from session-actions
+ * (NOT server SSE events). Mirror the question optimistic action pattern for
+ * permission allow/deny, enabling immediate card removal with rollback on failure.
+ */
+export type OptimisticPermissionAction =
+  | { type: "permission.optimistic-remove"; sessionID: string; requestID: string }
+  | { type: "permission.optimistic-restore"; permission: PermissionRequest }
+
+/**
+ * Applies an optimistic permission action to a store draft, mirroring the
+ * immutable-update pattern of the permission.asked / permission.replied SSE handlers.
+ * Returns true when the draft changed.
+ */
+export function applyOptimisticPermissionAction(
+  draft: Pick<State, "permission">,
+  action: OptimisticPermissionAction,
+): boolean {
+  switch (action.type) {
+    case "permission.optimistic-remove": {
+      const permissions = draft.permission[action.sessionID]
+      if (!permissions) return false
+      const result = Binary.search(permissions, action.requestID, (p) => p.id)
+      if (!result.found) return false
+      const next = [...permissions]
+      next.splice(result.index, 1)
+      draft.permission[action.sessionID] = next
+      return true
+    }
+    case "permission.optimistic-restore": {
+      const { permission } = action
+      const permissions = draft.permission[permission.sessionID] ?? []
+      const next = [...permissions]
+      const result = Binary.search(next, permission.id, (p) => p.id)
+      if (result.found) {
+        next[result.index] = permission
+      } else {
+        next.splice(result.index, 0, permission)
+      }
+      draft.permission[permission.sessionID] = next
+      return true
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

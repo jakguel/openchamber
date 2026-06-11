@@ -95,7 +95,6 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
 }) => {
   const { t } = useI18n();
   const [isResponding, setIsResponding] = React.useState(false);
-  const [hasResponded, setHasResponded] = React.useState(false);
   const respondToPermission = sessionActions.respondToPermission;
   const sessions = useSessions();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
@@ -112,7 +111,6 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
 
     try {
       await respondToPermission(permission.sessionID, permission.id, response);
-      setHasResponded(true);
       onResponse?.(response);
     } catch (error) {
       console.error('[PermissionCard] Failed to respond to permission:', error);
@@ -121,9 +119,9 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
     }
   };
 
-  if (hasResponded) {
-    return null;
-  }
+  // Visibility is controlled entirely by the store: when the permission is answered,
+  // session-actions removes it optimistically and the parent unmounts this card.
+  // No local "responded" flag — that caused the card to reappear on remount.
 
   const toolName = permission.permission || 'unknown';
   const tool = toolName.toLowerCase();

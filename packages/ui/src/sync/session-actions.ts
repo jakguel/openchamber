@@ -3,9 +3,9 @@
  * Replaces the action methods from the old useSessionStore.
  */
 
-import type { OpencodeClient, Session, Message, Part, QuestionRequest } from "@opencode-ai/sdk/v2/client"
+import type { OpencodeClient, Session, Message, Part, QuestionRequest, PermissionRequest } from "@opencode-ai/sdk/v2/client"
 import { Binary } from "./binary"
-import { applyOptimisticQuestionAction } from "./event-reducer"
+import { applyOptimisticQuestionAction, applyOptimisticPermissionAction } from "./event-reducer"
 import { useSessionUIStore } from "./session-ui-store"
 import { useInputStore } from "./input-store"
 import type { ChildStoreManager } from "./child-store"
@@ -382,6 +382,50 @@ function restoreQuestion(snapshot: QuestionRollbackSnapshot): void {
     question: snapshot.question,
   })
   if (changed) snapshot.store.setState({ question: draft.question })
+}
+
+type PermissionRollbackSnapshot = { store: DirectoryStoreApi; permission: PermissionRequest }
+
+/**
+ * Optimistically removes a permission from its directory store before the reply SDK
+ * call, so the card disappears immediately and cannot reappear on remount while the
+ * request is in flight. Returns a snapshot for rollback, or null when the store or
+ * permission can't be resolved.
+ */
+function optimisticRemovePermission(
+  sessionId: string,
+  requestId: string,
+  directory: string | undefined,
+): PermissionRollbackSnapshot | null {
+  if (!_childStores || !requestId || !directory) return null
+  let store: DirectoryStoreApi
+  try {
+    store = dirStoreForDirectory(directory)
+  } catch (error) {
+    console.error("[session-actions] optimistic permission removal skipped: store unavailable", error)
+    return null
+  }
+  const permission = store.getState().permission[sessionId]?.find((entry) => entry.id === requestId)
+  if (!permission) return null
+  const draft = { permission: { ...store.getState().permission } }
+  const changed = applyOptimisticPermissionAction(draft, {
+    type: "permission.optimistic-remove",
+    sessionID: sessionId,
+    requestID: requestId,
+  })
+  if (!changed) return null
+  store.setState({ permission: draft.permission })
+  return { store, permission }
+}
+
+/** Rolls back an optimistic permission removal when the SDK reply fails. */
+function restorePermission(snapshot: PermissionRollbackSnapshot): void {
+  const draft = { permission: { ...snapshot.store.getState().permission } }
+  const changed = applyOptimisticPermissionAction(draft, {
+    type: "permission.optimistic-restore",
+    permission: snapshot.permission,
+  })
+  if (changed) snapshot.store.setState({ permission: draft.permission })
 }
 
 function getRequestReplyClient(
@@ -761,13 +805,24 @@ export async function respondToPermission(
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
-  const result = await getRequestReplyClient("permission", sessionId, requestId).permission.reply({
-    requestID: requestId,
-    reply: response,
-    ...(directory ? { directory } : {}),
-  })
-  if (assertSdkData(result, "permission.reply") !== true) {
-    throw new Error("Permission reply failed")
+  // Optimistically remove the permission from the store before the SDK call so the
+  // card disappears immediately and cannot reappear on remount while in flight.
+  const rollback = optimisticRemovePermission(sessionId, requestId, directory)
+  try {
+    const result = await getRequestReplyClient("permission", sessionId, requestId).permission.reply({
+      requestID: requestId,
+      reply: response,
+      ...(directory ? { directory } : {}),
+    })
+    if (assertSdkData(result, "permission.reply") !== true) {
+      throw new Error("Permission reply failed")
+    }
+  } catch (error) {
+    if (rollback) {
+      // Reply failed — restore the permission so the user can retry.
+      restorePermission(rollback)
+    }
+    throw error
   }
 }
 
@@ -779,13 +834,22 @@ export async function dismissPermission(
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
-  const result = await getRequestReplyClient("permission", sessionId, requestId).permission.reply({
-    requestID: requestId,
-    reply: "reject",
-    ...(directory ? { directory } : {}),
-  })
-  if (assertSdkData(result, "permission.reply") !== true) {
-    throw new Error("Permission dismissal failed")
+  // Optimistically remove the permission from the store before the SDK call.
+  const rollback = optimisticRemovePermission(sessionId, requestId, directory)
+  try {
+    const result = await getRequestReplyClient("permission", sessionId, requestId).permission.reply({
+      requestID: requestId,
+      reply: "reject",
+      ...(directory ? { directory } : {}),
+    })
+    if (assertSdkData(result, "permission.reply") !== true) {
+      throw new Error("Permission dismissal failed")
+    }
+  } catch (error) {
+    if (rollback) {
+      restorePermission(rollback)
+    }
+    throw error
   }
 }
 
