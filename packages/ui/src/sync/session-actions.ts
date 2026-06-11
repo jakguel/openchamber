@@ -920,7 +920,9 @@ export async function respondToQuestion(
       // Server already cleared the request — keep it removed everywhere.
       removeQuestionRequestFromChildStores(sessionId, requestId)
     } else if (rollback) {
-      // Reply failed — restore the question so the user can retry.
+      // Reply failed — clear the answered guard so resync can restore it, then
+      // restore the optimistically removed question so the user can retry.
+      if (directory) clearAnsweredRequestId(directory, requestId)
       restoreQuestion(rollback)
     }
     throw error
@@ -954,7 +956,9 @@ export async function rejectQuestion(
       // Server already cleared the request — keep it removed everywhere.
       removeQuestionRequestFromChildStores(sessionId, requestId)
     } else if (rollback) {
-      // Rejection failed — restore the question so the user can retry.
+      // Rejection failed — clear the answered guard so resync can restore it,
+      // then restore the optimistically removed question so the user can retry.
+      if (directory) clearAnsweredRequestId(directory, requestId)
       restoreQuestion(rollback)
     }
     throw error
