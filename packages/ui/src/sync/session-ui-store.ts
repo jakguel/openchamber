@@ -56,6 +56,7 @@ import { useInputStore, type SyntheticContextPart } from "./input-store"
 import { useSelectionStore } from "./selection-store"
 import { getViewportSessionMemory, useViewportStore, viewportSessionKey } from "./viewport-store"
 import { useSessionWorktreeStore } from "./session-worktree-store"
+import { useUIStore } from "@/stores/useUIStore"
 import { getAttachedSessionDirectory } from "./session-worktree-contract"
 import { setSessionOpener } from "./session-navigation"
 import { getRuntimeKey } from "@/lib/runtime-switch"
@@ -451,10 +452,18 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       )
       : null
 
+    // Save outgoing session's window layout before switching.
+    if (previousSessionId && previousSessionId !== id) {
+      useUIStore.getState().prepareForSessionSwitch(previousSessionId)
+    }
+
     // Set the directory together with the session id so chat hooks read the
     // same child store that send/SSE events will update during startup races.
     set({ currentSessionId: id, currentSessionDirectory: id ? resolvedDir ?? null : null })
     writeRuntimeSessionMemory(key, { sessionId: id, directory: resolvedDir ?? null })
+
+    // Restore incoming session's window layout (applies DEFAULT for new/unknown sessions).
+    useUIStore.getState().restoreForSessionSwitch(id)
 
     try {
       if (resolvedDir && directoryState.currentDirectory !== resolvedDir) {
