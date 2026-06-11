@@ -177,6 +177,7 @@ export const TerminalView: React.FC = () => {
     const terminalControllerRef = React.useRef<TerminalController | null>(null);
     const lastViewportSizeRef = React.useRef<{ cols: number; rows: number } | null>(null);
     const isTerminalVisibleRef = React.useRef(false);
+    const prevIsTerminalVisibleRef = React.useRef(false);
     const nudgeOnConnectTerminalIdRef = React.useRef<string | null>(null);
     const rehydratedTerminalIdsRef = React.useRef<Set<string>>(new Set());
     const rehydratedSnapshotTakenRef = React.useRef(false);
@@ -253,6 +254,35 @@ export const TerminalView: React.FC = () => {
     React.useEffect(() => {
         isTerminalVisibleRef.current = isTerminalVisible;
     }, [isTerminalVisible]);
+
+    React.useEffect(() => {
+        const prev = prevIsTerminalVisibleRef.current;
+        prevIsTerminalVisibleRef.current = isTerminalVisible;
+
+        // Only act on the false→true transition
+        if (!isTerminalVisible || prev) return;
+
+        // If the active tab has exited, reset to idle so ensureSession creates a fresh PTY
+        const directory = effectiveDirectory;
+        if (!directory || !directoryTerminalState) return;
+
+        const tabId = enableTabs
+            ? (directoryTerminalState.activeTabId ?? directoryTerminalState.tabs[0]?.id ?? null)
+            : (directoryTerminalState.tabs[0]?.id ?? null);
+        if (!tabId) return;
+
+        const tab = directoryTerminalState.tabs.find((t) => t.id === tabId);
+        if (!tab) return;
+
+        // Exclude Action tabs with buffered output (those intentionally show exited state)
+        const isActionTab = Boolean(tab.label?.startsWith('Action:'));
+        const hasBufferedOutput = (tab.bufferLength ?? 0) > 0 || (tab.bufferChunks?.length ?? 0) > 0;
+        if (isActionTab && hasBufferedOutput) return;
+
+        if (tab.lifecycle === 'exited') {
+            setTabLifecycle(directory, tabId, 'idle');
+        }
+    }, [isTerminalVisible, effectiveDirectory, directoryTerminalState, activeTabId, enableTabs, setTabLifecycle]);
 
     React.useEffect(() => {
         terminalIdRef.current = terminalSessionId;
