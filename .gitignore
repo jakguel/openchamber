@@ -67,3 +67,12 @@ workspaces/
 # Serena LSP cache + project memories (per-machine, never commit)
 .serena/cache/
 .serena/memories/
+
+# Beads work-tracking runtime state (per-machine, never commit)
+.beads/*.db
+.beads/*.db-shm
+.beads/*.db-wal
+.beads/bd.sock
+.beads/daemon.*
+.beads/interactions.jsonl
+.beads/last-touched
