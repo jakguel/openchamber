@@ -834,6 +834,9 @@ export async function respondToPermission(
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Record the response before optimistic removal so a concurrent resync cannot
+  // restore this permission while the reply is in flight (see answeredRequestIds).
+  if (directory) addAnsweredRequestId(directory, requestId)
   // Optimistically remove the permission from the store before the SDK call so the
   // card disappears immediately and cannot reappear on remount while in flight.
   const rollback = optimisticRemovePermission(sessionId, requestId, directory)
@@ -848,7 +851,9 @@ export async function respondToPermission(
     }
   } catch (error) {
     if (rollback) {
-      // Reply failed — restore the permission so the user can retry.
+      // Reply failed — clear the answered guard so resync can restore it, then
+      // restore the optimistically removed permission so the user can retry.
+      if (directory) clearAnsweredRequestId(directory, requestId)
       restorePermission(rollback)
     }
     throw error
@@ -863,6 +868,9 @@ export async function dismissPermission(
   const directory = resolveDirectoryForBlockingRequest("permission", sessionId, requestId)
     || getSessionDirectory(sessionId)
     || dir()
+  // Record the dismissal before optimistic removal so a concurrent resync cannot
+  // restore this permission while the reply is in flight (see answeredRequestIds).
+  if (directory) addAnsweredRequestId(directory, requestId)
   // Optimistically remove the permission from the store before the SDK call.
   const rollback = optimisticRemovePermission(sessionId, requestId, directory)
   try {
@@ -876,6 +884,9 @@ export async function dismissPermission(
     }
   } catch (error) {
     if (rollback) {
+      // Reply failed — clear the answered guard so resync can restore it, then
+      // restore the optimistically removed permission so the user can retry.
+      if (directory) clearAnsweredRequestId(directory, requestId)
       restorePermission(rollback)
     }
     throw error

@@ -287,3 +287,50 @@ describe("answeredRequestIds guard", () => {
     expect(answeredRequestIds.get("/repo-b")?.has("que_2")).toBe(true)
   })
 })
+
+describe("answeredRequestIds permission guard", () => {
+  beforeEach(() => {
+    answeredRequestIds.clear()
+    listPendingQuestionsCalls.length = 0
+    listPendingPermissionsCalls.length = 0
+    pendingQuestionsResponse = []
+    pendingPermissionsResponse = []
+    pendingQuestionsShouldThrow = false
+    pendingPermissionsShouldThrow = false
+  })
+
+  test("resync does NOT restore a permission that is in answeredRequestIds", async () => {
+    const store = createDirectoryStore({})
+    pendingPermissionsResponse = [buildPermission({ id: "perm_answered" })]
+    addAnsweredRequestId("/repo", "perm_answered")
+
+    await resyncBlockingRequestsForDirectory("/repo", store)
+
+    expect(store.getState().permission["ses_a"]).toEqual(undefined)
+  })
+
+  test("resync restores permissions NOT in answeredRequestIds while skipping answered ones", async () => {
+    const store = createDirectoryStore({})
+    pendingPermissionsResponse = [
+      buildPermission({ id: "perm_answered" }),
+      buildPermission({ id: "perm_pending", sessionID: "ses_a" }),
+    ]
+    addAnsweredRequestId("/repo", "perm_answered")
+
+    await resyncBlockingRequestsForDirectory("/repo", store)
+
+    const permissions = store.getState().permission["ses_a"] ?? []
+    expect(permissions.map((p) => p.id)).not.toContain("perm_answered")
+    expect(permissions.map((p) => p.id)).toContain("perm_pending")
+  })
+
+  test("clearAnsweredRequestId removes a permission requestId from the set", () => {
+    addAnsweredRequestId("/repo", "perm_1")
+    addAnsweredRequestId("/repo", "perm_2")
+
+    clearAnsweredRequestId("/repo", "perm_1")
+
+    expect(answeredRequestIds.get("/repo")?.has("perm_1")).toBe(false)
+    expect(answeredRequestIds.get("/repo")?.has("perm_2")).toBe(true)
+  })
+})

@@ -1100,9 +1100,20 @@ export async function resyncBlockingRequestsForDirectory(
     )
     const pendingPermissions = await opencodeClient.listPendingPermissions({ directories: [directory] })
     const grouped: Record<string, PermissionRequest[]> = {}
+    const answeredPermIds = sessionActions.answeredRequestIds.get(directory)
     for (const permission of pendingPermissions) {
       if (!permission?.id || !permission.sessionID) continue
       if (!knownSessionIds.has(permission.sessionID)) continue
+      // Guard: never restore a permission the user already responded to.
+      // AC6: dismiss any zombie toast that was shown before the response resolved.
+      if (answeredPermIds?.has(permission.id)) {
+        const zombieKey = getPermissionToastKey(permission.sessionID, permission.id)
+        if (zombieKey) {
+          pendingPermissionToastIds.delete(zombieKey)
+          toast.dismiss(`permission-${zombieKey}`)
+        }
+        continue
+      }
       const list = grouped[permission.sessionID]
       if (list) list.push(permission)
       else grouped[permission.sessionID] = [permission]
@@ -1393,6 +1404,10 @@ function handleEvent(
     if (toastKey) {
       pendingPermissionToastIds.delete(toastKey)
       toast.dismiss(`permission-${toastKey}`)
+    }
+    // Server confirmed the reply — drop the resync guard for this requestId.
+    if (props.requestID && resolvedDirectory) {
+      sessionActions.clearAnsweredRequestId(resolvedDirectory, props.requestID)
     }
   }
 
