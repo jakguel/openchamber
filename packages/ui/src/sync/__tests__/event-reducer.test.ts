@@ -1,7 +1,98 @@
-import { describe, expect, test } from "bun:test"
-import type { Event, Part, PermissionRequest, QuestionRequest, SessionStatus } from "@opencode-ai/sdk/v2/client"
+import { beforeEach, describe, expect, mock, test } from "bun:test"
+import type {
+  Event,
+  OpencodeClient,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+  SessionStatus,
+} from "@opencode-ai/sdk/v2/client"
+import { create, type StoreApi } from "zustand"
 import { applyDirectoryEvent, applyOptimisticQuestionAction } from "../event-reducer"
 import { INITIAL_STATE, type State } from "../types"
+import type { ChildStoreManager, DirectoryStore } from "../child-store"
+
+// Question lifecycle fixtures (AC1/AC2/AC4): mock only the SDK client and the
+// connection gate respondToQuestion needs; tests dynamic-import session-actions
+// so these mocks register before the module evaluates.
+let questionReplyShouldThrow = false
+let onQuestionReplyInvoked: (() => void) | null = null
+const scopedReplyDirectories: string[] = []
+
+const mockQuestionClient = {
+  question: {
+    reply: mock(async () => {
+      onQuestionReplyInvoked?.()
+      if (questionReplyShouldThrow) throw new Error("simulated reply failure")
+      return { data: true }
+    }),
+    reject: mock(async () => {
+      onQuestionReplyInvoked?.()
+      if (questionReplyShouldThrow) throw new Error("simulated reject failure")
+      return { data: true }
+    }),
+  },
+}
+
+mock.module("@/lib/opencode/client", () => ({
+  opencodeClient: {
+    getScopedSdkClient: (directory: string) => {
+      scopedReplyDirectories.push(directory)
+      return mockQuestionClient
+    },
+    getDirectory: () => "/test/project",
+    setDirectory: () => undefined,
+  },
+}))
+
+mock.module("@/stores/useConfigStore", () => ({
+  useConfigStore: {
+    getState: () => ({ isConnected: true, hasEverConnected: true }),
+  },
+}))
+
+mock.module("@/stores/permissionStore", () => ({
+  usePermissionStore: {
+    getState: () => ({ isSessionAutoAccepting: () => false }),
+  },
+}))
+
+mock.module("@/stores/useTodosPersistStore", () => ({
+  useTodosPersistStore: { getState: () => ({}) },
+}))
+
+mock.module("@/components/ui", () => ({
+  toast: { info: () => undefined, error: () => undefined, success: () => undefined, dismiss: () => undefined },
+}))
+
+function makeQuestion(id: string, sessionID = "ses_a"): QuestionRequest {
+  return {
+    id,
+    sessionID,
+    questions: [{ question: "Continue?", header: "Q", options: [{ label: "Yes", description: "Proceed" }] }],
+  } as QuestionRequest
+}
+
+function createQuestionStore(sessionID: string, questions: QuestionRequest[]): StoreApi<DirectoryStore> {
+  return create<DirectoryStore>()((set) => ({
+    ...INITIAL_STATE,
+    question: { [sessionID]: questions },
+    patch: (partial) => set(partial),
+    replace: (next) => set(next),
+  }))
+}
+
+function makeChildStores(entries: Array<[string, StoreApi<DirectoryStore>]>) {
+  return {
+    children: new Map(entries),
+    ensureChild: (directory: string) => {
+      const store = new Map(entries).get(directory)
+      if (!store) throw new Error(`No store for ${directory}`)
+      return store
+    },
+    getChild: (directory: string) => new Map(entries).get(directory),
+  } as unknown as ChildStoreManager
+}
 
 function state(overrides: Partial<State> = {}): State {
   return {
@@ -314,5 +405,72 @@ describe("applyOptimisticQuestionAction", () => {
 
     expect(draft.question.ses_1).toHaveLength(1)
     expect(draft.question.ses_1.map((q) => q.id)).toEqual(["que_1"])
+  })
+})
+
+describe("respondToQuestion question lifecycle", () => {
+  beforeEach(async () => {
+    questionReplyShouldThrow = false
+    onQuestionReplyInvoked = null
+    scopedReplyDirectories.length = 0
+    const { answeredRequestIds } = await import("../session-actions")
+    answeredRequestIds.clear()
+  })
+
+  test("optimistically removes the question from the store before the reply resolves", async () => {
+    const { setActionRefs, respondToQuestion } = await import("../session-actions")
+    const store = createQuestionStore("ses_a", [makeQuestion("q-ac1")])
+    const childStores = makeChildStores([["/test/project", store]])
+    setActionRefs(mockQuestionClient as unknown as OpencodeClient, childStores, () => "/test/project")
+
+    let questionsPresentWhenReplyRan = -1
+    onQuestionReplyInvoked = () => {
+      questionsPresentWhenReplyRan = store.getState().question["ses_a"]?.length ?? 0
+    }
+
+    expect(store.getState().question["ses_a"]).toHaveLength(1)
+    await respondToQuestion("ses_a", "q-ac1", [["Yes"]])
+
+    expect(questionsPresentWhenReplyRan).toBe(0)
+    expect(store.getState().question["ses_a"] ?? []).toHaveLength(0)
+    expect(scopedReplyDirectories).toEqual(["/test/project"])
+  })
+
+  test("rolls back and restores the question when the reply fails", async () => {
+    const { setActionRefs, respondToQuestion } = await import("../session-actions")
+    const store = createQuestionStore("ses_a", [makeQuestion("q-ac2")])
+    const childStores = makeChildStores([["/test/project", store]])
+    setActionRefs(mockQuestionClient as unknown as OpencodeClient, childStores, () => "/test/project")
+    questionReplyShouldThrow = true
+
+    expect(store.getState().question["ses_a"]).toHaveLength(1)
+
+    let thrown: unknown
+    try {
+      await respondToQuestion("ses_a", "q-ac2", [["Yes"]])
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect(store.getState().question["ses_a"]).toHaveLength(1)
+    expect(store.getState().question["ses_a"]?.[0]?.id).toBe("q-ac2")
+  })
+
+  test("clears the answered guard when question.replied confirms the answer", async () => {
+    const { setActionRefs, respondToQuestion, clearAnsweredRequestId, answeredRequestIds } = await import(
+      "../session-actions"
+    )
+    const store = createQuestionStore("ses_a", [makeQuestion("q-ac4")])
+    const childStores = makeChildStores([["/test/project", store]])
+    setActionRefs(mockQuestionClient as unknown as OpencodeClient, childStores, () => "/test/project")
+
+    await respondToQuestion("ses_a", "q-ac4", [["Yes"]])
+    expect(answeredRequestIds.get("/test/project")?.has("q-ac4")).toBe(true)
+
+    // The SSE question.replied / question.rejected handler confirms the answer
+    // and drops the guard via clearAnsweredRequestId (sync-context.tsx).
+    clearAnsweredRequestId("/test/project", "q-ac4")
+    expect(answeredRequestIds.get("/test/project")?.has("q-ac4") ?? false).toBe(false)
   })
 })
