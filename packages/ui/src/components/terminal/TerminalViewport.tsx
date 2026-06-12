@@ -1327,6 +1327,14 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       resetWriteState();
       lastReportedSizeRef.current = null;
       fitTerminal();
+      // Deferred fit to handle the case where the dock's opening CSS animation
+      // (transition-[height] 300ms) leaves the container at height < 24px when
+      // the immediate fitTerminal() fires. After the animation, the container
+      // reaches its final size and — because lastReportedSizeRef was reset to
+      // null above — fitTerminal() always calls resizeHandlerRef.current(),
+      // regardless of whether the terminal's col/row count changed.
+      const postAnimFit = window.setTimeout(() => { fitTerminal(); }, 350);
+      return () => { window.clearTimeout(postAnimFit); };
     }, [sessionKey, terminalReadyVersion, fitTerminal, resetWriteState]);
 
     React.useEffect(() => {
