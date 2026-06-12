@@ -501,12 +501,8 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       }
       try {
         fitAddon.fit();
-        const next = { cols: terminal.cols, rows: terminal.rows };
-        const previous = lastReportedSizeRef.current;
-        if (!previous || previous.cols !== next.cols || previous.rows !== next.rows) {
-          lastReportedSizeRef.current = next;
-          resizeHandlerRef.current(next.cols, next.rows);
-        }
+        // PTY resize notification is handled by the terminal.onResize subscription
+        // in localDisposables, so we don't duplicate it here.
       } catch { /* ignored */ }
     }, []);
 
@@ -1131,13 +1127,18 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
 
           fitTerminal();
           const fitAddonWithResize = fitAddon as FitAddonWithObserveResize;
-          if (typeof fitAddonWithResize.observeResize === 'function') {
-            fitAddonWithResize.observeResize();
-          }
           setupTouchScroll();
           localDisposables = [
             terminal.onData((data: string) => {
               inputHandlerRef.current(data);
+            }),
+            terminal.onResize(({ cols, rows }: { cols: number; rows: number }) => {
+              const next = { cols, rows };
+              const previous = lastReportedSizeRef.current;
+              if (!previous || previous.cols !== next.cols || previous.rows !== next.rows) {
+                lastReportedSizeRef.current = next;
+                resizeHandlerRef.current(next.cols, next.rows);
+              }
             }),
             terminal.onScroll((viewportY: number) => {
               if (typeof viewportY === 'number' && Number.isFinite(viewportY)) {
@@ -1157,10 +1158,14 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
             }),
           ];
 
-          localResizeObserver = new ResizeObserver(() => {
-            fitTerminal();
-          });
-          localResizeObserver.observe(container);
+          if (typeof fitAddonWithResize.observeResize === 'function') {
+            fitAddonWithResize.observeResize();
+          } else {
+            localResizeObserver = new ResizeObserver(() => {
+              fitTerminal();
+            });
+            localResizeObserver.observe(container);
+          }
 
           if (typeof window !== 'undefined') {
             window.setTimeout(() => {
