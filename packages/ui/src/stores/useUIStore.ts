@@ -664,6 +664,7 @@ interface UIStore {
   weekStartPreference: WeekStartPreference;
   mermaidRenderingMode: MermaidRenderingMode;
   userMessageRenderingMode: UserMessageRenderingMode;
+  collapsibleUserMessages: boolean;
   stickyUserHeader: boolean;
   showSplitAssistantMessageActions: boolean;
   isMobileSessionStatusBarCollapsed: boolean;
@@ -808,6 +809,7 @@ interface UIStore {
   setWeekStartPreference: (value: WeekStartPreference) => void;
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
+  setCollapsibleUserMessages: (value: boolean) => void;
   setStickyUserHeader: (value: boolean) => void;
   setShowSplitAssistantMessageActions: (value: boolean) => void;
   setIsMobileSessionStatusBarCollapsed: (value: boolean) => void;
@@ -943,6 +945,7 @@ export const useUIStore = create<UIStore>()(
         weekStartPreference: 'auto',
         mermaidRenderingMode: 'svg',
         userMessageRenderingMode: 'markdown',
+        collapsibleUserMessages: true,
         stickyUserHeader: false,
         showSplitAssistantMessageActions: false,
         isMobileSessionStatusBarCollapsed: false,
@@ -2067,6 +2070,9 @@ export const useUIStore = create<UIStore>()(
         setUserMessageRenderingMode: (value) => {
           set({ userMessageRenderingMode: value });
         },
+        setCollapsibleUserMessages: (value) => {
+          set({ collapsibleUserMessages: value });
+        },
         setStickyUserHeader: (value) => {
           set({ stickyUserHeader: value });
         },
@@ -2299,6 +2305,7 @@ export const useUIStore = create<UIStore>()(
           weekStartPreference: state.weekStartPreference,
           mermaidRenderingMode: state.mermaidRenderingMode,
           userMessageRenderingMode: state.userMessageRenderingMode,
+          collapsibleUserMessages: state.collapsibleUserMessages,
           stickyUserHeader: state.stickyUserHeader,
           showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
           isMobileSessionStatusBarCollapsed: state.isMobileSessionStatusBarCollapsed,
