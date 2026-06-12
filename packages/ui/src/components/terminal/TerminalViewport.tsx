@@ -981,6 +981,8 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
       let restorePatchedScrollbar: (() => void) | null = null;
       let restoreContainerFocus: (() => void) | null = null;
       let specialKeysCleanup: (() => void) | null = null;
+      let localDprMediaQuery: MediaQueryList | null = null;
+      let localDprChangeHandler: (() => void) | null = null;
 
       const container = containerRef.current;
       if (!container) {
@@ -1171,6 +1173,16 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
             window.setTimeout(() => {
               fitTerminal();
             }, 0);
+
+            const dprQuery = window.matchMedia(
+              `screen and (resolution: ${window.devicePixelRatio}dppx)`
+            );
+            const dprChangeHandler = () => {
+              requestAnimationFrame(() => fitTerminal());
+            };
+            dprQuery.addEventListener('change', dprChangeHandler);
+            localDprMediaQuery = dprQuery;
+            localDprChangeHandler = dprChangeHandler;
           }
         } catch {
           // ignored
@@ -1286,6 +1298,9 @@ const TerminalViewport = React.forwardRef<TerminalController, TerminalViewportPr
         }
         localResizeObserver?.disconnect();
         localTextareaObserver?.disconnect();
+        if (localDprMediaQuery && localDprChangeHandler) {
+          localDprMediaQuery.removeEventListener('change', localDprChangeHandler);
+        }
         restoreContainerFocus?.();
 
         localTerminal?.dispose();
