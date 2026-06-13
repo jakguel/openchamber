@@ -379,6 +379,11 @@ export const TerminalView: React.FC = () => {
 
             disconnectStream();
 
+            // Track whether this connection is rehydrating a PTY from a previous
+            // app run. If it fails fatally we auto-reset to idle so ensureSession
+            // creates a fresh PTY without requiring a manual reconnect click.
+            const isRehydratedConnect = streamOptions === REHYDRATED_STREAM_OPTIONS;
+
             // Mark active before connect so early events aren't dropped.
             activeTerminalIdRef.current = terminalId;
 
@@ -467,15 +472,26 @@ export const TerminalView: React.FC = () => {
                         }
 
                         setIsReconnectPending(false);
-                        setConnectionError(
-                            t('terminalView.error.connectionFailed', { message: error.message })
-                        );
-                        setIsFatalError(true);
                         setConnecting(directory, tabId, false);
                         clearBuffer(directory, tabId);
-                        setTabLifecycle(directory, tabId, 'exited');
-                        setTabSessionId(directory, tabId, null);
                         disconnectStream();
+
+                        if (isRehydratedConnect) {
+                            // The PTY session is stale (from a previous app run). Reset
+                            // to idle so ensureSession automatically creates a fresh PTY
+                            // without requiring the user to click a reconnect button.
+                            setTabSessionId(directory, tabId, null);
+                            setTabLifecycle(directory, tabId, 'idle');
+                            setConnectionError(null);
+                            setIsFatalError(false);
+                        } else {
+                            setConnectionError(
+                                t('terminalView.error.connectionFailed', { message: error.message })
+                            );
+                            setIsFatalError(true);
+                            setTabLifecycle(directory, tabId, 'exited');
+                            setTabSessionId(directory, tabId, null);
+                        }
                     },
                 },
                 streamOptions
