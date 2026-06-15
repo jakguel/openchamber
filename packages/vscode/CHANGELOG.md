@@ -1,3 +1,18 @@
+## [1.13.0] - 2026-06-15
+
+- Startup: the extension opens faster — recent sessions, models, providers, and projects appear instantly from cache and refresh in the background, and the loading screen no longer lingers after the interface is ready.
+- Startup: requests made while OpenCode is still starting now wait briefly for it to become ready instead of failing, and if OpenCode fails to start the error now includes what it reported.
+- Sessions: the list now groups sessions under their workspace, so pinning sessions and moving them into folders work as expected.
+- Sessions: session rows now use a cleaner single-line layout, and a new control next to "archive all" toggles archived sessions on or off.
+- Chat: custom-answer question textareas resize more steadily while typing (thanks to @bigcoder84).
+- Chat/Performance: long conversations now use virtualized rendering to keep large histories responsive.
+- Chat/Input: tab-completing a mention no longer changes the selected agent (thanks to @Quat3rnion).
+- Chat/Input: Arrow Up moves the cursor inside multi-line drafts again instead of always opening prompt history.
+- Sessions: session menus now include a delete action (thanks to @ShogunPanda).
+- Sessions: deleting a parent session no longer brings deleted child sessions back into the sidebar (thanks to @panzeyu2013).
+- Sessions: switching sessions no longer leaves the chat area blank in some cases (thanks to @panzeyu2013).
+- Settings/MCP: importing MCP snippets from OpenCode config works again (thanks to @youzini).
+
 ## [1.12.4] - 2026-06-11
 
 - Agent Manager: creating isolated runs now opens sessions immediately while worktree setup continues in the background.

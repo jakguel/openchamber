@@ -519,6 +519,9 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
   if (typeof settings.stickyUserHeader === 'boolean' && settings.stickyUserHeader !== store.stickyUserHeader) {
     store.setStickyUserHeader(settings.stickyUserHeader);
   }
+  if (typeof settings.expandedEditorToolbar === 'boolean' && settings.expandedEditorToolbar !== store.expandedEditorToolbar) {
+    store.setExpandedEditorToolbar(settings.expandedEditorToolbar);
+  }
   if (typeof settings.wideChatLayoutEnabled === 'boolean' && settings.wideChatLayoutEnabled !== store.wideChatLayoutEnabled) {
     store.setWideChatLayoutEnabled(settings.wideChatLayoutEnabled);
   }
@@ -620,12 +623,6 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     && (settings.diffLayoutPreference === 'dynamic' || settings.diffLayoutPreference === 'inline' || settings.diffLayoutPreference === 'side-by-side')) {
     if (settings.diffLayoutPreference !== store.diffLayoutPreference) {
       store.setDiffLayoutPreference(settings.diffLayoutPreference);
-    }
-  }
-  if (typeof settings.diffViewMode === 'string'
-    && (settings.diffViewMode === 'single' || settings.diffViewMode === 'stacked')) {
-    if (settings.diffViewMode !== store.diffViewMode) {
-      store.setDiffViewMode(settings.diffViewMode);
     }
   }
   if (typeof settings.gitChangesViewMode === 'string'
@@ -1061,12 +1058,6 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
       || candidate.diffLayoutPreference === 'side-by-side')
   ) {
     result.diffLayoutPreference = candidate.diffLayoutPreference;
-  }
-  if (
-    typeof candidate.diffViewMode === 'string'
-    && (candidate.diffViewMode === 'single' || candidate.diffViewMode === 'stacked')
-  ) {
-    result.diffViewMode = candidate.diffViewMode;
   }
   if (
     typeof candidate.gitChangesViewMode === 'string'
