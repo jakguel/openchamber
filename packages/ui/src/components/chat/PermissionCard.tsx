@@ -4,9 +4,7 @@ import type { PermissionRequest, PermissionResponse } from '@/types/permission';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessions } from '@/sync/sync-context';
 import * as sessionActions from '@/sync/session-actions';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { useThemeSystem } from '@/contexts/useThemeSystem';
-import { generateSyntaxTheme } from '@/lib/theme/syntaxThemeGenerator';
+import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import { DiffPreview, WritePreview } from './DiffPreview';
@@ -103,8 +101,6 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
     const sourceSession = sessions.find((session) => session.id === permission.sessionID);
     return Boolean(sourceSession?.parentID && sourceSession.parentID === currentSessionId);
   }, [permission.sessionID, currentSessionId, sessions]);
-  const { currentTheme } = useThemeSystem();
-  const syntaxTheme = React.useMemo(() => generateSyntaxTheme(currentTheme), [currentTheme]);
 
   const handleResponse = async (response: PermissionResponse) => {
     setIsResponding(true);
@@ -166,16 +162,13 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
           {}
           {command && (
             <div>
-              <SyntaxHighlighter
+              <WorkerHighlightedCode
                 language="bash"
-                style={syntaxTheme}
-                PreTag="div"
-                customStyle={PERMISSION_BASH_CUSTOM_STYLE}
-                codeTagProps={PERMISSION_BASH_CODE_TAG_PROPS}
-                wrapLongLines={true}
-              >
-                {command}
-              </SyntaxHighlighter>
+                code={command}
+                style={PERMISSION_BASH_CUSTOM_STYLE}
+                codeStyle={PERMISSION_BASH_CODE_TAG_PROPS.style}
+                wrap
+              />
             </div>
           )}
         </>
@@ -196,7 +189,7 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
           )}
           {changes && (
             <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-border/20 bg-transparent">
-              <DiffPreview diff={changes} syntaxTheme={syntaxTheme} filePath={filePath} />
+              <DiffPreview diff={changes} filePath={filePath} />
             </ScrollableOverlay>
           )}
         </>
@@ -210,7 +203,7 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
       if (content) {
         return (
           <ScrollableOverlay outerClassName="max-h-[60vh]" className="tool-output-surface p-1 rounded-xl border border-border/20 bg-transparent">
-            <WritePreview content={content} syntaxTheme={syntaxTheme} filePath={filePath} />
+            <WritePreview content={content} filePath={filePath} />
           </ScrollableOverlay>
         );
       }
@@ -245,14 +238,12 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
             <div className="mb-2">
               <div className="typography-meta text-muted-foreground mb-1">{t('chat.permissionCard.headers')}</div>
               <ScrollableOverlay outerClassName="max-h-24" className="p-0">
-                <SyntaxHighlighter
+                <WorkerHighlightedCode
                   language="json"
-                  style={syntaxTheme}
-                  customStyle={PERMISSION_JSON_CUSTOM_STYLE}
-                  wrapLongLines={true}
-                >
-                  {JSON.stringify(headers, null, 2)}
-                </SyntaxHighlighter>
+                  code={JSON.stringify(headers, null, 2)}
+                  style={PERMISSION_JSON_CUSTOM_STYLE}
+                  wrap
+                />
               </ScrollableOverlay>
             </div>
           )}
@@ -260,14 +251,12 @@ export const PermissionCard: React.FC<PermissionCardProps> = ({
             <div className="mb-2">
               <div className="typography-meta text-muted-foreground mb-1">{t('chat.permissionCard.body')}</div>
               <ScrollableOverlay outerClassName="max-h-32" className="p-0">
-                <SyntaxHighlighter
+                <WorkerHighlightedCode
                   language={typeof body === 'object' ? 'json' : 'text'}
-                  style={syntaxTheme}
-                  customStyle={PERMISSION_JSON_CUSTOM_STYLE}
-                  wrapLongLines={true}
-                >
-                  {typeof body === 'object' ? JSON.stringify(body, null, 2) : String(body)}
-                </SyntaxHighlighter>
+                  code={typeof body === 'object' ? JSON.stringify(body, null, 2) : String(body)}
+                  style={PERMISSION_JSON_CUSTOM_STYLE}
+                  wrap
+                />
               </ScrollableOverlay>
             </div>
           )}
