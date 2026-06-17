@@ -391,7 +391,8 @@ export function useSync() {
           cursor: merged.cursor,
           complete: merged.complete,
         })
-      } catch {
+      } catch (error) {
+        console.error('[sync] loadMessages failed for session', sessionID, error)
         setMetaFor(sessionID, { loading: false })
       }
     },

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { stageGitFile, stageGitFiles, unstageGitFile, unstageGitFiles } from './gitApiHttp';
+import { createRuntimeUrlResolver, setRuntimeUrlResolver, getRuntimeUrlResolver } from './runtime-url';
 
 type FetchCall = {
   input: RequestInfo | URL;
@@ -8,6 +9,7 @@ type FetchCall = {
 
 const previousFetch = globalThis.fetch;
 const previousWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+let previousResolver: ReturnType<typeof getRuntimeUrlResolver> | null = null;
 
 const installFetchMock = () => {
   const calls: FetchCall[] = [];
@@ -24,14 +26,24 @@ const installFetchMock = () => {
 const installWindowMock = () => {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
+    writable: true,
     value: {
       location: { origin: 'http://localhost:3000' },
     },
   });
+  // Configure the URL resolver to produce absolute URLs matching window.location.origin.
+  // The default resolver uses relative paths; tests asserting absolute URLs require this.
+  // Also prevents leaked resolvers from other test files changing the output.
+  previousResolver = getRuntimeUrlResolver();
+  setRuntimeUrlResolver(createRuntimeUrlResolver({ apiBaseUrl: 'http://localhost:3000' }));
 };
 
 const restoreMocks = () => {
   globalThis.fetch = previousFetch;
+  if (previousResolver) {
+    setRuntimeUrlResolver(previousResolver);
+    previousResolver = null;
+  }
   if (previousWindowDescriptor) {
     Object.defineProperty(globalThis, 'window', previousWindowDescriptor);
   } else {

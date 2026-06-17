@@ -13,11 +13,13 @@ describe('createRuntimeUrlResolver', () => {
     try {
       Object.defineProperty(globalThis, 'window', {
         configurable: true,
+        writable: true,
         value,
       });
       return callback();
     } finally {
-      Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
+      // writable:true ensures later tests can restore window via plain assignment
+      Object.defineProperty(globalThis, 'window', { configurable: true, writable: true, value: originalWindow });
     }
   };
 

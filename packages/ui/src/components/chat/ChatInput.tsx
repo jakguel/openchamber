@@ -2194,10 +2194,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
             }
 
             if (isSoftNetworkError) {
+                // Always restore the message text so it's not silently lost
+                setMessage(primaryText);
                 if (allAttachments.length > 0) {
                     useInputStore.getState().setAttachedFiles(allAttachments);
-                    toast.error(t('chat.chatInput.toast.sendAttachmentsFailed'));
                 }
+                toast.error(t('chat.chatInput.toast.messageSendFailed'));
                 return;
             }
 
