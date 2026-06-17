@@ -25,7 +25,7 @@ import { useDirectoryStore } from "@/stores/useDirectoryStore"
 import { useSessionFoldersStore } from "@/stores/useSessionFoldersStore"
 import { useCommandsStore } from "@/stores/useCommandsStore"
 import { getSafeStorage } from "@/stores/utils/safeStorage"
-import { markPendingUserSendAnimation } from "@/lib/userSendAnimation"
+import { markPendingUserSendAnimation, consumePendingUserSendAnimation } from "@/lib/userSendAnimation"
 import { flattenAssistantTextParts } from "@/lib/messages/messageText"
 import { composeForkSessionMessage } from "@/lib/messages/executionMeta"
 import { waitForPendingDraftWorktreeRequest } from "@/lib/worktrees/pendingDraftWorktree"
@@ -980,28 +980,33 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
         filename: a.filename,
       }))
 
-      await routeMessage({
-        sessionId: created.id,
-        directory: createdDirectory,
-        content,
-        providerID,
-        modelID,
-        agent: effectiveDraftAgent,
-        agentMentionName,
-        variant,
-        inputMode,
-        files,
-        additionalParts: mergedAdditionalParts?.map((p) => ({
-          text: p.text,
-          synthetic: p.synthetic,
-          files: p.attachments?.map((a: AttachedFile) => ({
-            type: "file" as const,
-            mime: a.mimeType,
-            url: a.dataUrl,
-            filename: a.filename,
+      try {
+        await routeMessage({
+          sessionId: created.id,
+          directory: createdDirectory,
+          content,
+          providerID,
+          modelID,
+          agent: effectiveDraftAgent,
+          agentMentionName,
+          variant,
+          inputMode,
+          files,
+          additionalParts: mergedAdditionalParts?.map((p) => ({
+            text: p.text,
+            synthetic: p.synthetic,
+            files: p.attachments?.map((a: AttachedFile) => ({
+              type: "file" as const,
+              mime: a.mimeType,
+              url: a.dataUrl,
+              filename: a.filename,
+            })),
           })),
-        })),
-      })
+        })
+      } catch (error) {
+        consumePendingUserSendAnimation(created.id)
+        throw error
+      }
       return
     }
 
@@ -1058,28 +1063,33 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       filename: a.filename,
     }))
 
-    await routeMessage({
-      sessionId: targetSessionId || "",
-      directory: currentSessionDirectory,
-      content,
-      providerID,
-      modelID,
-      agent: effectiveAgent,
-      agentMentionName,
-      variant,
-      inputMode,
-      files,
-      additionalParts: additionalParts?.map((p) => ({
-        text: p.text,
-        synthetic: p.synthetic,
-        files: p.attachments?.map((a) => ({
-          type: "file" as const,
-          mime: a.mimeType,
-          url: a.dataUrl,
-          filename: a.filename,
+    try {
+      await routeMessage({
+        sessionId: targetSessionId || "",
+        directory: currentSessionDirectory,
+        content,
+        providerID,
+        modelID,
+        agent: effectiveAgent,
+        agentMentionName,
+        variant,
+        inputMode,
+        files,
+        additionalParts: additionalParts?.map((p) => ({
+          text: p.text,
+          synthetic: p.synthetic,
+          files: p.attachments?.map((a) => ({
+            type: "file" as const,
+            mime: a.mimeType,
+            url: a.dataUrl,
+            filename: a.filename,
+          })),
         })),
-      })),
-    })
+      })
+    } catch (error) {
+      if (targetSessionId) consumePendingUserSendAnimation(targetSessionId)
+      throw error
+    }
   },
 
   // ---------------------------------------------------------------------------

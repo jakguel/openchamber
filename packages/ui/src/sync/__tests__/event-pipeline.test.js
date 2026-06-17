@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { createEventPipeline } from '../event-pipeline';
+import { setRuntimeUrlAuthToken, clearRuntimeUrlAuthToken } from '../../lib/runtime-auth';
 
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
@@ -20,6 +21,11 @@ function installDomStubs() {
     addEventListener() {},
     removeEventListener() {},
   };
+
+  // Pre-seed a valid URL auth token so runWsAttempt's refreshRuntimeUrlAuthToken()
+  // short-circuits without calling fetch() (which would fail in the test environment
+  // due to no configured API base URL).
+  setRuntimeUrlAuthToken('test-token', Date.now() + 60_000);
 }
 
 class FakeWebSocket {
@@ -59,6 +65,7 @@ afterEach(() => {
   globalThis.window = originalWindow;
   globalThis.WebSocket = originalWebSocket;
   FakeWebSocket.instances = [];
+  clearRuntimeUrlAuthToken();
 });
 
 function createSdkWithSingleEvent(event, hold) {

@@ -16,11 +16,26 @@ mock.module('@/components/ui', () => ({
   },
 }));
 
+// mock.module is process-global in Bun and persists across test files.
+// useI18nStore must be callable (it's a Zustand hook invoked as a function
+// in components) AND expose getState/setState so victim files don't crash.
+// Using a function stub prevents "useI18nStore is not a function" in later
+// files (i18n/store.test.ts, ReasoningTimelineBlock.test.tsx, etc.).
+const i18nDictionary: Record<string, string> = {};
+const i18nStoreStub = Object.assign(
+  (_selector: (state: { dictionary: Record<string, string>; locale: string }) => unknown) =>
+    _selector({ dictionary: i18nDictionary, locale: 'en' }),
+  {
+    getState: () => ({ dictionary: i18nDictionary, locale: 'en' }),
+    setState: (patch: Partial<{ dictionary: Record<string, string>; locale: string }>) => {
+      Object.assign(i18nDictionary, patch.dictionary ?? {});
+    },
+    subscribe: () => () => {},
+  },
+);
 mock.module('@/lib/i18n', () => ({
   formatMessage: (_dictionary: Record<string, string>, key: string) => key,
-  useI18nStore: {
-    getState: () => ({ dictionary: {} }),
-  },
+  useI18nStore: i18nStoreStub,
 }));
 
 mock.module('@/contexts/runtimeAPIRegistry', () => ({

@@ -13,6 +13,10 @@ import { PROJECT_COLORS } from '@/lib/projectMeta';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { clearDirCache } from '@/sync/persist-cache';
+import { clearSessionPrefetchDirectory } from '@/sync/session-prefetch-cache';
+import { getSyncChildStores } from '@/sync/sync-refs';
+import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 
 /** Pick a color key that's least used among existing projects */
 const pickAutoColor = (projects: ProjectEntry[]): string => {
@@ -589,6 +593,29 @@ export const useProjectsStore = create<ProjectsStore>()(
           next.delete(normalizedPath);
           return { availableWorktreesByProject: next };
         });
+
+        // Clear all per-directory caches so stale state cannot survive re-add.
+        clearDirCache(normalizedPath);
+        clearSessionPrefetchDirectory(normalizedPath);
+
+        // Dispose in-memory child store (SyncProvider may not be mounted yet — guard with try).
+        try {
+          getSyncChildStores().disposeDirectory(normalizedPath);
+        } catch {
+          // SyncProvider not mounted — child store will be disposed on next bootstrap.
+        }
+
+        // Remove the project's sessions from the global sessions cache.
+        const { activeSessions, archivedSessions, removeSessions } = useGlobalSessionsStore.getState();
+        const sessionIdsToRemove = [...activeSessions, ...archivedSessions]
+          .filter((s) => {
+            const dir = (s as { directory?: string | null }).directory ?? null;
+            return dir != null && (dir.replace(/\\/g, '/').replace(/\/+$/, '') || '/') === normalizedPath;
+          })
+          .map((s) => s.id);
+        if (sessionIdsToRemove.length > 0) {
+          removeSessions(sessionIdsToRemove);
+        }
       }
 
       if (nextActiveId) {

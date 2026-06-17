@@ -461,8 +461,9 @@ function getRequestReplyClient(
   type: "permission" | "question",
   sessionId: string,
   requestId: string,
+  directoryHint?: string | null,
 ): OpencodeClient {
-  const requestDirectory = resolveDirectoryForBlockingRequest(type, sessionId, requestId)
+  const requestDirectory = directoryHint || resolveDirectoryForBlockingRequest(type, sessionId, requestId)
   if (requestDirectory) {
     return opencodeClient.getScopedSdkClient(requestDirectory)
   }
@@ -927,7 +928,9 @@ export async function respondToQuestion(
       : Array.isArray(answers[0])
         ? answers as string[][]
         : [answers as string[]]
-    const result = await getRequestReplyClient("question", sessionId, requestId).question.reply({
+    // Pass the pre-resolved directory so getRequestReplyClient can find the
+    // right scoped client even after optimisticRemoveQuestion removed the item.
+    const result = await getRequestReplyClient("question", sessionId, requestId, directory).question.reply({
       requestID: requestId,
       answers: normalizedAnswers,
       ...(directory ? { directory } : {}),
@@ -964,7 +967,7 @@ export async function rejectQuestion(
   // card disappears immediately and cannot reappear on remount while in flight.
   const rollback = optimisticRemoveQuestion(sessionId, requestId, directory)
   try {
-    const result = await getRequestReplyClient("question", sessionId, requestId).question.reject({
+    const result = await getRequestReplyClient("question", sessionId, requestId, directory).question.reject({
       requestID: requestId,
       ...(directory ? { directory } : {}),
     })

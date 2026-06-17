@@ -1448,15 +1448,19 @@ export const useUIStore = create<UIStore>()(
 
         prepareForSessionSwitch: (sessionId: string | null) => {
           if (!sessionId) return;
-          sessionWindowStateBySession.set(sessionId, {
+          const state = {
             isBottomTerminalOpen: get().isBottomTerminalOpen,
             isBottomTerminalExpanded: get().isBottomTerminalExpanded,
             activeMainTab: get().activeMainTab,
-          });
+          };
+          console.debug('[sessionWindowState] prepareForSessionSwitch', sessionId.slice(-8), JSON.stringify(state));
+          sessionWindowStateBySession.set(sessionId, state);
         },
 
         restoreForSessionSwitch: (sessionId: string | null) => {
-          const restored = (sessionId ? sessionWindowStateBySession.get(sessionId) : null) ?? DEFAULT_SESSION_WINDOW_STATE;
+          const saved = sessionId ? sessionWindowStateBySession.get(sessionId) : null;
+          const restored = saved ?? DEFAULT_SESSION_WINDOW_STATE;
+          console.debug('[sessionWindowState] restoreForSessionSwitch', sessionId?.slice(-8), saved ? 'from-map' : 'DEFAULT', JSON.stringify(restored));
           set({
             isBottomTerminalOpen: restored.isBottomTerminalOpen,
             isBottomTerminalExpanded: restored.isBottomTerminalExpanded,

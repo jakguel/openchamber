@@ -554,7 +554,12 @@ export function applyOptimisticQuestionAction(
       if (!result.found) return false
       const next = [...questions]
       next.splice(result.index, 1)
-      draft.question[action.sessionID] = next
+      if (next.length === 0) {
+        // Delete the key entirely so consumers see undefined, not an empty array.
+        delete draft.question[action.sessionID]
+      } else {
+        draft.question[action.sessionID] = next
+      }
       return true
     }
     case "question.optimistic-restore": {

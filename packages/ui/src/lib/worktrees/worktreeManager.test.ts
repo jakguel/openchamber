@@ -36,6 +36,8 @@ mock.module('@/lib/worktrees/worktreeBootstrap', () => ({
 
 mock.module('@/lib/worktrees/worktreeStatus', () => ({
   invalidateResolvedProjectRootCache: mock(),
+  getRootBranch: mock(() => Promise.resolve('main')),
+  getWorktreeStatus: mock(() => Promise.resolve({ status: 'ok', branch: 'main' })),
   resolveProjectRoot: (directory: string) => Promise.resolve(directory),
 }));
 

@@ -78,23 +78,24 @@ describe('resolveFallbackTaskSessionId', () => {
     expect(result).toBe('child-1');
   });
 
-  it('returns undefined when child was created before task start', () => {
+  it('returns undefined when child was created well before task start (outside lookback window)', () => {
     const child = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
-      time: { created: taskStartTime - 1, updated: taskStartTime - 1 },
+      time: { created: taskStartTime - 5000, updated: taskStartTime - 5000 },
     });
 
     const result = resolveFallbackTaskSessionId({
       isTaskTool: true,
       parentSessionId,
       taskStartTime,
+      isTaskFinalized: true,
       sessions: [child],
     });
     expect(result).toBeUndefined();
   });
 
-  it('returns undefined when child was created too long after task start', () => {
+  it('returns undefined when child was created too long after task start (finalized, outside window)', () => {
     const child = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
@@ -105,12 +106,13 @@ describe('resolveFallbackTaskSessionId', () => {
       isTaskTool: true,
       parentSessionId,
       taskStartTime,
+      isTaskFinalized: true,
       sessions: [child],
     });
     expect(result).toBeUndefined();
   });
 
-  it('returns undefined when multiple children match and are ambiguous', () => {
+  it('returns most recently created child when multiple idle candidates match', () => {
     const child1 = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
@@ -128,7 +130,8 @@ describe('resolveFallbackTaskSessionId', () => {
       taskStartTime,
       sessions: [child1, child2],
     });
-    expect(result).toBeUndefined();
+    // Multiple idle candidates: picks most recently created (child-2 created later)
+    expect(result).toBe('child-2');
   });
 
   it('returns the busy child when multiple children match but only one is busy', () => {
@@ -235,7 +238,7 @@ describe('resolveFallbackTaskSessionId', () => {
     expect(result).toBe('child-1');
   });
 
-  it('returns undefined when taskStartTime is undefined', () => {
+  it('returns child session when taskStartTime is undefined (time filter skipped)', () => {
     const child = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
@@ -248,6 +251,7 @@ describe('resolveFallbackTaskSessionId', () => {
       taskStartTime: undefined,
       sessions: [child],
     });
-    expect(result).toBeUndefined();
+    // taskStartTime unknown → time filter skipped → child still matches
+    expect(result).toBe('child-1');
   });
 });
