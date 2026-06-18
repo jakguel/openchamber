@@ -451,6 +451,7 @@ const StaticGroupedToolRow: React.FC<StaticGroupedToolRowProps> = ({
             toolName={toolName}
             activities={activities}
             animateTailText={animateTailText}
+            animateRows={animateRows}
         />
     );
 
@@ -567,6 +568,7 @@ const StaticToolRowInner: React.FC<{
     toolName: string;
     activities: TurnActivityPart[];
     animateTailText: boolean;
+    animateRows: boolean;
 }> = ({ toolName, activities, animateTailText }) => {
     const showToolFileIcons = useUIStore((state) => state.showToolFileIcons);
     const displayName = getToolMetadata(toolName).displayName;
@@ -777,6 +779,7 @@ const StaticToolRowInner: React.FC<{
 export const StaticToolRow = React.memo(StaticToolRowInner, (prev, next) => {
     return prev.toolName === next.toolName
         && prev.animateTailText === next.animateTailText
+        && prev.animateRows === next.animateRows
         && areActivityListsEqual(prev.activities, next.activities);
 });
 

@@ -1821,6 +1821,7 @@ const AssistantMessageBody = React.memo(({
                                     },
                                 ]}
                                 animateTailText={animatedToolIdsLookup.has(toolPart.id)}
+                                animateRows={false}
                             />
                         </ToolRevealOnMount>
                     </FadeInOnReveal>
