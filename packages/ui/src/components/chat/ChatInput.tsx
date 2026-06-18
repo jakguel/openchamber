@@ -591,11 +591,15 @@ const ComposerAttachmentControls = React.memo(function ComposerAttachmentControl
             ) : null}
         </div>
     );
+// TODO: parent should wrap handlePickLocalFiles, openIssuePicker, openPrPicker in useCallback for memo efficiency
 }, (prev, next) => (
     prev.isVSCode === next.isVSCode
     && prev.footerIconButtonClass === next.footerIconButtonClass
     && prev.iconSizeClass === next.iconSizeClass
     && prev.onOpenSettings === next.onOpenSettings
+    && prev.handlePickLocalFiles === next.handlePickLocalFiles
+    && prev.openIssuePicker === next.openIssuePicker
+    && prev.openPrPicker === next.openPrPicker
 ));
 
 type PermissionAutoAcceptButtonProps = {
