@@ -2181,16 +2181,10 @@ export function useSessionStatus(sessionID: string, directory?: string) {
 
 /** Get permissions for a specific session */
 export function useSessionPermissions(sessionID: string, directory?: string) {
-  const store = useDirectoryStore(directory)
-  const getSnapshot = useCallback(() => {
-    if (!sessionID) return EMPTY_PERMISSION_REQUESTS
-    return store.getState().permission[sessionID] ?? EMPTY_PERMISSION_REQUESTS
-  }, [sessionID, store])
-  const subscribe = useCallback((notify: () => void) => {
-    if (!sessionID) return () => undefined
-    return store.subscribe(notify)
-  }, [sessionID, store])
-  return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  return useDirectorySync(
+    useCallback((state: State) => state.permission[sessionID] ?? EMPTY_PERMISSION_REQUESTS, [sessionID]),
+    directory,
+  )
 }
 
 /** Get questions for a specific session */
