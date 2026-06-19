@@ -6,6 +6,15 @@ import {
     UNDERFILL_PERSIST_THRESHOLD,
 } from './useChatTimelineController';
 
+// ─── Regression context ────────────────────────────────────────────────────────
+// Bug: pending-subagent ToolPart height churn transiently underfills the viewport.
+// HALF 2 fix: shouldFireAutoLoadEarlierWithPersistence requires threshold=2
+// consecutive underfill observations before auto-load-earlier fires.
+// A single-frame transient collapse (count=1) is suppressed.
+// A genuinely short/underfilled session stays underfilled and fires on count=2.
+// These tests FAIL if the threshold guard is removed (bug reintroduced).
+// ──────────────────────────────────────────────────────────────────────────────
+
 const baseInput = {
     sessionId: 'ses_1',
     isPinned: true,
@@ -105,3 +114,104 @@ describe('shouldFireAutoLoadEarlierWithPersistence', () => {
         })).toBe(false);
     });
 });
+
+// ─── Scroll oscillation regression — HALF 2 ───────────────────────────────────
+// These tests directly encode the HALF 2 oscillation bug fix.
+// Each assertion would produce the WRONG result if the persistence guard were removed.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('scroll oscillation regression — HALF 2 (persistence guard for auto-load-earlier)', () => {
+    // (e) Transient single-frame collapse: pending-subagent height churn produces
+    // exactly ONE underfill observation before the placeholder re-expands.
+    // The persistence guard MUST suppress auto-load-earlier for count=1.
+    // Regression: if threshold is removed (always fires on underfilledNow=true),
+    // this returns true and history prepend + anchor-restore drives scrollTop to 0.
+    test('(e) transient single-frame underfill (count=1) does NOT fire auto-load-earlier', () => {
+        expect(shouldFireAutoLoadEarlierWithPersistence({
+            underfilledNow: true,
+            consecutiveUnderfillCount: 1,
+            threshold: UNDERFILL_PERSIST_THRESHOLD,
+        })).toBe(false);
+    });
+
+    // (e) Genuinely short session: content is truly underfilled across multiple
+    // ResizeObserver callbacks. count reaches threshold -> MUST fire.
+    // Regression: if threshold is raised too high, this returns false and short
+    // sessions never auto-load-earlier (breaks legitimate use case).
+    test('(e) persistent underfill (count >= threshold) fires auto-load-earlier', () => {
+        expect(shouldFireAutoLoadEarlierWithPersistence({
+            underfilledNow: true,
+            consecutiveUnderfillCount: UNDERFILL_PERSIST_THRESHOLD,
+            threshold: UNDERFILL_PERSIST_THRESHOLD,
+        })).toBe(true);
+    });
+
+    // (e) Boundary: count exactly at threshold-1 (one below) must NOT fire.
+    test('(e) count one below threshold does not fire (boundary)', () => {
+        expect(shouldFireAutoLoadEarlierWithPersistence({
+            underfilledNow: true,
+            consecutiveUnderfillCount: UNDERFILL_PERSIST_THRESHOLD - 1,
+            threshold: UNDERFILL_PERSIST_THRESHOLD,
+        })).toBe(false);
+    });
+
+    // (e) Multiple concurrent pending subagents: same-frame coalescing.
+    // The predicate is pure — repeated calls with the same count are idempotent.
+    // Two ResizeObserver callbacks firing in the same frame both see count=1 -> both false.
+    test('(e) same-frame coalescing: two calls with count=1 both return false', () => {
+        const args = { underfilledNow: true, consecutiveUnderfillCount: 1, threshold: UNDERFILL_PERSIST_THRESHOLD };
+        expect(shouldFireAutoLoadEarlierWithPersistence(args)).toBe(false);
+        expect(shouldFireAutoLoadEarlierWithPersistence(args)).toBe(false);
+    });
+
+    // Point-in-time predicate: underfill detection boundary (scrollHeight <= clientHeight + 1).
+    // At exactly clientHeight+1 -> underfilled (fires if count >= threshold).
+    test('(e) scrollHeight exactly at clientHeight+1 is underfilled', () => {
+        expect(shouldAutoLoadEarlierForUnderfilledPinnedViewport({
+            ...baseInput,
+            scrollHeight: 801,  // clientHeight=800, 801 <= 801 -> true
+            clientHeight: 800,
+        })).toBe(true);
+    });
+
+    // At clientHeight+2 -> NOT underfilled (content fills viewport).
+    test('(e) scrollHeight at clientHeight+2 is NOT underfilled', () => {
+        expect(shouldAutoLoadEarlierForUnderfilledPinnedViewport({
+            ...baseInput,
+            scrollHeight: 802,  // 802 > 801 -> false
+            clientHeight: 800,
+        })).toBe(false);
+    });
+
+    // Guard: canLoadEarlier=false prevents auto-load even when underfilled.
+    // This ensures the guard does not fire when there is no history to load.
+    test('(e) canLoadEarlier=false suppresses auto-load even when underfilled', () => {
+        expect(shouldAutoLoadEarlierForUnderfilledPinnedViewport({
+            ...baseInput,
+            canLoadEarlier: false,
+            scrollHeight: 799,
+            clientHeight: 800,
+        })).toBe(false);
+    });
+
+    // Guard: sessionId=null suppresses auto-load (no active session).
+    test('(e) null sessionId suppresses auto-load', () => {
+        expect(shouldAutoLoadEarlierForUnderfilledPinnedViewport({
+            ...baseInput,
+            sessionId: null,
+            scrollHeight: 799,
+            clientHeight: 800,
+        })).toBe(false);
+    });
+
+    // Verify threshold constant is 2 — if someone changes it, tests become vacuous.
+    test('UNDERFILL_PERSIST_THRESHOLD is exactly 2 (single-frame collapse = 1 = below threshold)', () => {
+        expect(UNDERFILL_PERSIST_THRESHOLD).toBe(2);
+    });
+});
+
+// ─── Deferred to .8.17 (Playwright real-layout E2E) ──────────────────────────
+// (d) history-prepend anchor-restore: captureViewportAnchor / restoreViewportAnchor
+//     delegate to messageListRef.current — requires a live virtualizer ref.
+//     No pure seam exists for the DOM-write side.
+//     Covered by Playwright task .8.17 AC5.
+// ─────────────────────────────────────────────────────────────────────────────
