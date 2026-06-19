@@ -432,7 +432,12 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
     // Session status from sync system
     const sessionStatusForCurrent = useSessionStatus(currentSessionId ?? '', effectiveSessionDirectory) ?? IDLE_SESSION_STATUS;
 
-    // Permissions & questions from sync system
+    // Permissions & questions from sync system.
+    // INVARIANT: Child/subagent sessions share the parent's working directory, so OpenCode
+    // routes their `question.asked`/`permission.asked` events to the SAME directory store as
+    // the parent. Reading from `effectiveSessionDirectory` therefore covers all scoped child
+    // sessions — no cross-directory aggregation is needed. Verified in openchamber-5ki.4.1
+    // (event-pipeline.ts resolveEventDirectory → resolveDirectoryFromRoutingIndex chain).
     const allPermissions = useDirectorySync(
         React.useCallback((s) => s.permission ?? {}, []),
         effectiveSessionDirectory,
