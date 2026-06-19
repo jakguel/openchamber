@@ -102,6 +102,21 @@ export const shouldAutoLoadEarlierForUnderfilledPinnedViewport = (input: {
     scrollHeight: number;
     clientHeight: number;
 }): boolean => {
+    // [TEMP-INSTRUMENT openchamber-5ki.8.13] log inputs + decision. REMOVED in .8.18.
+    let __dbgDecision = true;
+    let __dbgReason = 'underfilled';
+    if (!input.sessionId) { __dbgDecision = false; __dbgReason = 'no-session'; }
+    else if (!input.isPinned || !input.canLoadEarlier) { __dbgDecision = false; __dbgReason = !input.isPinned ? 'not-pinned' : 'cannot-load-earlier'; }
+    else if (input.isLoadingOlder || input.pendingRevealWork) { __dbgDecision = false; __dbgReason = input.isLoadingOlder ? 'loading-older' : 'pending-reveal-work'; }
+    else { __dbgDecision = input.scrollHeight <= input.clientHeight + 1; __dbgReason = __dbgDecision ? 'underfilled' : 'viewport-filled'; }
+    console.log('[SCROLL-DBG shouldAutoLoadEarlier]', {
+        sessionId: input.sessionId, isPinned: input.isPinned, canLoadEarlier: input.canLoadEarlier,
+        isLoadingOlder: input.isLoadingOlder, pendingRevealWork: input.pendingRevealWork,
+        scrollHeight: input.scrollHeight, clientHeight: input.clientHeight,
+        underfilled: input.scrollHeight <= input.clientHeight + 1,
+        decision: __dbgDecision, reason: __dbgReason,
+    });
+
     if (!input.sessionId) return false;
     if (!input.isPinned || !input.canLoadEarlier) return false;
     if (input.isLoadingOlder || input.pendingRevealWork) return false;
@@ -340,10 +355,20 @@ export const useChatTimelineController = ({
         if (!snap || !container) return;
         prePrependScrollRef.current = null;
 
+        // [TEMP-INSTRUMENT openchamber-5ki.8.13] HALF 2 probe — anchor-restore running after a history prepend; log scrollTop before/after to confirm it drives toward 0 (TOP). REMOVED in .8.18.
+        const __dbgTopBefore = container.scrollTop;
+
         // When a viewport anchor is available, delegate to MessageList
         // restoreViewportAnchor which falls back to virtualizer-aware
         // scrollHistoryIndexIntoView when the element is not in the DOM.
         if (snap.anchor && restoreViewportAnchor(snap.anchor)) {
+            console.log('[SCROLL-DBG anchor-restore:viewportAnchor]', {
+                snapTop: snap.top, snapHeight: snap.height,
+                topBefore: __dbgTopBefore, topAfter: container.scrollTop,
+                scrollHeight: container.scrollHeight, clientHeight: container.clientHeight,
+                drivenTowardTop: container.scrollTop < __dbgTopBefore,
+                nearTop: container.scrollTop < 10,
+            });
             return;
         }
 
@@ -352,6 +377,14 @@ export const useChatTimelineController = ({
         if (delta > 0) {
             container.scrollTop = snap.top + delta;
         }
+        console.log('[SCROLL-DBG anchor-restore:heightDelta]', {
+            snapTop: snap.top, snapHeight: snap.height, delta,
+            targetWritten: delta > 0 ? snap.top + delta : __dbgTopBefore,
+            topBefore: __dbgTopBefore, topAfter: container.scrollTop,
+            scrollHeight: container.scrollHeight, clientHeight: container.clientHeight,
+            drivenTowardTop: container.scrollTop < __dbgTopBefore,
+            nearTop: container.scrollTop < 10,
+        });
     }, [renderedMessages, scrollRef, restoreViewportAnchor]);
 
     const revealBufferedTurns = React.useCallback(async (): Promise<boolean> => false, []);
@@ -475,6 +508,13 @@ export const useChatTimelineController = ({
         })) {
             return;
         }
+
+        // [TEMP-INSTRUMENT openchamber-5ki.8.13] HALF 2 probe — loadEarlier IS firing from the underfilled-pinned-viewport path (history prepend follows). REMOVED in .8.18.
+        console.log('[SCROLL-DBG loadEarlierIfPinnedViewportUnderfilled] FIRING void loadEarlier()', {
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+            scrollTop: container.scrollTop,
+        });
 
         void loadEarlier();
     }, [loadEarlier, scrollRef]);

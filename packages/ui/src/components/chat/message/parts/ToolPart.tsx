@@ -2563,8 +2563,22 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
         if (taskSummaryLenRef.current === taskSummaryEntries.length) {
             return;
         }
+        // [TEMP-INSTRUMENT openchamber-5ki.8.13] task-part height source — log summary-entry-count delta + measured element height on each structural notify. REMOVED in .8.18.
+        {
+            const __dbgPrevLen = taskSummaryLenRef.current;
+            const __dbgEl = expandedContentRef.current;
+            console.log('[SCROLL-DBG ToolPart:onContentChange structural]', {
+                partId: part.id,
+                prevLen: __dbgPrevLen,
+                nextLen: taskSummaryEntries.length,
+                lenDelta: taskSummaryEntries.length - __dbgPrevLen,
+                elHeight: __dbgEl ? __dbgEl.offsetHeight : null,
+                isExpanded,
+            });
+        }
         taskSummaryLenRef.current = taskSummaryEntries.length;
         onContentChange?.('structural');
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- [TEMP-INSTRUMENT openchamber-5ki.8.13] isExpanded/part.id read for logging only; deps intentionally unchanged to preserve original behavior. REMOVED in .8.18.
     }, [isTaskTool, onContentChange, taskSummaryEntries.length]);
 
     const diffStats = React.useMemo(() => {

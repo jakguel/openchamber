@@ -132,6 +132,8 @@ export const useChatAutoFollow = ({
     const followRafRef = React.useRef<number | null>(null);
     const settledFramesRef = React.useRef(0);
     const lastScrollTopRef = React.useRef(0);
+    // [TEMP-INSTRUMENT openchamber-5ki.8.13] tracks maxScroll(=scrollHeight-clientHeight) across scroll events to detect content-driven downward clamps misread as user scroll-up. REMOVED in .8.18.
+    const __dbgLastMaxScrollRef = React.useRef(0);
     const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingSaveRef = React.useRef<{ sessionId: string; anchor: number } | null>(null);
     const settleBurstRafRef = React.useRef<number | null>(null);
@@ -444,9 +446,23 @@ export const useChatAutoFollow = ({
         const previousTop = lastScrollTopRef.current;
         lastScrollTopRef.current = currentTop;
 
+        // [TEMP-INSTRUMENT openchamber-5ki.8.13] capture maxScroll deltas + state transition. REMOVED in .8.18.
+        const __dbgMaxScrollNow = container.scrollHeight - container.clientHeight;
+        const __dbgMaxScrollPrev = __dbgLastMaxScrollRef.current;
+        __dbgLastMaxScrollRef.current = __dbgMaxScrollNow;
+        const __dbgStateBefore = stateRef.current;
+
         updateOverflowAndButton();
 
         if (programmatic) {
+            // [TEMP-INSTRUMENT openchamber-5ki.8.13] programmatic early-return branch — logs to confirm ref staleness hypothesis. REMOVED in .8.18.
+            console.log('[SCROLL-DBG handleScrollEvent:programmatic]', {
+                currentTop, previousTop,
+                maxScrollNow: __dbgMaxScrollNow, maxScrollPrev: __dbgMaxScrollPrev,
+                maxScrollDelta: __dbgMaxScrollNow - __dbgMaxScrollPrev,
+                inProgrammaticWindow: true,
+                stateBefore: __dbgStateBefore, stateAfter: stateRef.current,
+            });
             return;
         }
 
@@ -455,6 +471,22 @@ export const useChatAutoFollow = ({
             stopSettleBurst();
             lastUserReleaseAtRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
             setStateValue('released');
+        }
+
+        // [TEMP-INSTRUMENT openchamber-5ki.8.13] HALF 1 greenlight probe — did release fire because of a content-driven maxScroll DECREASE (clamp), outside the programmatic window? REMOVED in .8.18.
+        {
+            const movedUp = currentTop < previousTop;
+            const maxScrollDecreased = __dbgMaxScrollNow < __dbgMaxScrollPrev;
+            const releasedThisEvent = __dbgStateBefore === 'following' && stateRef.current === 'released';
+            console.log('[SCROLL-DBG handleScrollEvent]', {
+                currentTop, previousTop, movedUp,
+                maxScrollNow: __dbgMaxScrollNow, maxScrollPrev: __dbgMaxScrollPrev,
+                maxScrollDelta: __dbgMaxScrollNow - __dbgMaxScrollPrev, maxScrollDecreased,
+                inProgrammaticWindow: false,
+                stateBefore: __dbgStateBefore, stateAfter: stateRef.current,
+                releasedThisEvent,
+                HALF1_FALSE_RELEASE: releasedThisEvent && movedUp && maxScrollDecreased,
+            });
         }
 
         const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
