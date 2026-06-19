@@ -119,6 +119,16 @@ function areJsonEquivalent(left: unknown, right: unknown): boolean {
 }
 
 function areMessageUpdateFieldsEqual(existing: Message, next: Message): boolean {
+  // INTENTIONALLY EXCLUDED FIELDS (stable identity / immutable at creation):
+  // `id`         excluded: primary key — never changes for a given message object.
+  // `sessionID`  excluded: routing key — set at creation, never mutated by server.
+  // `time.created` excluded: immutable creation timestamp — only `time.completed` (below) can change.
+  // `parentID`   excluded (AssistantMessage): stable parent reference set at creation, never updated.
+  // `modelID`    excluded (AssistantMessage): resolved model ID set at creation, never updated.
+  // `providerID` excluded (AssistantMessage): resolved provider ID set at creation, never updated.
+  // `mode`       excluded (AssistantMessage): generation mode set at creation, never updated.
+  // `path`       excluded (AssistantMessage): working directory captured at creation, never updated.
+
   if (existing.role !== next.role) return false
   if ((existing as { finish?: unknown }).finish !== (next as { finish?: unknown }).finish) return false
   if ((existing.time as { completed?: number })?.completed !== (next.time as { completed?: number })?.completed) return false
