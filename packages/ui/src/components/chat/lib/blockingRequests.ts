@@ -10,9 +10,6 @@ export const collectVisibleSessionIdsForBlockingRequests = (
     if (!currentSessionId) return [];
     if (!Array.isArray(sessions) || sessions.length === 0) return [currentSessionId];
 
-    const current = sessions.find((session) => session.id === currentSessionId);
-    if (!current) return [currentSessionId];
-
     const childrenByParent = new Map<string, string[]>();
     for (const session of sessions) {
         if (!session.parentID) {
