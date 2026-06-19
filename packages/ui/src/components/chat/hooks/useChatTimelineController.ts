@@ -123,6 +123,32 @@ export const shouldAutoLoadEarlierForUnderfilledPinnedViewport = (input: {
     return input.scrollHeight <= input.clientHeight + 1;
 };
 
+// Minimum number of consecutive underfill observations required before auto-load-earlier fires.
+// A single-frame transient collapse (pending-subagent height churn) produces exactly 1 observation
+// and is suppressed. A genuinely short/underfilled session stays underfilled across every
+// measurement and satisfies the threshold on the second observation.
+export const UNDERFILL_PERSIST_THRESHOLD = 2;
+
+/**
+ * Pure persistence predicate — mirrors the shouldReleaseAutoFollowOnScroll pattern from HALF 1.
+ * Testable with injected numbers; no DOM or React dependencies.
+ *
+ * Returns true only when the underfill has been observed for at least `threshold` consecutive
+ * measurements. A single-frame transient collapse (consecutiveUnderfillCount === 1) returns false.
+ */
+export const shouldFireAutoLoadEarlierWithPersistence = ({
+    underfilledNow,
+    consecutiveUnderfillCount,
+    threshold,
+}: {
+    underfilledNow: boolean;
+    consecutiveUnderfillCount: number;
+    threshold: number;
+}): boolean => {
+    if (!underfilledNow) return false;
+    return consecutiveUnderfillCount >= threshold;
+};
+
 export const useChatTimelineController = ({
     sessionId,
     messages,
@@ -179,6 +205,11 @@ export const useChatTimelineController = ({
     const pendingScrollRequestRef = React.useRef<PendingScrollRequest | null>(null);
     const historyInteractionRef = React.useRef(false);
     const historyInteractionTimerRef = React.useRef<number | null>(null);
+    // Persistence counter for the underfilled-viewport auto-load-earlier guard (HALF 2 fix).
+    // Incremented each time the point-in-time predicate returns true; reset to 0 on a filled
+    // measurement or session change. loadEarlier only fires when this reaches UNDERFILL_PERSIST_THRESHOLD,
+    // suppressing single-frame transient collapses from pending-subagent height churn.
+    const consecutiveUnderfillCountRef = React.useRef(0);
 
     const historySignals = React.useMemo(() => {
         const defaultLimit = getMemoryLimits().HISTORICAL_MESSAGES;
@@ -238,6 +269,7 @@ export const useChatTimelineController = ({
             historyInteractionTimerRef.current = null;
         }
         historyInteractionRef.current = false;
+        consecutiveUnderfillCountRef.current = 0;
         initializedSessionRef.current = sessionId;
         setIsLoadingOlder(false);
         setPendingRevealWork(false);
@@ -497,7 +529,9 @@ export const useChatTimelineController = ({
         if (historyInteractionRef.current) return;
         const container = scrollRef.current;
         if (!container) return;
-        if (!shouldAutoLoadEarlierForUnderfilledPinnedViewport({
+
+        // Point-in-time underfill check (pure predicate, unchanged).
+        const underfilledNow = shouldAutoLoadEarlierForUnderfilledPinnedViewport({
             sessionId: sessionIdRef.current,
             isPinned: isPinnedRef.current,
             canLoadEarlier: historySignalsRef.current.canLoadEarlier,
@@ -505,9 +539,30 @@ export const useChatTimelineController = ({
             pendingRevealWork: pendingRevealWorkRef.current,
             scrollHeight: container.scrollHeight,
             clientHeight: container.clientHeight,
+        });
+
+        // Persistence/coalescing rule (HALF 2 fix): require UNDERFILL_PERSIST_THRESHOLD consecutive
+        // underfill observations before firing loadEarlier. A single-frame transient collapse from
+        // pending-subagent height churn produces exactly 1 observation and is suppressed. A genuinely
+        // short/underfilled session stays underfilled across every measurement and satisfies the
+        // threshold on the second observation. The ResizeObserver scheduleCheck already coalesces
+        // same-frame fires (if (frame !== null) return), so each call here is a distinct rAF tick.
+        if (underfilledNow) {
+            consecutiveUnderfillCountRef.current += 1;
+        } else {
+            consecutiveUnderfillCountRef.current = 0;
+        }
+
+        if (!shouldFireAutoLoadEarlierWithPersistence({
+            underfilledNow,
+            consecutiveUnderfillCount: consecutiveUnderfillCountRef.current,
+            threshold: UNDERFILL_PERSIST_THRESHOLD,
         })) {
             return;
         }
+
+        // Reset counter after firing so a subsequent spurious measurement doesn't double-fire.
+        consecutiveUnderfillCountRef.current = 0;
 
         // [TEMP-INSTRUMENT openchamber-5ki.8.13] HALF 2 probe — loadEarlier IS firing from the underfilled-pinned-viewport path (history prepend follows). REMOVED in .8.18.
         console.log('[SCROLL-DBG loadEarlierIfPinnedViewportUnderfilled] FIRING void loadEarlier()', {
