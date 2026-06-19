@@ -70,6 +70,19 @@ function getToolStatus(part: Part): string | undefined {
   return typeof status === "string" ? status : undefined
 }
 
+// CONTRACT: The OpenCode server never regresses a tool part from a final status
+// (completed/error) back to a non-final one (pending/running), nor removes an end
+// timestamp once set. The ToolState discriminated union in @opencode-ai/sdk is a
+// monotonic state machine: pending → running → completed|error. Transitions only
+// move forward. A part.updated event that would regress a finalised tool is therefore
+// stale or out-of-order and must be dropped to prevent UI flicker.
+// Verified against @opencode-ai/sdk ToolState (dist/v2/gen/types.gen.d.ts):
+//   ToolStatePending   { status: "pending" }
+//   ToolStateRunning   { status: "running",    time: { start } }
+//   ToolStateCompleted { status: "completed",  time: { start, end } }  ← final
+//   ToolStateError     { status: "error",      time: { start, end } }  ← final
+// No version/sequence field exists on ToolPart itself, so timestamp comparison is
+// not possible; the monotonic contract is the only safe guard.
 function shouldPreserveExistingPart(previous: Part, next: Part): boolean {
   if (previous.type !== "tool" || next.type !== "tool") {
     return false
