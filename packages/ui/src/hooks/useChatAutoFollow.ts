@@ -52,6 +52,32 @@ const TOUCH_FINGER_DOWN_THRESHOLD = 2;
 const SETTLE_BURST_DURATION_MS = 280;
 const REPIN_GRACE_AFTER_RELEASE_MS = 1200;
 
+export interface AutoFollowReleaseDecisionInput {
+    state: AutoFollowState;
+    currentTop: number;
+    previousTop: number;
+    maxScrollNow: number;
+    maxScrollPrev: number;
+}
+
+// A pending-subagent placeholder can collapse, dropping scrollHeight and thus
+// maxScroll (= scrollHeight - clientHeight); the browser then clamps scrollTop
+// downward. That clamp looks identical to a user scroll-up (currentTop <
+// previousTop) but is content-driven, so it must NOT release auto-follow.
+// Release only on an upward move that is NOT explained by a maxScroll decrease.
+export const shouldReleaseAutoFollowOnScroll = ({
+    state,
+    currentTop,
+    previousTop,
+    maxScrollNow,
+    maxScrollPrev,
+}: AutoFollowReleaseDecisionInput): boolean => {
+    if (state !== 'following') return false;
+    if (currentTop >= previousTop) return false;
+    const isContentDrivenClamp = maxScrollNow < maxScrollPrev;
+    return !isContentDrivenClamp;
+};
+
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
 // — its height is exactly how far above scrollHeight the user can be while still
 // looking at "empty" space. We use that same value as the threshold for both
@@ -132,6 +158,7 @@ export const useChatAutoFollow = ({
     const followRafRef = React.useRef<number | null>(null);
     const settledFramesRef = React.useRef(0);
     const lastScrollTopRef = React.useRef(0);
+    const lastMaxScrollRef = React.useRef(0);
     // [TEMP-INSTRUMENT openchamber-5ki.8.13] tracks maxScroll(=scrollHeight-clientHeight) across scroll events to detect content-driven downward clamps misread as user scroll-up. REMOVED in .8.18.
     const __dbgLastMaxScrollRef = React.useRef(0);
     const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -446,6 +473,10 @@ export const useChatAutoFollow = ({
         const previousTop = lastScrollTopRef.current;
         lastScrollTopRef.current = currentTop;
 
+        const maxScrollNow = container.scrollHeight - container.clientHeight;
+        const maxScrollPrev = lastMaxScrollRef.current;
+        lastMaxScrollRef.current = maxScrollNow;
+
         // [TEMP-INSTRUMENT openchamber-5ki.8.13] capture maxScroll deltas + state transition. REMOVED in .8.18.
         const __dbgMaxScrollNow = container.scrollHeight - container.clientHeight;
         const __dbgMaxScrollPrev = __dbgLastMaxScrollRef.current;
@@ -466,7 +497,13 @@ export const useChatAutoFollow = ({
             return;
         }
 
-        if (currentTop < previousTop && stateRef.current === 'following') {
+        if (shouldReleaseAutoFollowOnScroll({
+            state: stateRef.current,
+            currentTop,
+            previousTop,
+            maxScrollNow,
+            maxScrollPrev,
+        })) {
             stopFollowLoop();
             stopSettleBurst();
             lastUserReleaseAtRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
