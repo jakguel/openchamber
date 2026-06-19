@@ -94,11 +94,17 @@ function areSessionStatusesEqual(left: SessionStatus | undefined, right: Session
   if (left === right) return true
   if (!left || left.type !== right.type) return false
   if (left.type === "retry") {
+    // retry carries mutable payload: attempt, message, next, and optional action.
+    // Compare all fields including action via areJsonEquivalent to catch future additions.
     return right.type === "retry"
       && left.attempt === right.attempt
       && left.message === right.message
       && left.next === right.next
+      && areJsonEquivalent(left.action, right.action)
   }
+  // Non-retry SessionStatus variants ("idle", "busy") only carry a `type` discriminant —
+  // no mutable payload fields. Type-equality is sufficient.
+  // Verified against @opencode-ai/sdk SessionStatus union (dist/v2/gen/types.gen.d.ts).
   return true
 }
 
