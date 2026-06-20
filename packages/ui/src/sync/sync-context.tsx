@@ -1608,6 +1608,25 @@ function handleEvent(
   }
 
   updateRoutingIndexFromEvent(routingIndex, resolvedDirectory, payload)
+
+  // Live-path recovery: when a child/subagent session is materialized (created
+  // or updated), trigger a scoped resync to recover any blocking requests
+  // (question.asked / permission.asked) that were dropped to 'global' during
+  // the race window before this session was indexed.
+  //
+  // Gate: ONLY child sessions (parentID present) AND a real resolved directory
+  // (not 'global'). Fire-and-forget — resyncBlockingRequestsForDirectory is
+  // internally try/caught and idempotent (dedupes via knownIds + answeredRequestIds).
+  if (
+    (payload.type === "session.created" || payload.type === "session.updated") &&
+    resolvedDirectory &&
+    resolvedDirectory !== "global"
+  ) {
+    const sessionInfo = getSessionInfoFromPayload(payload)
+    if (sessionInfo && (sessionInfo as Session & { parentID?: string | null }).parentID) {
+      void resyncBlockingRequestsForDirectory(resolvedDirectory, store, [sessionInfo.id]).catch(() => undefined)
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
