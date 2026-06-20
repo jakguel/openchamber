@@ -1112,7 +1112,7 @@ class OpencodeService {
    * can preserve existing state instead of conflating "fetch failed" with
    * "server returned no pending permissions".
    */
-  async listPendingPermissions(options?: { directories?: Array<string | null | undefined> }): Promise<PermissionRequest[]> {
+  async listPendingPermissions(options?: { directories?: Array<string | null | undefined>; directoryOnly?: boolean }): Promise<PermissionRequest[]> {
     const fetches: Array<Promise<PermissionRequest[]>> = [];
 
     const fetchForDirectory = async (directory?: string | null): Promise<PermissionRequest[]> => {
@@ -1125,7 +1125,10 @@ class OpencodeService {
     };
 
     // Try unscoped first (server may return global pending items).
-    fetches.push(fetchForDirectory(null));
+    // Suppressed when directoryOnly:true — callers that need a strict directory
+    // bound (e.g. resyncBlockingRequestsForDirectory) opt in to avoid leaking
+    // pending items from other directories into the current directory's store.
+    if (!options?.directoryOnly) fetches.push(fetchForDirectory(null));
 
     const uniqueDirectories = new Set<string>();
     for (const entry of options?.directories ?? []) {
@@ -1191,7 +1194,7 @@ class OpencodeService {
    * rationale — resync paths preserve state on throw via outer try/catch
    * instead of conflating failure with an empty server response.
    */
-  async listPendingQuestions(options?: { directories?: Array<string | null | undefined> }): Promise<QuestionRequest[]> {
+  async listPendingQuestions(options?: { directories?: Array<string | null | undefined>; directoryOnly?: boolean }): Promise<QuestionRequest[]> {
     const fetches: Array<Promise<QuestionRequest[]>> = [];
 
     const fetchForDirectory = async (directory?: string | null): Promise<QuestionRequest[]> => {
@@ -1204,7 +1207,10 @@ class OpencodeService {
     };
 
     // Try unscoped first (server may return global pending items).
-    fetches.push(fetchForDirectory(null));
+    // Suppressed when directoryOnly:true — callers that need a strict directory
+    // bound (e.g. resyncBlockingRequestsForDirectory) opt in to avoid leaking
+    // pending items from other directories into the current directory's store.
+    if (!options?.directoryOnly) fetches.push(fetchForDirectory(null));
 
     const uniqueDirectories = new Set<string>();
     for (const entry of options?.directories ?? []) {

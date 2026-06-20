@@ -107,9 +107,9 @@ describe("resyncBlockingRequestsForDirectory", () => {
     await resyncBlockingRequestsForDirectory("/repo", store)
 
     expect(listPendingQuestionsCalls).toHaveLength(1)
-    expect(listPendingQuestionsCalls[0]).toEqual({ directories: ["/repo"] })
+    expect(listPendingQuestionsCalls[0]).toEqual({ directories: ["/repo"], directoryOnly: true })
     expect(listPendingPermissionsCalls).toHaveLength(1)
-    expect(listPendingPermissionsCalls[0]).toEqual({ directories: ["/repo"] })
+    expect(listPendingPermissionsCalls[0]).toEqual({ directories: ["/repo"], directoryOnly: true })
   })
 
   test("merges newly fetched questions/permissions into the directory store", async () => {
@@ -153,13 +153,31 @@ describe("resyncBlockingRequestsForDirectory", () => {
     expect(store.getState().question["ses_a"]).toEqual(undefined)
   })
 
-  test("ignores questions for sessions the directory does not know about", async () => {
+  test("surfaces questions for sessions not yet in the store (reconnect/bootstrap-gap path)", async () => {
+    // A subagent session (ses_unknown) may not be materialized in the store yet
+    // when a reconnect/bootstrap gap occurs. With directoryOnly:true the fetch is
+    // genuinely bounded to this directory, so the result is safe to surface.
     const store = createDirectoryStore({})
     pendingQuestionsResponse = [{ ...buildQuestion(), sessionID: "ses_unknown" }]
 
     await resyncBlockingRequestsForDirectory("/repo", store)
 
-    expect(store.getState().question["ses_unknown"]).toEqual(undefined)
+    expect(store.getState().question["ses_unknown"]).toHaveLength(1)
+    expect(store.getState().question["ses_unknown"]?.[0]?.id).toBe("que_1")
+  })
+
+  test("passes directoryOnly:true to listPendingQuestions and listPendingPermissions", async () => {
+    // directoryOnly:true suppresses the unscoped fetchForDirectory(null) in the
+    // client, preventing pending items from other directories from leaking into
+    // this directory's store.
+    const store = createDirectoryStore({})
+    pendingQuestionsResponse = [buildQuestion()]
+    pendingPermissionsResponse = [buildPermission()]
+
+    await resyncBlockingRequestsForDirectory("/repo", store)
+
+    expect(listPendingQuestionsCalls[0]).toEqual({ directories: ["/repo"], directoryOnly: true })
+    expect(listPendingPermissionsCalls[0]).toEqual({ directories: ["/repo"], directoryOnly: true })
   })
 
   test("returns early without fetching when no candidate sessions are known", async () => {

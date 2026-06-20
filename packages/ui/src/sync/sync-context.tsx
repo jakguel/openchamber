@@ -1051,7 +1051,7 @@ export async function resyncBlockingRequestsForDirectory(
     const beforeSignatures = new Map(
       candidates.map((sessionId) => [sessionId, requestSignature(before.question[sessionId])]),
     )
-    const pendingQuestions = await opencodeClient.listPendingQuestions({ directories: [directory] })
+    const pendingQuestions = await opencodeClient.listPendingQuestions({ directories: [directory], directoryOnly: true })
     const grouped: Record<string, QuestionRequest[]> = {}
     const answeredQuestionIds = sessionActions.answeredRequestIds.get(directory)
     for (const q of pendingQuestions) {
@@ -1125,7 +1125,7 @@ export async function resyncBlockingRequestsForDirectory(
     const beforeSignatures = new Map(
       candidates.map((sessionId) => [sessionId, requestSignature(before.permission[sessionId])]),
     )
-    const pendingPermissions = await opencodeClient.listPendingPermissions({ directories: [directory] })
+    const pendingPermissions = await opencodeClient.listPendingPermissions({ directories: [directory], directoryOnly: true })
     const grouped: Record<string, PermissionRequest[]> = {}
     const answeredPermIds = sessionActions.answeredRequestIds.get(directory)
     for (const permission of pendingPermissions) {
