@@ -1056,7 +1056,10 @@ export async function resyncBlockingRequestsForDirectory(
     const answeredQuestionIds = sessionActions.answeredRequestIds.get(directory)
     for (const q of pendingQuestions) {
       if (!q?.id || !q.sessionID) continue
-      if (!knownSessionIds.has(q.sessionID)) continue
+      // Reconnect/bootstrap-gap path: questions fetched for this directory may belong
+      // to a subagent session that was never materialized into the store (session.created
+      // missed during the SSE gap). The directory-scoped fetch is the bound — do NOT
+      // skip based on knownSessionIds here.
       // AC3: never restore a question the user already answered — keep it out of
       // `grouped` so the store.setState below cannot re-add it to the store.
       // AC6: dismiss any zombie toast that was shown before the answer resolved.
@@ -1127,7 +1130,9 @@ export async function resyncBlockingRequestsForDirectory(
     const answeredPermIds = sessionActions.answeredRequestIds.get(directory)
     for (const permission of pendingPermissions) {
       if (!permission?.id || !permission.sessionID) continue
-      if (!knownSessionIds.has(permission.sessionID)) continue
+      // Reconnect/bootstrap-gap path: permissions fetched for this directory may belong
+      // to a subagent session absent from the pre-existing known-set. The directory-scoped
+      // fetch is the bound — do NOT skip based on knownSessionIds here.
       // Guard: never restore a permission the user already responded to.
       // AC6: dismiss any zombie toast that was shown before the response resolved.
       if (answeredPermIds?.has(permission.id)) {
