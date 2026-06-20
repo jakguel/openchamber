@@ -51,6 +51,7 @@ import {
   revertToMessage as revertToMessageAction,
   unrevertSession as unrevertSessionAction,
   forkFromMessage as forkFromMessageAction,
+  fetchMessagesForSession,
 } from "./session-actions"
 import { useInputStore, type SyntheticContextPart } from "./input-store"
 import { useSelectionStore } from "./selection-store"
@@ -509,6 +510,13 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     // Skip on same-session switch to avoid clobbering current UI state (AC4).
     if (isSessionChange) {
       useUIStore.getState().restoreForSessionSwitch(id)
+    }
+
+    // Kick off the message fetch on the same tick, before React commits the
+    // state change and fires ChatContainer.useEffect. The fetch is
+    // fire-and-forget — any transient failure gets retried by the reactive path.
+    if (id) {
+      void fetchMessagesForSession(id, resolvedDir)
     }
 
     try {
