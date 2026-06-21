@@ -116,6 +116,8 @@ export const shouldDispatchQueuedAutoSend = (
 
 export const QUEUED_AUTO_SEND_BUDGET = 3;
 
+export const QUEUED_AUTO_SEND_BACKOFF_MS = 5000;
+
 export type DispatchQueuedResult = 'sent' | 'not-eligible' | 'not-claimed' | 'requeued';
 
 export interface DispatchQueuedCoreDeps {
@@ -127,17 +129,21 @@ export interface DispatchQueuedCoreDeps {
   send: (claimed: QueuedMessage) => Promise<void>;
   now: () => number;
   budget: number;
+  backoffMs: number;
 }
 
 // Invariant: the front is claimed (removed) before the network call. A
 // rejected send flips status busy->idle (an edge that would otherwise
 // re-dispatch the same item); with the item already claimed, that edge finds a
 // different or ineligible front and cannot loop. On rejection the exact item is
-// requeued with attempts+1, and at budget marked failedTerminally so
-// isAutoSendEligible excludes it. A rejected send never reached the server
-// (optimisticSend rolls back + rethrows), making re-enqueue duplicate-safe.
+// requeued with attempts+1 and nextEligibleAt=now+backoff, so isAutoSendEligible
+// excludes it for the backoff window — this is what keeps the enqueue-while-idle
+// trigger from re-dispatching a just-failed item on the requeue mutation. At
+// budget it is also failedTerminally (permanent). A rejected send never reached
+// the server (optimisticSend rolls back + rethrows), making re-enqueue
+// duplicate-safe.
 export async function dispatchQueuedCore(deps: DispatchQueuedCoreDeps): Promise<DispatchQueuedResult> {
-  const { sessionId, front, isEligible, claimFront, requeueToFront, send, now, budget } = deps;
+  const { sessionId, front, isEligible, claimFront, requeueToFront, send, now, budget, backoffMs } = deps;
 
   if (!isEligible(front, now())) {
     return 'not-eligible';
@@ -152,12 +158,14 @@ export async function dispatchQueuedCore(deps: DispatchQueuedCoreDeps): Promise<
     await send(claimed);
     return 'sent';
   } catch {
+    const failedAt = now();
     const attempts = (claimed.attempts ?? 0) + 1;
     requeueToFront(sessionId, {
       ...claimed,
       attempts,
-      lastFailedAt: now(),
+      lastFailedAt: failedAt,
       failedTerminally: attempts >= budget,
+      nextEligibleAt: failedAt + backoffMs,
     });
     return 'requeued';
   }
@@ -244,6 +252,7 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
           },
           now: Date.now,
           budget: QUEUED_AUTO_SEND_BUDGET,
+          backoffMs: QUEUED_AUTO_SEND_BACKOFF_MS,
         });
       } catch (error) {
         console.warn('[queue] queued auto-send failed:', error);
@@ -265,7 +274,14 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
       const currentStatusType = (statusRecord[sessionId]?.type ?? 'idle') as SessionStatusType;
       const previousStatusType = previousStatusRef.current.get(sessionId);
 
-      if (queue.length > 0 && shouldDispatchQueuedAutoSend(previousStatusType, currentStatusType)) {
+      const front = queue[0];
+      const edge = shouldDispatchQueuedAutoSend(previousStatusType, currentStatusType);
+      const idleTrigger = currentStatusType === 'idle';
+
+      if (front !== undefined
+        && !inFlightSessionsRef.current.has(sessionId)
+        && (edge || idleTrigger)
+        && isAutoSendEligible(front, Date.now())) {
         void dispatchSessionQueue(sessionId, queue);
       }
 
