@@ -1,5 +1,5 @@
 import React from 'react';
-import { useMessageQueueStore, type QueuedMessage } from '@/stores/messageQueueStore';
+import { useMessageQueueStore, isAutoSendEligible, type QueuedMessage } from '@/stores/messageQueueStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useConfigStore } from '@/stores/useConfigStore';
@@ -114,6 +114,55 @@ export const shouldDispatchQueuedAutoSend = (
     && currentStatusType === 'idle';
 };
 
+export const QUEUED_AUTO_SEND_BUDGET = 3;
+
+export type DispatchQueuedResult = 'sent' | 'not-eligible' | 'not-claimed' | 'requeued';
+
+export interface DispatchQueuedCoreDeps {
+  sessionId: string;
+  front: QueuedMessage;
+  isEligible: (message: QueuedMessage, now: number) => boolean;
+  claimFront: (sessionId: string, expectedId: string) => QueuedMessage | null;
+  requeueToFront: (sessionId: string, message: QueuedMessage) => void;
+  send: (claimed: QueuedMessage) => Promise<void>;
+  now: () => number;
+  budget: number;
+}
+
+// Invariant: the front is claimed (removed) before the network call. A
+// rejected send flips status busy->idle (an edge that would otherwise
+// re-dispatch the same item); with the item already claimed, that edge finds a
+// different or ineligible front and cannot loop. On rejection the exact item is
+// requeued with attempts+1, and at budget marked failedTerminally so
+// isAutoSendEligible excludes it. A rejected send never reached the server
+// (optimisticSend rolls back + rethrows), making re-enqueue duplicate-safe.
+export async function dispatchQueuedCore(deps: DispatchQueuedCoreDeps): Promise<DispatchQueuedResult> {
+  const { sessionId, front, isEligible, claimFront, requeueToFront, send, now, budget } = deps;
+
+  if (!isEligible(front, now())) {
+    return 'not-eligible';
+  }
+
+  const claimed = claimFront(sessionId, front.id);
+  if (!claimed) {
+    return 'not-claimed';
+  }
+
+  try {
+    await send(claimed);
+    return 'sent';
+  } catch {
+    const attempts = (claimed.attempts ?? 0) + 1;
+    requeueToFront(sessionId, {
+      ...claimed,
+      attempts,
+      lastFailedAt: now(),
+      failedTerminally: attempts >= budget,
+    });
+    return 'requeued';
+  }
+}
+
 export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?: boolean }) {
   const enabled = typeof enabledOrOptions === 'boolean' ? enabledOrOptions : (enabledOrOptions?.enabled ?? true);
   const queuedMessages = useMessageQueueStore((state) => state.queuedMessages);
@@ -143,7 +192,12 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
         return;
       }
 
-      const payload = buildQueuedAutoSendPayload(queueSnapshot);
+      const front = useMessageQueueStore.getState().getQueueForSession(sessionId)[0];
+      if (!front) {
+        return;
+      }
+
+      const payload = buildQueuedAutoSendPayload([front]);
       if (!payload) {
         return;
       }
@@ -151,7 +205,6 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
         return;
       }
 
-      // Use send config captured at queue time; fall back to current config
       const captured = payload.sendConfig;
       const resolved = captured?.providerID && captured?.modelID
         ? captured
@@ -163,15 +216,35 @@ export function useQueuedMessageAutoSend(enabledOrOptions?: boolean | { enabled?
       inFlightSessionsRef.current.add(sessionId);
 
       try {
-        await sendQueuedAutoSendPayload(sessionId, payload, {
-          providerID: resolved.providerID,
-          modelID: resolved.modelID,
-          agent: resolved.agent,
-          variant: resolved.variant,
+        const store = useMessageQueueStore.getState();
+        await dispatchQueuedCore({
+          sessionId,
+          front,
+          isEligible: isAutoSendEligible,
+          claimFront: store.claimFront,
+          requeueToFront: store.requeueToFront,
+          send: (claimed) => {
+            const claimedPayload = buildQueuedAutoSendPayload([claimed]);
+            if (!claimedPayload) {
+              return Promise.reject(new Error('[queue] claimed message produced no payload'));
+            }
+            const claimedCaptured = claimedPayload.sendConfig;
+            const claimedResolved = claimedCaptured?.providerID && claimedCaptured?.modelID
+              ? claimedCaptured
+              : resolveSessionSendConfig(sessionId);
+            if (!claimedResolved.providerID || !claimedResolved.modelID) {
+              return Promise.reject(new Error('[queue] claimed message has no resolved send config'));
+            }
+            return sendQueuedAutoSendPayload(sessionId, claimedPayload, {
+              providerID: claimedResolved.providerID,
+              modelID: claimedResolved.modelID,
+              agent: claimedResolved.agent,
+              variant: claimedResolved.variant,
+            });
+          },
+          now: Date.now,
+          budget: QUEUED_AUTO_SEND_BUDGET,
         });
-
-        const removeFromQueue = useMessageQueueStore.getState().removeFromQueue;
-        removeFromQueue(sessionId, payload.queuedMessageId);
       } catch (error) {
         console.warn('[queue] queued auto-send failed:', error);
       } finally {
