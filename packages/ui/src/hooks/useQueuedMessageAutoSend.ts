@@ -12,7 +12,7 @@ type SessionStatusType = 'idle' | 'busy' | 'retry';
 
 const RECENT_ABORT_WINDOW_MS = 2000;
 
-const hasRecentAbort = (sessionId: string): boolean => {
+export const hasRecentAbort = (sessionId: string): boolean => {
   const abortRecord = useSessionUIStore.getState().sessionAbortFlags.get(sessionId);
   if (!abortRecord) {
     return false;

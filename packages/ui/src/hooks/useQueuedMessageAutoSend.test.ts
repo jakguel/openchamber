@@ -7,9 +7,11 @@ import {
     type QueuedMessage,
 } from '../stores/messageQueueStore';
 import { useConfigStore } from '../stores/useConfigStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 import {
     buildQueuedAutoSendPayload,
     dispatchQueuedCore,
+    hasRecentAbort,
     shouldDispatchQueuedAutoSend,
     QUEUED_AUTO_SEND_BUDGET,
     QUEUED_AUTO_SEND_BACKOFF_MS,
@@ -263,6 +265,30 @@ describe('claimFront TOCTOU (g)', () => {
         expect(result).toBe('not-claimed');
         expect(send.calls.length).toBe(0);
         expect(useMessageQueueStore.getState().getQueueForSession(SESSION)).toEqual([live]);
+    });
+});
+
+describe('hasRecentAbort guard (f)', () => {
+    beforeEach(() => {
+        useSessionUIStore.setState({ sessionAbortFlags: new Map() });
+    });
+
+    test('returns true within the 2000ms abort window', () => {
+        useSessionUIStore.setState({
+            sessionAbortFlags: new Map([[SESSION, { timestamp: Date.now() - 100, acknowledged: false }]]),
+        });
+        expect(hasRecentAbort(SESSION)).toBe(true);
+    });
+
+    test('returns false after the 2000ms window elapses', () => {
+        useSessionUIStore.setState({
+            sessionAbortFlags: new Map([[SESSION, { timestamp: Date.now() - 2001, acknowledged: false }]]),
+        });
+        expect(hasRecentAbort(SESSION)).toBe(false);
+    });
+
+    test('returns false when no abort flag exists for the session', () => {
+        expect(hasRecentAbort('no-abort-session')).toBe(false);
     });
 });
 
