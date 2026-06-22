@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { shouldReleaseAutoFollowOnScroll } from './useChatAutoFollow';
+import { resolveRestoreTarget, shouldReleaseAutoFollowOnScroll } from './useChatAutoFollow';
 
 // ─── Regression context ────────────────────────────────────────────────────────
 // Bug: pending-subagent ToolPart height churn transiently collapses scrollHeight.
@@ -182,6 +182,67 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             maxScrollNow: 1500,
             maxScrollPrev: 2000,
         })).toBe(false);
+    });
+});
+
+// ─── Scroll-restore Step 3 — restore-target decision core ─────────────────────
+// resolveRestoreTarget chooses which restore strategy restoreSnapshot uses,
+// with no DOM dependency. Each assertion checks a SPECIFIC branch that would
+// change if the corresponding production guard were removed.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('resolveRestoreTarget', () => {
+    test('D-J1: streaming-open always bottom-pins, even with a saved resolvable anchor', () => {
+        expect(resolveRestoreTarget({
+            streaming: true,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: true,
+        })).toBe('bottom');
+    });
+
+    test('no saved snapshot -> bottom (existing bottom-pin branch)', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: false,
+            atBottom: false,
+            hasMessageAnchor: false,
+        })).toBe('bottom');
+    });
+
+    test('saved-at-bottom -> bottom (existing bottom-pin branch)', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: true,
+            hasMessageAnchor: true,
+        })).toBe('bottom');
+    });
+
+    test('non-bottom with a real message anchor -> anchor', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: true,
+        })).toBe('anchor');
+    });
+
+    test('non-bottom legacy snapshot (no message anchor) -> ratio fallback', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: false,
+        })).toBe('ratio');
+    });
+
+    test('streaming wins over a legacy non-bottom snapshot too', () => {
+        expect(resolveRestoreTarget({
+            streaming: true,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: false,
+        })).toBe('bottom');
     });
 });
 

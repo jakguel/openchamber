@@ -2,7 +2,7 @@ import React from 'react';
 
 import { MessageFreshnessDetector } from '@/lib/messageFreshness';
 import { createScrollSpy } from '@/components/chat/lib/scroll/scrollSpy';
-import { getViewportSessionMemory, useViewportStore, type SessionMemoryState } from '@/sync/viewport-store';
+import { getViewportSessionMemory, useViewportStore, type MessageAnchor, type SessionMemoryState } from '@/sync/viewport-store';
 
 export type AutoFollowState = 'following' | 'released';
 
@@ -24,6 +24,8 @@ interface UseChatAutoFollowOptions {
     sessionIsWorking: boolean;
     isMobile: boolean;
     onActiveTurnChange?: (turnId: string | null) => void;
+    captureMessageAnchor?: () => MessageAnchor | null;
+    restoreMessageAnchor?: (anchor: MessageAnchor) => boolean;
 }
 
 export interface UseChatAutoFollowResult {
@@ -76,6 +78,31 @@ export const shouldReleaseAutoFollowOnScroll = ({
     if (currentTop >= previousTop) return false;
     const isContentDrivenClamp = maxScrollNow < maxScrollPrev;
     return !isContentDrivenClamp;
+};
+
+export type RestoreTarget = 'bottom' | 'anchor' | 'ratio';
+
+export interface RestoreTargetDecisionInput {
+    streaming: boolean;
+    hasSavedSnapshot: boolean;
+    atBottom: boolean;
+    hasMessageAnchor: boolean;
+}
+
+// Decides which strategy restoreSnapshot uses to re-position on session open.
+// D-J1: a streaming-open always bottom-pins, even when a saved anchor exists.
+// Otherwise a missing/at-bottom snapshot bottom-pins; a real {messageId,offsetTop}
+// anchor re-pins to that message; legacy snapshots fall back to ratio math.
+export const resolveRestoreTarget = ({
+    streaming,
+    hasSavedSnapshot,
+    atBottom,
+    hasMessageAnchor,
+}: RestoreTargetDecisionInput): RestoreTarget => {
+    if (streaming) return 'bottom';
+    if (!hasSavedSnapshot || atBottom) return 'bottom';
+    if (hasMessageAnchor) return 'anchor';
+    return 'ratio';
 };
 
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
@@ -137,6 +164,8 @@ export const useChatAutoFollow = ({
     sessionIsWorking,
     isMobile,
     onActiveTurnChange,
+    captureMessageAnchor,
+    restoreMessageAnchor,
 }: UseChatAutoFollowOptions): UseChatAutoFollowResult => {
     const scrollRef = React.useRef<HTMLDivElement | null>(null);
     const [containerEl, setContainerEl] = React.useState<HTMLDivElement | null>(null);
@@ -152,6 +181,12 @@ export const useChatAutoFollow = ({
     sessionMessageCountRef.current = sessionMessageCount;
     const currentSessionIdRef = React.useRef(currentSessionId);
     currentSessionIdRef.current = currentSessionId;
+    const sessionIsWorkingRef = React.useRef(sessionIsWorking);
+    sessionIsWorkingRef.current = sessionIsWorking;
+    const captureMessageAnchorRef = React.useRef(captureMessageAnchor);
+    captureMessageAnchorRef.current = captureMessageAnchor;
+    const restoreMessageAnchorRef = React.useRef(restoreMessageAnchor);
+    restoreMessageAnchorRef.current = restoreMessageAnchor;
 
     const lastSessionIdRef = React.useRef<string | null>(null);
     const programmaticWriteUntilRef = React.useRef(0);
@@ -160,7 +195,7 @@ export const useChatAutoFollow = ({
     const lastScrollTopRef = React.useRef(0);
     const lastMaxScrollRef = React.useRef(0);
     const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingSaveRef = React.useRef<{ sessionId: string; anchor: number } | null>(null);
+    const pendingSaveRef = React.useRef<{ sessionId: string; anchor: number; messageAnchor: MessageAnchor | null } | null>(null);
     const settleBurstRafRef = React.useRef<number | null>(null);
     const lastUserReleaseAtRef = React.useRef(0);
     // When restoreSnapshot is invoked while ChatViewport is still hydrating
@@ -343,7 +378,7 @@ export const useChatAutoFollow = ({
             scrollTop: container.scrollTop,
             scrollHeight: container.scrollHeight,
             clientHeight: container.clientHeight,
-        });
+        }, pending.messageAnchor ?? undefined);
         pendingSaveRef.current = null;
     }, [updateViewportAnchor]);
 
@@ -358,8 +393,9 @@ export const useChatAutoFollow = ({
             ? (scrollTop + clientHeight / 2) / scrollHeight
             : 0;
         const anchor = Math.floor(anchorRatio * sessionMessageCountRef.current);
+        const messageAnchor = captureMessageAnchorRef.current?.() ?? null;
 
-        pendingSaveRef.current = { sessionId, anchor };
+        pendingSaveRef.current = { sessionId, anchor, messageAnchor };
         if (saveTimerRef.current !== null) return;
         saveTimerRef.current = setTimeout(() => {
             saveTimerRef.current = null;
@@ -385,35 +421,55 @@ export const useChatAutoFollow = ({
         }
         pendingInitialRestoreRef.current = null;
 
-        const saved = getViewportSessionMemory(sessionId)?.scrollPosition;
+        const memState = getViewportSessionMemory(sessionId);
+        const saved = memState?.scrollPosition;
+        const messageAnchor = memState?.messageAnchor;
 
-        if (!saved || isAtBottomSnapshot(saved, isMobile)) {
+        const target = resolveRestoreTarget({
+            streaming: sessionIsWorkingRef.current,
+            hasSavedSnapshot: Boolean(saved),
+            atBottom: saved ? isAtBottomSnapshot(saved, isMobile) : false,
+            hasMessageAnchor: Boolean(messageAnchor),
+        });
+
+        if (target === 'bottom') {
             setStateValue('following');
             lastUserReleaseAtRef.current = 0;
-            const target = Math.max(0, container.scrollHeight - container.clientHeight);
-            writeScrollTopInstant(target);
+            const bottom = Math.max(0, container.scrollHeight - container.clientHeight);
+            writeScrollTopInstant(bottom);
             startFollowLoop();
             startSettleBurst();
             return false;
         }
 
-        const savedMaxScroll = Math.max(0, saved.scrollHeight - saved.clientHeight);
-        const ratio = savedMaxScroll > 0 ? saved.scrollTop / savedMaxScroll : 0;
+        if (target === 'anchor' && messageAnchor) {
+            setStateValue('released');
+            markProgrammaticWrite();
+            if (restoreMessageAnchorRef.current?.(messageAnchor)) {
+                lastScrollTopRef.current = container.scrollTop;
+                return true;
+            }
+        }
+
+        // Legacy fallback: no real anchor (or it was unresolvable). Re-position by
+        // the saved scroll ratio; Step 4 heals these legacy entries.
+        const savedScroll = saved ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
+        const savedMaxScroll = Math.max(0, savedScroll.scrollHeight - savedScroll.clientHeight);
+        const ratio = savedMaxScroll > 0 ? savedScroll.scrollTop / savedMaxScroll : 0;
         const currentMaxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
         const targetTop = Math.round(ratio * currentMaxScroll);
 
         setStateValue('released');
         writeScrollTopInstant(targetTop);
 
-        const memState = getViewportSessionMemory(sessionId);
         updateViewportAnchor(sessionId, memState?.viewportAnchor ?? 0, {
             scrollTop: container.scrollTop,
             scrollHeight: container.scrollHeight,
             clientHeight: container.clientHeight,
-        });
+        }, messageAnchor ?? undefined);
 
         return true;
-    }, [isMobile, setStateValue, startFollowLoop, startSettleBurst, updateViewportAnchor, writeScrollTopInstant]);
+    }, [isMobile, markProgrammaticWrite, setStateValue, startFollowLoop, startSettleBurst, updateViewportAnchor, writeScrollTopInstant]);
 
     React.useEffect(() => {
         if (!currentSessionId || currentSessionId === lastSessionIdRef.current) {

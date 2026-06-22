@@ -579,6 +579,8 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         sessionIsWorking,
         isMobile,
         onActiveTurnChange: handleActiveTurnChange,
+        captureMessageAnchor: () => messageListRef.current?.captureViewportAnchor() ?? null,
+        restoreMessageAnchor: (anchor) => messageListRef.current?.restoreViewportAnchor(anchor) ?? false,
     });
 
     const viewportMessages = sessionMessages;
