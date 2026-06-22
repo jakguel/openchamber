@@ -1,5 +1,10 @@
 import type { Message } from '@opencode-ai/sdk/v2';
 
+// Bounds the process-global seen-message caches. Far exceeds the message count
+// of any single on-screen session (dozens-to-hundreds), so oldest-first
+// eviction never drops a guard for the session currently being viewed.
+const MAX_SEEN_MESSAGE_IDS = 5000;
+
 export class MessageFreshnessDetector {
     private static instance: MessageFreshnessDetector;
     private sessionStartTimes: Map<string, number> = new Map();
@@ -7,6 +12,20 @@ export class MessageFreshnessDetector {
     private messageCreationTimes: Map<string, number> = new Map();
 
     private constructor() {}
+
+    private recordSeenMessage(messageId: string, createdTime: number): void {
+        this.seenMessageIds.add(messageId);
+        this.messageCreationTimes.set(messageId, createdTime);
+
+        while (this.seenMessageIds.size > MAX_SEEN_MESSAGE_IDS) {
+            const oldest = this.seenMessageIds.values().next().value;
+            if (oldest === undefined) {
+                break;
+            }
+            this.seenMessageIds.delete(oldest);
+            this.messageCreationTimes.delete(oldest);
+        }
+    }
 
     static getInstance(): MessageFreshnessDetector {
         if (!MessageFreshnessDetector.instance) {
@@ -40,16 +59,14 @@ export class MessageFreshnessDetector {
 
         if (!sessionStartTime) {
 
-            this.seenMessageIds.add(message.id);
-            this.messageCreationTimes.set(message.id, message.time.created);
+            this.recordSeenMessage(message.id, message.time.created);
             return false;
         }
 
         const isFresh = message.time.created > (sessionStartTime - 5000);
 
         if (!isFresh) {
-            this.seenMessageIds.add(message.id);
-            this.messageCreationTimes.set(message.id, message.time.created);
+            this.recordSeenMessage(message.id, message.time.created);
         }
 
         return isFresh;
@@ -69,8 +86,7 @@ export class MessageFreshnessDetector {
     }
 
     markMessageAsAnimated(messageId: string, createdTime: number): void {
-        this.seenMessageIds.add(messageId);
-        this.messageCreationTimes.set(messageId, createdTime);
+        this.recordSeenMessage(messageId, createdTime);
     }
 
     clearAll(): void {
