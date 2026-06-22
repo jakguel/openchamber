@@ -87,22 +87,34 @@ export interface RestoreTargetDecisionInput {
     hasSavedSnapshot: boolean;
     atBottom: boolean;
     hasMessageAnchor: boolean;
+    hasValidScrollPosition: boolean;
 }
 
-// Decides which strategy restoreSnapshot uses to re-position on session open.
-// D-J1: a streaming-open always bottom-pins, even when a saved anchor exists.
-// Otherwise a missing/at-bottom snapshot bottom-pins; a real {messageId,offsetTop}
-// anchor re-pins to that message; legacy snapshots fall back to ratio math.
+// A persisted snapshot may carry a stale legacy numeric viewportAnchor that does
+// not survive layout changes. isRealMessageAnchor gates the 'anchor' tier so only
+// a genuine { messageId, offsetTop } object can position; a number heals instead.
+export const isRealMessageAnchor = (value: unknown): value is MessageAnchor =>
+    typeof value === 'object'
+    && value !== null
+    && typeof (value as { messageId?: unknown }).messageId === 'string'
+    && typeof (value as { offsetTop?: unknown }).offsetTop === 'number';
+
+// Deterministic 3-tier restore fallback: real anchor -> settled ratio (valid
+// scrollPosition only) -> bottom. D-J1 streaming and missing/at-bottom both pin
+// bottom; a legacy numeric anchor never reaches 'anchor', and an invalid
+// scrollPosition heals to bottom instead of collapsing to the top.
 export const resolveRestoreTarget = ({
     streaming,
     hasSavedSnapshot,
     atBottom,
     hasMessageAnchor,
+    hasValidScrollPosition,
 }: RestoreTargetDecisionInput): RestoreTarget => {
     if (streaming) return 'bottom';
     if (!hasSavedSnapshot || atBottom) return 'bottom';
     if (hasMessageAnchor) return 'anchor';
-    return 'ratio';
+    if (hasValidScrollPosition) return 'ratio';
+    return 'bottom';
 };
 
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
@@ -423,13 +435,14 @@ export const useChatAutoFollow = ({
 
         const memState = getViewportSessionMemory(sessionId);
         const saved = memState?.scrollPosition;
-        const messageAnchor = memState?.messageAnchor;
+        const messageAnchor = isRealMessageAnchor(memState?.messageAnchor) ? memState.messageAnchor : undefined;
 
         const target = resolveRestoreTarget({
             streaming: sessionIsWorkingRef.current,
             hasSavedSnapshot: Boolean(saved),
             atBottom: saved ? isAtBottomSnapshot(saved, isMobile) : false,
             hasMessageAnchor: Boolean(messageAnchor),
+            hasValidScrollPosition: saved ? saved.scrollHeight - saved.clientHeight > 0 : false,
         });
 
         if (target === 'bottom') {

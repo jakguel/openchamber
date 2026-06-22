@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { resolveRestoreTarget, shouldReleaseAutoFollowOnScroll } from './useChatAutoFollow';
+import { isRealMessageAnchor, resolveRestoreTarget, shouldReleaseAutoFollowOnScroll } from './useChatAutoFollow';
 
 // ─── Regression context ────────────────────────────────────────────────────────
 // Bug: pending-subagent ToolPart height churn transiently collapses scrollHeight.
@@ -197,6 +197,7 @@ describe('resolveRestoreTarget', () => {
             hasSavedSnapshot: true,
             atBottom: false,
             hasMessageAnchor: true,
+            hasValidScrollPosition: true,
         })).toBe('bottom');
     });
 
@@ -206,6 +207,7 @@ describe('resolveRestoreTarget', () => {
             hasSavedSnapshot: false,
             atBottom: false,
             hasMessageAnchor: false,
+            hasValidScrollPosition: false,
         })).toBe('bottom');
     });
 
@@ -215,6 +217,7 @@ describe('resolveRestoreTarget', () => {
             hasSavedSnapshot: true,
             atBottom: true,
             hasMessageAnchor: true,
+            hasValidScrollPosition: true,
         })).toBe('bottom');
     });
 
@@ -224,15 +227,17 @@ describe('resolveRestoreTarget', () => {
             hasSavedSnapshot: true,
             atBottom: false,
             hasMessageAnchor: true,
+            hasValidScrollPosition: true,
         })).toBe('anchor');
     });
 
-    test('non-bottom legacy snapshot (no message anchor) -> ratio fallback', () => {
+    test('non-bottom legacy snapshot (no message anchor) + valid scroll -> ratio fallback', () => {
         expect(resolveRestoreTarget({
             streaming: false,
             hasSavedSnapshot: true,
             atBottom: false,
             hasMessageAnchor: false,
+            hasValidScrollPosition: true,
         })).toBe('ratio');
     });
 
@@ -242,7 +247,68 @@ describe('resolveRestoreTarget', () => {
             hasSavedSnapshot: true,
             atBottom: false,
             hasMessageAnchor: false,
+            hasValidScrollPosition: true,
         })).toBe('bottom');
+    });
+});
+
+// ─── Scroll-restore Step 4 — legacy-anchor healing (3-tier fallback) ───────────
+// A legacy snapshot stores a stale numeric viewportAnchor and no messageAnchor.
+// The deterministic tiers are real-anchor -> settled-ratio (valid scrollPosition)
+// -> bottom. A legacy numeric anchor must NEVER position; an invalid/degenerate
+// scrollPosition must heal to bottom, never collapse to top.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('resolveRestoreTarget — legacy healing', () => {
+    test('legacy snapshot (numeric anchor) + valid scrollPosition -> ratio (tier 2)', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: false,
+            hasValidScrollPosition: true,
+        })).toBe('ratio');
+    });
+
+    test('legacy snapshot (numeric anchor) + invalid scrollPosition -> bottom (tier 3, no collapse-to-top)', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: false,
+            hasValidScrollPosition: false,
+        })).toBe('bottom');
+    });
+
+    test('real anchor present wins over ratio (tier 1) even with valid scrollPosition', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: false,
+            hasMessageAnchor: true,
+            hasValidScrollPosition: true,
+        })).toBe('anchor');
+    });
+});
+
+describe('isRealMessageAnchor', () => {
+    test('true only for a real { messageId, offsetTop } object', () => {
+        expect(isRealMessageAnchor({ messageId: 'm1', offsetTop: 42 })).toBe(true);
+    });
+
+    test('legacy numeric anchor is NOT a real anchor', () => {
+        expect(isRealMessageAnchor(7)).toBe(false);
+    });
+
+    test('null and undefined are not real anchors', () => {
+        expect(isRealMessageAnchor(null)).toBe(false);
+        expect(isRealMessageAnchor(undefined)).toBe(false);
+    });
+
+    test('malformed objects are not real anchors', () => {
+        expect(isRealMessageAnchor({ messageId: 'm1' })).toBe(false);
+        expect(isRealMessageAnchor({ offsetTop: 42 })).toBe(false);
+        expect(isRealMessageAnchor({ messageId: 1, offsetTop: 42 })).toBe(false);
+        expect(isRealMessageAnchor({ messageId: 'm1', offsetTop: '42' })).toBe(false);
     });
 });
 
