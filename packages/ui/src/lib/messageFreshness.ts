@@ -16,6 +16,9 @@ export class MessageFreshnessDetector {
     }
 
     recordSessionStart(sessionId: string): void {
+        if (this.hasSessionTiming(sessionId)) {
+            return;
+        }
         this.sessionStartTimes.set(sessionId, Date.now());
     }
 
