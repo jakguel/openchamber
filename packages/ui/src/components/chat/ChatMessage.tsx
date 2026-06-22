@@ -604,6 +604,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         }
     }, [assistantHeaderMessageId, isUser, message.info.id, streamPhase, turnGroupingContext?.headerMessageId]);
 
+    React.useEffect(() => {
+        if (isUser || streamPhase !== 'completed') {
+            return;
+        }
+        MessageFreshnessDetector.getInstance().markMessageAsAnimated(message.info.id, message.info.time.created);
+    }, [isUser, streamPhase, message.info.id, message.info.time.created]);
+
     const shouldShowHeader = React.useMemo(() => {
         if (isUser) return true;
 
