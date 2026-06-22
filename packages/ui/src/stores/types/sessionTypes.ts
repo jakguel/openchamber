@@ -39,7 +39,10 @@ export interface MessageStreamLifecycle {
 }
 
 export interface SessionMemoryState {
+    /** Legacy ratio-derived anchor; retained so old persisted entries stay readable. */
     viewportAnchor: number;
+    /** Typed message-relative anchor used by non-bottom restore. */
+    messageAnchor?: { messageId: string; offsetTop: number };
     isStreaming: boolean;
     streamStartTime?: number;
     lastAccessedAt: number;
@@ -284,7 +287,7 @@ export interface SessionStore {
     removeAttachedFile: (id: string) => void;
     clearAttachedFiles: () => void;
 
-    updateViewportAnchor: (sessionId: string, anchor: number) => void;
+    updateViewportAnchor: (sessionId: string, anchor: number, messageAnchor?: SessionMemoryState['messageAnchor']) => void;
     loadMoreMessages: (sessionId: string, direction: "up" | "down") => Promise<void>;
 
     saveSessionModelSelection: (sessionId: string, providerId: string, modelId: string) => void;

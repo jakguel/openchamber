@@ -6,8 +6,16 @@
 import { create } from "zustand"
 import { getRuntimeKey } from "@/lib/runtime-switch"
 
+export type MessageAnchor = {
+  messageId: string
+  offsetTop: number
+}
+
 export type SessionMemoryState = {
+  /** Legacy ratio-derived anchor; retained so old persisted entries stay readable. */
   viewportAnchor: number
+  /** Typed message-relative anchor used by non-bottom restore. */
+  messageAnchor?: MessageAnchor
   /** Last known scrollbar pixel state — saved on every scroll event. */
   scrollPosition?: {
     scrollTop: number
@@ -34,7 +42,7 @@ export type ViewportState = {
   sessionMemoryState: Map<string, SessionMemoryState>
   isSyncing: boolean
 
-  updateViewportAnchor: (sessionId: string, anchor: number, scrollPosition?: SessionMemoryState['scrollPosition']) => void
+  updateViewportAnchor: (sessionId: string, anchor: number, scrollPosition?: SessionMemoryState['scrollPosition'], messageAnchor?: MessageAnchor) => void
 }
 
 export const viewportSessionKey = (sessionId: string, runtimeKey = getRuntimeKey()): string => `${runtimeKey}\n${sessionId}`
@@ -48,7 +56,7 @@ export const useViewportStore = create<ViewportState>()((set) => ({
   sessionMemoryState: new Map(),
   isSyncing: false,
 
-  updateViewportAnchor: (sessionId, anchor, scrollPosition) =>
+  updateViewportAnchor: (sessionId, anchor, scrollPosition, messageAnchor) =>
     set((s) => {
       const map = new Map(s.sessionMemoryState)
       const key = viewportSessionKey(sessionId)
@@ -62,6 +70,7 @@ export const useViewportStore = create<ViewportState>()((set) => ({
         ...existing,
         viewportAnchor: anchor,
         ...(scrollPosition ? { scrollPosition } : {}),
+        ...(messageAnchor ? { messageAnchor } : {}),
         lastAccessedAt: Date.now(),
       })
       return { sessionMemoryState: map }
