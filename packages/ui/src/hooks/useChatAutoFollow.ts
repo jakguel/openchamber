@@ -158,6 +158,15 @@ export const decideReCorrection = ({
     return 'stop';
 };
 
+// A manual user scroll stamps lastUserReleaseAt. The release counts against the
+// CURRENT restore window only if it happened strictly after the window opened;
+// a stale stamp from a prior window — or the zero stamp written by goToBottom and
+// the bottom-pin handoff — means the user re-engaged, so re-correction continues.
+export const isReleasedSinceWindowOpen = (
+    lastReleaseAt: number,
+    windowOpenedAt: number,
+): boolean => lastReleaseAt > windowOpenedAt;
+
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
 // — its height is exactly how far above scrollHeight the user can be while still
 // looking at "empty" space. We use that same value as the threshold for both
@@ -783,7 +792,7 @@ export const useChatAutoFollow = ({
                 prevContentHeight: active.prevContentHeight,
                 currentContentHeight,
                 state: stateRef.current,
-                userReleased: lastUserReleaseAtRef.current > active.openedAt,
+                userReleased: isReleasedSinceWindowOpen(lastUserReleaseAtRef.current, active.openedAt),
                 correctionCount: active.correctionCount,
             });
             if (action === 're-correct') {

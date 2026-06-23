@@ -4,6 +4,7 @@ import {
     MAX_RESTORE_RECORRECTIONS,
     decideReCorrection,
     isRealMessageAnchor,
+    isReleasedSinceWindowOpen,
     resolveRestoreTarget,
     shouldReleaseAutoFollowOnScroll,
 } from './useChatAutoFollow';
@@ -427,6 +428,32 @@ describe('decideReCorrection', () => {
 
     test('cap is a positive bound', () => {
         expect(MAX_RESTORE_RECORRECTIONS).toBeGreaterThan(0);
+    });
+});
+
+// ─── Scroll-restore Step 7 — release signal that gates re-correction (D-J5) ───
+// isReleasedSinceWindowOpen is the pure release-detection used by the restore
+// observer: a manual user scroll stamps lastUserReleaseAt; if that stamp is
+// strictly after the restore window opened, the user released DURING the window
+// and the content-driven re-correction must stop. A stale/zero stamp (set by
+// goToBottom and the bottom-pin restore handoff) means re-engaged, so correction
+// continues. Each assertion goes red if the strict-after comparison is dropped,
+// inverted, or weakened to >=.
+describe('isReleasedSinceWindowOpen', () => {
+    test('release stamped AFTER the window opened -> released (stops re-correction)', () => {
+        expect(isReleasedSinceWindowOpen(500, 100)).toBe(true);
+    });
+
+    test('zero release stamp (goToBottom / bottom-pin handoff) -> NOT released (re-engaged)', () => {
+        expect(isReleasedSinceWindowOpen(0, 100)).toBe(false);
+    });
+
+    test('release stamped BEFORE the window opened (prior window) -> NOT released', () => {
+        expect(isReleasedSinceWindowOpen(50, 100)).toBe(false);
+    });
+
+    test('release stamp equal to window-open time -> NOT released (strict-after boundary)', () => {
+        expect(isReleasedSinceWindowOpen(100, 100)).toBe(false);
     });
 });
 
