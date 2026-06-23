@@ -25,6 +25,7 @@ const base = {
     previousTop: 1000,
     maxScrollNow: 2000,
     maxScrollPrev: 2000,
+    programmatic: false,
 };
 
 describe('shouldReleaseAutoFollowOnScroll', () => {
@@ -84,6 +85,20 @@ describe('shouldReleaseAutoFollowOnScroll', () => {
             maxScrollPrev: 2000,
         })).toBe(true);
     });
+
+    test('gap#5: programmatic restore write does NOT release auto-follow', () => {
+        expect(shouldReleaseAutoFollowOnScroll({
+            ...base,
+            programmatic: true,
+        })).toBe(false);
+    });
+
+    test('gap#5: same scroll delta from a real user gesture DOES release', () => {
+        expect(shouldReleaseAutoFollowOnScroll({
+            ...base,
+            programmatic: false,
+        })).toBe(true);
+    });
 });
 
 // ─── Scroll oscillation regression — HALF 1 ───────────────────────────────────
@@ -103,6 +118,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 500,  // scrollHeight shrank -> maxScroll dropped 1500px
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 
@@ -114,6 +130,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 1999,  // decreased by 1
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 
@@ -128,6 +145,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 1800,  // clientHeight grew 200px
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 
@@ -141,6 +159,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 2000,
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(true);
     });
 
@@ -153,6 +172,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 2500,  // content grew
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(true);
     });
 
@@ -164,6 +184,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 2000,
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 
@@ -175,6 +196,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 2000,
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 
@@ -187,6 +209,7 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             previousTop: 1000,
             maxScrollNow: 1500,
             maxScrollPrev: 2000,
+            programmatic: false,
         })).toBe(false);
     });
 });

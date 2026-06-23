@@ -60,6 +60,9 @@ export interface AutoFollowReleaseDecisionInput {
     previousTop: number;
     maxScrollNow: number;
     maxScrollPrev: number;
+    // True when this scroll change was triggered by a hook-side hard-snap
+    // (a programmatic scrollTop write), not a real user gesture.
+    programmatic: boolean;
 }
 
 // A pending-subagent placeholder can collapse, dropping scrollHeight and thus
@@ -67,13 +70,17 @@ export interface AutoFollowReleaseDecisionInput {
 // downward. That clamp looks identical to a user scroll-up (currentTop <
 // previousTop) but is content-driven, so it must NOT release auto-follow.
 // Release only on an upward move that is NOT explained by a maxScroll decrease.
+// A programmatic restore write also moves scrollTop but is hook-driven, so it
+// must NOT be misread as a manual release either (gap#5).
 export const shouldReleaseAutoFollowOnScroll = ({
     state,
     currentTop,
     previousTop,
     maxScrollNow,
     maxScrollPrev,
+    programmatic,
 }: AutoFollowReleaseDecisionInput): boolean => {
+    if (programmatic) return false;
     if (state !== 'following') return false;
     if (currentTop >= previousTop) return false;
     const isContentDrivenClamp = maxScrollNow < maxScrollPrev;
@@ -520,6 +527,7 @@ export const useChatAutoFollow = ({
 
         if (target === 'anchor' && messageAnchor) {
             const applyAnchor = () => {
+                if (stateRef.current === 'following') return false;
                 markProgrammaticWrite();
                 return restoreMessageAnchorRef.current?.(messageAnchor) ?? false;
             };
@@ -538,6 +546,7 @@ export const useChatAutoFollow = ({
         const savedMaxScroll = Math.max(0, savedScroll.scrollHeight - savedScroll.clientHeight);
         const ratio = savedMaxScroll > 0 ? savedScroll.scrollTop / savedMaxScroll : 0;
         const applyRatio = () => {
+            if (stateRef.current === 'following') return;
             const c = scrollRef.current;
             if (!c) return;
             const cur = Math.max(0, c.scrollHeight - c.clientHeight);
@@ -631,6 +640,7 @@ export const useChatAutoFollow = ({
             previousTop,
             maxScrollNow,
             maxScrollPrev,
+            programmatic,
         })) {
             stopFollowLoop();
             stopSettleBurst();
