@@ -248,7 +248,7 @@ const nestedScrollableCanConsumeUp = (root: HTMLElement, target: EventTarget | n
     return nested.scrollTop > 0;
 };
 
-const isAtBottomSnapshot = (snapshot: NonNullable<SessionMemoryState['scrollPosition']>, isMobile: boolean): boolean => {
+export const isAtBottomSnapshot = (snapshot: NonNullable<SessionMemoryState['scrollPosition']>, isMobile: boolean): boolean => {
     const max = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     if (max <= 0) return true;
     const threshold = computeBottomZoneThreshold(isMobile, null);

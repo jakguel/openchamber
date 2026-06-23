@@ -4,6 +4,7 @@ import {
     MAX_RESTORE_RECORRECTIONS,
     decideReCorrection,
     decideRestoreGate,
+    isAtBottomSnapshot,
     isHealthyScrollSnapshot,
     isRealMessageAnchor,
     isReleasedSinceWindowOpen,
@@ -506,6 +507,26 @@ describe('isHealthyScrollSnapshot', () => {
 
     test('minimal healthy boundary (1px extent, 1px offset) -> true', () => {
         expect(isHealthyScrollSnapshot({ scrollTop: 1, scrollHeight: 1001, clientHeight: 1000 })).toBe(true);
+    });
+});
+
+// ─── Scroll-restore Step 10 — isAtBottomSnapshot degenerate/unsettled max ─────
+// A snapshot whose content has not grown past the viewport (scrollHeight <=
+// clientHeight, so max scroll <= 0) is unsettled/degenerate. It MUST be treated
+// as at-bottom (true) so the restore resolver bottom-pins instead of routing to
+// a ratio target that would collapse the chat to the top. A naive
+// "max <= 0 -> not at bottom" would re-introduce the collapse-to-top regression.
+describe('isAtBottomSnapshot', () => {
+    test('degenerate/unsettled max (scrollHeight <= clientHeight) -> at-bottom, NOT collapse-to-top', () => {
+        expect(isAtBottomSnapshot({ scrollTop: 0, scrollHeight: 1000, clientHeight: 1000 }, false)).toBe(true);
+    });
+
+    test('settled snapshot parked at the bottom (scrollTop === max) -> at bottom', () => {
+        expect(isAtBottomSnapshot({ scrollTop: 2000, scrollHeight: 3000, clientHeight: 1000 }, false)).toBe(true);
+    });
+
+    test('settled snapshot far above the bottom -> NOT at bottom (resolver may use ratio/anchor)', () => {
+        expect(isAtBottomSnapshot({ scrollTop: 0, scrollHeight: 3000, clientHeight: 1000 }, false)).toBe(false);
     });
 });
 
