@@ -125,6 +125,18 @@ export const resolveRestoreTarget = ({
     return 'bottom';
 };
 
+// A saved scrollPosition is a usable restore target only if it has a positive
+// scroll extent (scrollHeight - clientHeight > 0) AND a positive saved offset.
+// A collapsed-top snapshot (scrollTop <= 0 with valid dimensions) is the poison
+// left by the old unsettled restore-time re-save: its ratio maps to 0, re-opening
+// the chat stuck at the top and re-persisting the same 0. Rejecting it routes the
+// resolver to the bottom fallback so already-poisoned sessions self-heal.
+export const isHealthyScrollSnapshot = (snapshot: {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+}): boolean => snapshot.scrollHeight - snapshot.clientHeight > 0 && snapshot.scrollTop > 0;
+
 // Upper bound on how many times the restore window may hard-snap during content
 // growth. Real growth (lazy images, virtualized measurement) is finite; the cap
 // guarantees termination even under pathological continuous growth.
@@ -551,7 +563,7 @@ export const useChatAutoFollow = ({
             hasSavedSnapshot: Boolean(saved),
             atBottom: saved ? isAtBottomSnapshot(saved, isMobile) : false,
             hasMessageAnchor: Boolean(messageAnchor),
-            hasValidScrollPosition: saved ? saved.scrollHeight - saved.clientHeight > 0 : false,
+            hasValidScrollPosition: saved ? isHealthyScrollSnapshot(saved) : false,
         });
 
         if (target === 'bottom') {
@@ -595,17 +607,14 @@ export const useChatAutoFollow = ({
 
         setStateValue('released');
         applyRatio();
-        // Re-apply the ratio target while late content growth shifts it.
+        // Re-apply the ratio target while late content growth shifts it. The
+        // settled position is persisted later by queueSave/flushSave — restore
+        // must NOT re-save the unsettled scrollTop here (that poisoned the next
+        // open with a transient, often top-collapsed, value).
         openRestoreWindow(applyRatio);
 
-        updateViewportAnchor(sessionId, memState?.viewportAnchor ?? 0, {
-            scrollTop: container.scrollTop,
-            scrollHeight: container.scrollHeight,
-            clientHeight: container.clientHeight,
-        }, messageAnchor ?? undefined);
-
         return true;
-    }, [closeRestoreWindow, isMobile, markProgrammaticWrite, openRestoreWindow, setStateValue, startFollowLoop, startSettleBurst, updateViewportAnchor, writeScrollTopInstant]);
+    }, [closeRestoreWindow, isMobile, markProgrammaticWrite, openRestoreWindow, setStateValue, startFollowLoop, startSettleBurst, writeScrollTopInstant]);
 
     React.useEffect(() => {
         if (!currentSessionId || currentSessionId === lastSessionIdRef.current) {

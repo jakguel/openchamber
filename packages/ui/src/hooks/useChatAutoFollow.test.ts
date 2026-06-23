@@ -4,6 +4,7 @@ import {
     MAX_RESTORE_RECORRECTIONS,
     decideReCorrection,
     decideRestoreGate,
+    isHealthyScrollSnapshot,
     isRealMessageAnchor,
     isReleasedSinceWindowOpen,
     resolveRestoreTarget,
@@ -480,6 +481,31 @@ describe('decideRestoreGate', () => {
 
     test('renderable + no hash -> restore (proceed and mark ref after)', () => {
         expect(decideRestoreGate({ isRenderable: true, isHashDeeplink: false })).toBe('restore');
+    });
+});
+
+// ─── Scroll-restore Step 9 — heal a poisoned scrollPosition snapshot ──────────
+// The old restore-time re-save could persist a top-collapsed scrollTop (0) with
+// otherwise-valid dimensions; on the next open the ratio branch maps that to a 0
+// target and the chat re-opens stuck at the top (self-reinforcing poison). Step 4
+// only rejected degenerate dimensions (max <= 0); isHealthyScrollSnapshot also
+// rejects a present-but-collapsed (scrollTop <= 0) snapshot so it heals to bottom
+// via the resolver's tier-3 fallback instead of collapsing to the top.
+describe('isHealthyScrollSnapshot', () => {
+    test('healthy settled snapshot (positive extent + positive offset) -> true', () => {
+        expect(isHealthyScrollSnapshot({ scrollTop: 500, scrollHeight: 3000, clientHeight: 1000 })).toBe(true);
+    });
+
+    test('poisoned top-collapse (scrollTop 0, valid dimensions) -> false (heals, not ratio->0)', () => {
+        expect(isHealthyScrollSnapshot({ scrollTop: 0, scrollHeight: 3000, clientHeight: 1000 })).toBe(false);
+    });
+
+    test('degenerate dimensions (max scroll <= 0) -> false even with a positive offset', () => {
+        expect(isHealthyScrollSnapshot({ scrollTop: 100, scrollHeight: 1000, clientHeight: 1000 })).toBe(false);
+    });
+
+    test('minimal healthy boundary (1px extent, 1px offset) -> true', () => {
+        expect(isHealthyScrollSnapshot({ scrollTop: 1, scrollHeight: 1001, clientHeight: 1000 })).toBe(true);
     });
 });
 
