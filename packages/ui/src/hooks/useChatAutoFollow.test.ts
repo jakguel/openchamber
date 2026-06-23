@@ -8,6 +8,7 @@ import {
     isHealthyScrollSnapshot,
     isRealMessageAnchor,
     isReleasedSinceWindowOpen,
+    nextFollowTop,
     resolveRestoreTarget,
     shouldReleaseAutoFollowOnScroll,
 } from './useChatAutoFollow';
@@ -215,6 +216,45 @@ describe('scroll oscillation regression — HALF 1 (maxScroll-decrease clamp gua
             maxScrollPrev: 2000,
             programmatic: false,
         })).toBe(false);
+    });
+});
+
+// ─── Scroll jitter regression — HALF 2 (streaming hard-snap follow step) ──────────
+// Bug: during streaming, content grows every frame; tickFollow's old else-branch
+// eased toward the bottom with LERP<1 and perpetually trailed the moving target
+// (visible "jump up, ease down, jump up" oscillation). Fix: nextFollowTop hard-snaps
+// to the exact bottom WHILE streaming, and keeps the LERP catch-up ONLY when not
+// streaming (preserving goToBottom('smooth')). These exact-toBe assertions distinguish
+// the two branches: each one reds under a specific production mutation.
+// LERP is the module-private 0.18 follow-easing constant in useChatAutoFollow.ts
+// (not exported); the literal 0.18 below mirrors that source constant.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('nextFollowTop — HALF 2 (content-growth hard-snap)', () => {
+    // Streaming MUST return the FULL bottom target = Math.max(0, scrollHeight - clientHeight).
+    // Mutation check: flipping `if (isStreaming) return target` to the LERP branch turns
+    // this expected 1200 into 500 + (1200-500)*0.18 = 626, reddening this assertion —
+    // proving the test pins the streaming hard-snap, not just "some value".
+    test('streaming hard-snaps to the exact bottom target', () => {
+        expect(nextFollowTop({ scrollHeight: 2000, clientHeight: 800, scrollTop: 500, isStreaming: true })).toBe(1200);
+    });
+
+    // Non-streaming MUST preserve the eased LERP catch-up: scrollTop + (target-scrollTop)*0.18.
+    // Mutation check: making the non-streaming branch hard-snap returns 1200 instead of 626,
+    // reddening this assertion — guarding goToBottom('smooth') from regression.
+    test('non-streaming preserves the LERP eased catch-up', () => {
+        expect(nextFollowTop({ scrollHeight: 2000, clientHeight: 800, scrollTop: 500, isStreaming: false })).toBe(500 + (1200 - 500) * 0.18);
+    });
+
+    // The exact reported oscillation bug: with scrollTop far below a large target, streaming
+    // returns the FULL target (9200), NOT a LERP fraction (0 + 9200*0.18 = 1656). A fractional
+    // result here is the trailing-the-moving-target oscillation we are eliminating.
+    test('streaming with scrollTop far from target returns the full target, not a fraction', () => {
+        expect(nextFollowTop({ scrollHeight: 10000, clientHeight: 800, scrollTop: 0, isStreaming: true })).toBe(9200);
+    });
+
+    // Degenerate: content fits within the viewport -> Math.max(0, 500-800) clamps to 0.
+    test('content shorter than viewport clamps the target to 0', () => {
+        expect(nextFollowTop({ scrollHeight: 500, clientHeight: 800, scrollTop: 0, isStreaming: true })).toBe(0);
     });
 });
 
