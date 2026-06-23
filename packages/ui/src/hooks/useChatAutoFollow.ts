@@ -171,6 +171,24 @@ export const decideReCorrection = ({
     return 'stop';
 };
 
+export interface FollowStepInput {
+    scrollHeight: number;
+    clientHeight: number;
+    scrollTop: number;
+    isStreaming: boolean;
+}
+
+// During streaming the content grows every frame; any LERP<1 trails the moving
+// target and produces the jump-up/ease-down oscillation, so streaming hard-snaps
+// to the exact bottom. When NOT streaming, preserve the eased LERP catch-up used
+// by goToBottom('smooth'). isStreaming is read fresh each frame by the caller so
+// streaming-end automatically restores easing for late layout growth.
+export const nextFollowTop = ({ scrollHeight, clientHeight, scrollTop, isStreaming }: FollowStepInput): number => {
+    const target = Math.max(0, scrollHeight - clientHeight);
+    if (isStreaming) return target;
+    return scrollTop + (target - scrollTop) * LERP;
+};
+
 // A manual user scroll stamps lastUserReleaseAt. The release counts against the
 // CURRENT restore window only if it happened strictly after the window opened;
 // a stale stamp from a prior window — or the zero stamp written by goToBottom and
@@ -384,7 +402,12 @@ export const useChatAutoFollow = ({
         }
 
         settledFramesRef.current = 0;
-        const next = current + delta * LERP;
+        const next = nextFollowTop({
+            scrollHeight: container.scrollHeight,
+            clientHeight: container.clientHeight,
+            scrollTop: current,
+            isStreaming: sessionIsWorkingRef.current,
+        });
         markProgrammaticWrite();
         container.scrollTop = next;
         lastScrollTopRef.current = container.scrollTop;
