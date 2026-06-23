@@ -26,6 +26,7 @@ interface UseChatAutoFollowOptions {
     onActiveTurnChange?: (turnId: string | null) => void;
     captureMessageAnchor?: () => MessageAnchor | null;
     restoreMessageAnchor?: (anchor: MessageAnchor) => boolean;
+    isSessionRenderable?: () => boolean;
 }
 
 export interface UseChatAutoFollowResult {
@@ -167,6 +168,28 @@ export const isReleasedSinceWindowOpen = (
     windowOpenedAt: number,
 ): boolean => lastReleaseAt > windowOpenedAt;
 
+export type RestoreGateDecision = 'skip' | 'wait' | 'restore';
+
+export interface RestoreGateInput {
+    isRenderable: boolean;
+    isHashDeeplink: boolean;
+}
+
+// Gate for the one-shot scroll restore. Hash deeplinks are handled by the hash
+// scroll handler, so they short-circuit first. If the session snapshot is not
+// renderable yet, return 'wait' so the caller does NOT mark the session as
+// scrolled — that mark, set before the snapshot was renderable, is what caused
+// the open-scrolled-far-up deadlock (the effect early-returned forever and never
+// restored against the mounted container). Only 'restore' proceeds and marks.
+export const decideRestoreGate = ({
+    isRenderable,
+    isHashDeeplink,
+}: RestoreGateInput): RestoreGateDecision => {
+    if (isHashDeeplink) return 'skip';
+    if (!isRenderable) return 'wait';
+    return 'restore';
+};
+
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
 // — its height is exactly how far above scrollHeight the user can be while still
 // looking at "empty" space. We use that same value as the threshold for both
@@ -228,6 +251,7 @@ export const useChatAutoFollow = ({
     onActiveTurnChange,
     captureMessageAnchor,
     restoreMessageAnchor,
+    isSessionRenderable,
 }: UseChatAutoFollowOptions): UseChatAutoFollowResult => {
     const scrollRef = React.useRef<HTMLDivElement | null>(null);
     const [containerEl, setContainerEl] = React.useState<HTMLDivElement | null>(null);
@@ -249,6 +273,8 @@ export const useChatAutoFollow = ({
     captureMessageAnchorRef.current = captureMessageAnchor;
     const restoreMessageAnchorRef = React.useRef(restoreMessageAnchor);
     restoreMessageAnchorRef.current = restoreMessageAnchor;
+    const isSessionRenderableRef = React.useRef(isSessionRenderable);
+    isSessionRenderableRef.current = isSessionRenderable;
 
     const lastSessionIdRef = React.useRef<string | null>(null);
     const programmaticWriteUntilRef = React.useRef(0);
@@ -502,9 +528,14 @@ export const useChatAutoFollow = ({
         if (!sessionId) return false;
 
         const container = scrollRef.current;
-        if (!container) {
-            // ChatViewport not mounted yet (e.g., session still hydrating).
-            // Record the request so the container-attach effect can replay it.
+        const renderable = isSessionRenderableRef.current
+            ? isSessionRenderableRef.current()
+            : true;
+        if (!container || !renderable) {
+            // ChatViewport not mounted, or the session snapshot is not renderable
+            // yet (still hydrating). Record the request so the container-attach
+            // effect can replay it once the viewport mounts; the renderable
+            // re-trigger is owned by the caller's renderable-gated effect.
             pendingInitialRestoreRef.current = sessionId;
             setStateValue('following');
             return false;

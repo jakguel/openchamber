@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
     MAX_RESTORE_RECORRECTIONS,
     decideReCorrection,
+    decideRestoreGate,
     isRealMessageAnchor,
     isReleasedSinceWindowOpen,
     resolveRestoreTarget,
@@ -454,6 +455,31 @@ describe('isReleasedSinceWindowOpen', () => {
 
     test('release stamp equal to window-open time -> NOT released (strict-after boundary)', () => {
         expect(isReleasedSinceWindowOpen(100, 100)).toBe(false);
+    });
+});
+
+// ─── Scroll-restore Step 8 — renderable guard without deadlock (the far-up bug) ─
+// decideRestoreGate decides whether the restore effect should skip (hash deeplink
+// owns the scroll), wait (snapshot not renderable yet — must NOT mark the
+// already-scrolled ref, so the effect re-runs once it becomes renderable), or
+// restore (renderable — proceed and mark the ref AFTER). The far-up deadlock was
+// caused by marking the ref before the renderable check; a 'wait' decision that
+// leaves the ref unmarked is exactly what breaks that deadlock.
+describe('decideRestoreGate', () => {
+    test('hash deeplink -> skip (hash handler owns scroll; checked FIRST, even when renderable)', () => {
+        expect(decideRestoreGate({ isRenderable: true, isHashDeeplink: true })).toBe('skip');
+    });
+
+    test('hash deeplink wins even when NOT renderable (ordering: hash before renderable guard)', () => {
+        expect(decideRestoreGate({ isRenderable: false, isHashDeeplink: true })).toBe('skip');
+    });
+
+    test('not renderable + no hash -> wait (do NOT mark ref; effect re-runs when renderable)', () => {
+        expect(decideRestoreGate({ isRenderable: false, isHashDeeplink: false })).toBe('wait');
+    });
+
+    test('renderable + no hash -> restore (proceed and mark ref after)', () => {
+        expect(decideRestoreGate({ isRenderable: true, isHashDeeplink: false })).toBe('restore');
     });
 });
 

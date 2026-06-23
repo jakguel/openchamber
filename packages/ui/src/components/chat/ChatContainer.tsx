@@ -16,7 +16,7 @@ import { QuestionCard } from './QuestionCard';
 import { StatusRowContainer } from './StatusRowContainer';
 import ScrollToBottomButton from './components/ScrollToBottomButton';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
-import { useChatAutoFollow, type AnimationHandlers, type ContentChangeReason } from '@/hooks/useChatAutoFollow';
+import { decideRestoreGate, useChatAutoFollow, type AnimationHandlers, type ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import { useChatTimelineController } from './hooks/useChatTimelineController';
 import { TimelineDialog } from './TimelineDialog';
 import { useChatTurnNavigation } from './hooks/useChatTurnNavigation';
@@ -581,6 +581,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         onActiveTurnChange: handleActiveTurnChange,
         captureMessageAnchor: () => messageListRef.current?.captureViewportAnchor() ?? null,
         restoreMessageAnchor: (anchor) => messageListRef.current?.restoreViewportAnchor(anchor) ?? false,
+        isSessionRenderable: () => hasRenderableSessionSnapshot,
     });
 
     const viewportMessages = sessionMessages;
@@ -725,9 +726,18 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         if (!currentSessionId) return;
         if (lastScrolledSessionRef.current === currentSessionId) return;
 
-        const hasHashTarget = typeof window !== 'undefined' && window.location.hash.length > 0;
+        const isHashDeeplink = typeof window !== 'undefined' && window.location.hash.length > 0;
+        const decision = decideRestoreGate({
+            isRenderable: hasRenderableSessionSnapshot,
+            isHashDeeplink,
+        });
+        // 'wait': snapshot not renderable yet — do NOT mark the ref, so this effect
+        // re-runs when hasRenderableSessionSnapshot flips and restores then. Marking
+        // here is what previously deadlocked the chat scrolled far up.
+        if (decision === 'wait') return;
+
         lastScrolledSessionRef.current = currentSessionId;
-        if (hasHashTarget) {
+        if (decision === 'skip') {
             // Hash navigation handler will scroll to target; we just release auto-follow.
             releaseAutoFollow();
             return;
@@ -741,7 +751,7 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
         } else {
             window.requestAnimationFrame(run);
         }
-    }, [currentSessionId, releaseAutoFollow, restoreSnapshot]);
+    }, [currentSessionId, hasRenderableSessionSnapshot, releaseAutoFollow, restoreSnapshot]);
 
     React.useEffect(() => {
         if (!currentSessionId) return;
