@@ -11,6 +11,7 @@ import {
     nextFollowTop,
     resolveRestoreTarget,
     shouldReleaseAutoFollowOnScroll,
+    shouldRekickFollowOnResize,
 } from './useChatAutoFollow';
 
 // ─── Regression context ────────────────────────────────────────────────────────
@@ -255,6 +256,28 @@ describe('nextFollowTop — HALF 2 (content-growth hard-snap)', () => {
     // Degenerate: content fits within the viewport -> Math.max(0, 500-800) clamps to 0.
     test('content shorter than viewport clamps the target to 0', () => {
         expect(nextFollowTop({ scrollHeight: 500, clientHeight: 800, scrollTop: 0, isStreaming: true })).toBe(0);
+    });
+});
+
+// ─── Scroll jitter regression — follow-loop re-kick growth gate ───────────────
+// The follow-loop ResizeObserver fires on BOTH content growth (new tokens) and
+// viewport changes (mobile keyboard shrinking clientHeight). Only genuine content
+// (scrollHeight) growth may re-kick startFollowLoop — a viewport resize must not
+// masquerade as content growth (AGENTS.md), otherwise the streaming hard-snap would
+// yank the user on every keyboard open. Mutation: flipping `>` to `>=` or `!==`
+// reds the viewport-only false case below.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('shouldRekickFollowOnResize', () => {
+    test('content GROWTH (scrollHeight increased) -> re-kick', () => {
+        expect(shouldRekickFollowOnResize(1000, 1200)).toBe(true);
+    });
+
+    test('viewport-only change (scrollHeight unchanged) -> NO re-kick (keyboard/resize)', () => {
+        expect(shouldRekickFollowOnResize(1000, 1000)).toBe(false);
+    });
+
+    test('content SHRINK / clientHeight growth (scrollHeight decreased) -> NO re-kick', () => {
+        expect(shouldRekickFollowOnResize(1000, 800)).toBe(false);
     });
 });
 

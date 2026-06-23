@@ -171,6 +171,14 @@ export const decideReCorrection = ({
     return 'stop';
 };
 
+// A ResizeObserver fires on BOTH content-height growth (new messages/tokens) and
+// viewport changes (e.g. mobile keyboard open shrinking clientHeight). Only genuine
+// content growth should re-kick the follow loop — a viewport resize must not be
+// treated as content growth (AGENTS.md). Returns true only when the scrollable
+// content height has increased since the last observation.
+export const shouldRekickFollowOnResize = (prevContentHeight: number, currentContentHeight: number): boolean =>
+    currentContentHeight > prevContentHeight;
+
 export interface FollowStepInput {
     scrollHeight: number;
     clientHeight: number;
@@ -312,6 +320,9 @@ export const useChatAutoFollow = ({
     const settledFramesRef = React.useRef(0);
     const lastScrollTopRef = React.useRef(0);
     const lastMaxScrollRef = React.useRef(0);
+    // Last scrollHeight seen by the follow-loop ResizeObserver; gates the re-kick to
+    // genuine content growth so a viewport (clientHeight) resize cannot masquerade as it.
+    const lastObservedContentHeightRef = React.useRef(0);
     const saveTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingSaveRef = React.useRef<{ sessionId: string; anchor: number; messageAnchor: MessageAnchor | null } | null>(null);
     const settleBurstRafRef = React.useRef<number | null>(null);
@@ -813,9 +824,13 @@ export const useChatAutoFollow = ({
         const container = containerEl;
         if (!container || typeof ResizeObserver === 'undefined') return;
 
+        lastObservedContentHeightRef.current = container.scrollHeight;
         const observer = new ResizeObserver(() => {
             updateOverflowAndButton();
-            if (stateRef.current === 'following') {
+            const currentContentHeight = container.scrollHeight;
+            const grew = shouldRekickFollowOnResize(lastObservedContentHeightRef.current, currentContentHeight);
+            lastObservedContentHeightRef.current = currentContentHeight;
+            if (grew && stateRef.current === 'following') {
                 startFollowLoop();
             }
         });
