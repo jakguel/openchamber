@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 
-import { isRealMessageAnchor, resolveRestoreTarget, shouldReleaseAutoFollowOnScroll } from './useChatAutoFollow';
+import {
+    MAX_RESTORE_RECORRECTIONS,
+    decideReCorrection,
+    isRealMessageAnchor,
+    resolveRestoreTarget,
+    shouldReleaseAutoFollowOnScroll,
+} from './useChatAutoFollow';
 
 // ─── Regression context ────────────────────────────────────────────────────────
 // Bug: pending-subagent ToolPart height churn transiently collapses scrollHeight.
@@ -309,6 +315,95 @@ describe('isRealMessageAnchor', () => {
         expect(isRealMessageAnchor({ offsetTop: 42 })).toBe(false);
         expect(isRealMessageAnchor({ messageId: 1, offsetTop: 42 })).toBe(false);
         expect(isRealMessageAnchor({ messageId: 'm1', offsetTop: '42' })).toBe(false);
+    });
+});
+
+// ─── Scroll-restore Step 5 — bounded content-growth re-correction lifecycle ───
+// decideReCorrection drives the restore window: it re-corrects ONLY on content
+// (scrollHeight) growth and STOPS permanently on handoff ('following'), user
+// release, the first stable (non-growth) observation, or the correction cap. It
+// has no DOM dependency, so each terminal/continue branch is asserted directly;
+// the cap proves a continuous-growth stream is bounded, never infinite.
+// ──────────────────────────────────────────────────────────────────────────────
+describe('decideReCorrection', () => {
+    const base = {
+        prevContentHeight: 1000,
+        currentContentHeight: 1000,
+        state: 'released' as const,
+        userReleased: false,
+        correctionCount: 0,
+    };
+
+    test('content-height GROWTH -> re-correct', () => {
+        expect(decideReCorrection({ ...base, currentContentHeight: 1200 })).toBe('re-correct');
+    });
+
+    test('stable height (no growth, current === prev) -> stop', () => {
+        expect(decideReCorrection({ ...base, currentContentHeight: 1000 })).toBe('stop');
+    });
+
+    test('content SHRINK (current < prev) -> stop', () => {
+        expect(decideReCorrection({ ...base, currentContentHeight: 800 })).toBe('stop');
+    });
+
+    test('user released -> stop (even with growth)', () => {
+        expect(decideReCorrection({ ...base, currentContentHeight: 1200, userReleased: true })).toBe('stop');
+    });
+
+    test("follow handoff (state === 'following') -> stop (even with growth)", () => {
+        expect(decideReCorrection({ ...base, currentContentHeight: 1200, state: 'following' })).toBe('stop');
+    });
+
+    test('clientHeight/viewport change with NO scrollHeight growth -> NOT re-correct (keyboard/resize)', () => {
+        // The predicate only ever sees content (scrollHeight). A keyboard open that
+        // shrinks clientHeight but leaves scrollHeight unchanged surfaces here as
+        // currentContentHeight === prevContentHeight -> stop, never a re-correct.
+        expect(decideReCorrection({ ...base, currentContentHeight: 1000 })).toBe('stop');
+    });
+
+    test('correction cap reached -> stop (even with growth)', () => {
+        expect(decideReCorrection({
+            ...base,
+            currentContentHeight: 1200,
+            correctionCount: MAX_RESTORE_RECORRECTIONS,
+        })).toBe('stop');
+    });
+
+    test('continuous growth is BOUNDED: re-corrects up to the cap, then stops forever', () => {
+        let count = 0;
+        let height = 1000;
+        let corrections = 0;
+        // Simulate monotonic content growth with no handoff/release. Without the cap
+        // this would loop forever; the cap guarantees termination.
+        for (let i = 0; i < MAX_RESTORE_RECORRECTIONS + 50; i += 1) {
+            const action = decideReCorrection({
+                prevContentHeight: height,
+                currentContentHeight: height + 100,
+                state: 'released',
+                userReleased: false,
+                correctionCount: count,
+            });
+            if (action === 're-correct') {
+                count += 1;
+                corrections += 1;
+                height += 100;
+            } else {
+                break;
+            }
+        }
+        expect(corrections).toBe(MAX_RESTORE_RECORRECTIONS);
+        // After the cap, it is terminal even if content keeps growing.
+        expect(decideReCorrection({
+            prevContentHeight: height,
+            currentContentHeight: height + 100,
+            state: 'released',
+            userReleased: false,
+            correctionCount: MAX_RESTORE_RECORRECTIONS,
+        })).toBe('stop');
+    });
+
+    test('cap is a positive bound', () => {
+        expect(MAX_RESTORE_RECORRECTIONS).toBeGreaterThan(0);
     });
 });
 

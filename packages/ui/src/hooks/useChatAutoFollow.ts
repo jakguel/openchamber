@@ -117,6 +117,40 @@ export const resolveRestoreTarget = ({
     return 'bottom';
 };
 
+// Upper bound on how many times the restore window may hard-snap during content
+// growth. Real growth (lazy images, virtualized measurement) is finite; the cap
+// guarantees termination even under pathological continuous growth.
+export const MAX_RESTORE_RECORRECTIONS = 20;
+
+export type ReCorrectionAction = 're-correct' | 'stop';
+
+export interface ReCorrectionDecisionInput {
+    prevContentHeight: number;
+    currentContentHeight: number;
+    state: AutoFollowState;
+    userReleased: boolean;
+    correctionCount: number;
+}
+
+// Bounded restore-window lifecycle: after a non-bottom restore, re-apply the same
+// target while content (scrollHeight) keeps growing, and stop permanently on the
+// first stable/shrink observation, on follow handoff, on user release, or at the
+// correction cap. Only scrollHeight growth re-corrects — a clientHeight/viewport
+// change (keyboard, resize) surfaces as no growth and therefore stops.
+export const decideReCorrection = ({
+    prevContentHeight,
+    currentContentHeight,
+    state,
+    userReleased,
+    correctionCount,
+}: ReCorrectionDecisionInput): ReCorrectionAction => {
+    if (state === 'following') return 'stop';
+    if (userReleased) return 'stop';
+    if (correctionCount >= MAX_RESTORE_RECORRECTIONS) return 'stop';
+    if (currentContentHeight > prevContentHeight) return 're-correct';
+    return 'stop';
+};
+
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
 // — its height is exactly how far above scrollHeight the user can be while still
 // looking at "empty" space. We use that same value as the threshold for both
@@ -214,6 +248,16 @@ export const useChatAutoFollow = ({
     // (skeleton rendered, no scroll container yet), we record the session here
     // so a follow-up effect can replay the restore once the container mounts.
     const pendingInitialRestoreRef = React.useRef<string | null>(null);
+    // Active bounded re-correction window opened by a non-bottom restore. While set,
+    // a ResizeObserver hard-snaps `applyTarget` on content-height growth until the
+    // lifecycle predicate says stop. `null` means no window (bottom restore / idle).
+    const restoreWindowRef = React.useRef<{
+        applyTarget: () => void;
+        prevContentHeight: number;
+        correctionCount: number;
+        openedAt: number;
+    } | null>(null);
+    const [restoreWindowVersion, setRestoreWindowVersion] = React.useState(0);
 
     const updateViewportAnchor = useViewportStore((s) => s.updateViewportAnchor);
 
@@ -419,6 +463,24 @@ export const useChatAutoFollow = ({
         flushSave();
     }, [flushSave]);
 
+    const openRestoreWindow = React.useCallback((applyTarget: () => void) => {
+        const container = scrollRef.current;
+        restoreWindowRef.current = {
+            applyTarget,
+            prevContentHeight: container ? container.scrollHeight : 0,
+            correctionCount: 0,
+            openedAt: typeof performance !== 'undefined' ? performance.now() : Date.now(),
+        };
+        setRestoreWindowVersion((v) => v + 1);
+    }, []);
+
+    const closeRestoreWindow = React.useCallback(() => {
+        if (restoreWindowRef.current) {
+            restoreWindowRef.current = null;
+            setRestoreWindowVersion((v) => v + 1);
+        }
+    }, []);
+
     const restoreSnapshot = React.useCallback(async (): Promise<boolean> => {
         const sessionId = currentSessionIdRef.current;
         if (!sessionId) return false;
@@ -446,6 +508,7 @@ export const useChatAutoFollow = ({
         });
 
         if (target === 'bottom') {
+            closeRestoreWindow();
             setStateValue('following');
             lastUserReleaseAtRef.current = 0;
             const bottom = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -456,10 +519,15 @@ export const useChatAutoFollow = ({
         }
 
         if (target === 'anchor' && messageAnchor) {
+            const applyAnchor = () => {
+                markProgrammaticWrite();
+                return restoreMessageAnchorRef.current?.(messageAnchor) ?? false;
+            };
             setStateValue('released');
-            markProgrammaticWrite();
-            if (restoreMessageAnchorRef.current?.(messageAnchor)) {
+            if (applyAnchor()) {
                 lastScrollTopRef.current = container.scrollTop;
+                // Re-pin to the same message while late content growth shifts it.
+                openRestoreWindow(() => { applyAnchor(); });
                 return true;
             }
         }
@@ -469,11 +537,17 @@ export const useChatAutoFollow = ({
         const savedScroll = saved ?? { scrollTop: 0, scrollHeight: 0, clientHeight: 0 };
         const savedMaxScroll = Math.max(0, savedScroll.scrollHeight - savedScroll.clientHeight);
         const ratio = savedMaxScroll > 0 ? savedScroll.scrollTop / savedMaxScroll : 0;
-        const currentMaxScroll = Math.max(0, container.scrollHeight - container.clientHeight);
-        const targetTop = Math.round(ratio * currentMaxScroll);
+        const applyRatio = () => {
+            const c = scrollRef.current;
+            if (!c) return;
+            const cur = Math.max(0, c.scrollHeight - c.clientHeight);
+            writeScrollTopInstant(Math.round(ratio * cur));
+        };
 
         setStateValue('released');
-        writeScrollTopInstant(targetTop);
+        applyRatio();
+        // Re-apply the ratio target while late content growth shifts it.
+        openRestoreWindow(applyRatio);
 
         updateViewportAnchor(sessionId, memState?.viewportAnchor ?? 0, {
             scrollTop: container.scrollTop,
@@ -482,7 +556,7 @@ export const useChatAutoFollow = ({
         }, messageAnchor ?? undefined);
 
         return true;
-    }, [isMobile, markProgrammaticWrite, setStateValue, startFollowLoop, startSettleBurst, updateViewportAnchor, writeScrollTopInstant]);
+    }, [closeRestoreWindow, isMobile, markProgrammaticWrite, openRestoreWindow, setStateValue, startFollowLoop, startSettleBurst, updateViewportAnchor, writeScrollTopInstant]);
 
     React.useEffect(() => {
         if (!currentSessionId || currentSessionId === lastSessionIdRef.current) {
@@ -493,12 +567,13 @@ export const useChatAutoFollow = ({
         flushSave();
         stopFollowLoop();
         stopSettleBurst();
+        closeRestoreWindow();
         markProgrammaticWrite();
         // Drop any pending restore request inherited from a different session.
         if (pendingInitialRestoreRef.current && pendingInitialRestoreRef.current !== currentSessionId) {
             pendingInitialRestoreRef.current = null;
         }
-    }, [currentSessionId, flushSave, markProgrammaticWrite, stopFollowLoop, stopSettleBurst]);
+    }, [closeRestoreWindow, currentSessionId, flushSave, markProgrammaticWrite, stopFollowLoop, stopSettleBurst]);
 
     React.useEffect(() => {
         if (sessionIsWorking && stateRef.current === 'following') {
@@ -669,6 +744,55 @@ export const useChatAutoFollow = ({
         }
         return () => observer.disconnect();
     }, [containerEl, startFollowLoop, updateOverflowAndButton]);
+
+    // Bounded content-growth re-correction. While a non-bottom restore window is
+    // open, a ResizeObserver hard-snaps back to the resolved target each time the
+    // content (scrollHeight) grows, until the lifecycle predicate says stop. Setup
+    // is synchronous (useLayoutEffect, before paint); the observer disconnects on
+    // stop, unmount, session change, and window close — no leak, no infinite loop.
+    React.useLayoutEffect(() => {
+        // restoreWindowVersion is the re-run trigger: open/closeRestoreWindow bump it
+        // so this effect re-subscribes when the ref-held window changes.
+        void restoreWindowVersion;
+        const container = containerEl;
+        const win = restoreWindowRef.current;
+        if (!container || !win || typeof ResizeObserver === 'undefined') return;
+
+        const stopWindow = () => {
+            restoreWindowRef.current = null;
+        };
+
+        const observer = new ResizeObserver(() => {
+            const active = restoreWindowRef.current;
+            if (!active) {
+                observer.disconnect();
+                return;
+            }
+            const currentContentHeight = container.scrollHeight;
+            const action = decideReCorrection({
+                prevContentHeight: active.prevContentHeight,
+                currentContentHeight,
+                state: stateRef.current,
+                userReleased: lastUserReleaseAtRef.current > active.openedAt,
+                correctionCount: active.correctionCount,
+            });
+            if (action === 're-correct') {
+                active.applyTarget();
+                active.correctionCount += 1;
+                active.prevContentHeight = currentContentHeight;
+                return;
+            }
+            stopWindow();
+            observer.disconnect();
+        });
+
+        observer.observe(container);
+        const inner = container.firstElementChild;
+        if (inner instanceof Element) {
+            observer.observe(inner);
+        }
+        return () => observer.disconnect();
+    }, [containerEl, restoreWindowVersion]);
 
     React.useEffect(() => {
         updateOverflowAndButton();
