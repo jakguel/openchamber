@@ -2267,7 +2267,13 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     ]);
 
     const effectiveTimeEnd = isFinalized ? (pinnedTime.end ?? time?.end ?? localFinalizedAt) : undefined;
-    const isActive = shouldTickToolCounter(isFinalized, activeLatched, isConnected);
+    // Connection-independent: drives row visibility, task-summary rendering, shine
+    // text, and child activity messaging. Gating this on isConnected would hide the
+    // whole tool row on disconnect (the `return null` guard below), which is wrong.
+    const isActive = !isFinalized && activeLatched;
+    // Connection-gated: ONLY the LiveDuration counter tick pauses on disconnect and
+    // auto-resumes on reconnect for not-yet-finalized tools.
+    const isCounterTicking = shouldTickToolCounter(isFinalized, activeLatched, isConnected);
     const shouldTreatAsFinalized = isFinalized;
 
     const taskSummaryEntries = React.useMemo<TaskToolSummaryEntry[]>(() => {
@@ -2476,7 +2482,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                     <LiveDuration
                                         start={effectiveTimeStart}
                                         end={typeof effectiveTimeEnd === 'number' ? effectiveTimeEnd : undefined}
-                                        active={Boolean(isActive && typeof effectiveTimeEnd !== 'number')}
+                                        active={Boolean(isCounterTicking && typeof effectiveTimeEnd !== 'number')}
                                     />
                                 </span>
                             ) : null}

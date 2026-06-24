@@ -65,3 +65,39 @@ describe('shouldTickToolCounter', () => {
         expect(ticking).toEqual([[false, true, true]]);
     });
 });
+
+// AC5 regression: a disconnect must PAUSE the duration counter tick — and ONLY the
+// tick. The tool row stays visible because ToolPart wires row visibility / shine
+// text / task-summary to the connection-INDEPENDENT `isActive = !isFinalized &&
+// activeLatched`, and feeds ONLY LiveDuration's `active` prop from this helper. This
+// prevents the regression where gating the shared `isActive` on isConnected made the
+// whole non-task running tool row vanish on disconnect.
+//
+// Component rendering is intentionally NOT exercised here: ToolPart.tsx is unimportable
+// under `bun test` (its module graph pulls in a Vite `?worker&url` import), matching
+// this repo's established "DOM paths deferred to Playwright" convention. The row-visibility
+// invariant holds by construction — `isActive` does not take isConnected as an input — and
+// the connection-gated pause/resume of the tick is verified below against the real helper.
+describe('shouldTickToolCounter — AC5 pause/resume on connection toggle', () => {
+    const NOT_FINALIZED = false;
+    const ACTIVE_LATCH = true;
+
+    test('connected → tick is live', () => {
+        expect(shouldTickToolCounter(NOT_FINALIZED, ACTIVE_LATCH, true)).toBe(true);
+    });
+
+    test('disconnect → tick pauses (only isConnected changed)', () => {
+        expect(shouldTickToolCounter(NOT_FINALIZED, ACTIVE_LATCH, false)).toBe(false);
+    });
+
+    test('reconnect while still not finalized → tick resumes', () => {
+        expect(shouldTickToolCounter(NOT_FINALIZED, ACTIVE_LATCH, true)).toBe(true);
+    });
+
+    test('pause/resume is driven SOLELY by isConnected (latch inputs held fixed)', () => {
+        const connectedSequence = [true, false, true, false].map((connected) =>
+            shouldTickToolCounter(NOT_FINALIZED, ACTIVE_LATCH, connected),
+        );
+        expect(connectedSequence).toEqual([true, false, true, false]);
+    });
+});
