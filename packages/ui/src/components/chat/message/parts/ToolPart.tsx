@@ -13,6 +13,7 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectorySync, useSessionMessageRecords, useEnsureSessionMessages } from '@/sync/sync-context';
 import { useUIStore } from '@/stores/useUIStore';
+import { useConfigStore } from '@/stores/useConfigStore';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { Button } from '@/components/ui/button';
@@ -44,6 +45,7 @@ import { readTaskTagSessionIdFromOutput } from './taskSessionIdParser';
 import { areRenderRelevantPartsEqual } from '../renderCompare';
 import { useI18n } from '@/lib/i18n';
 import { getDiffPatchEntries, getPatchText } from './toolDiffUtils';
+import { shouldTickToolCounter } from './shouldTickToolCounter';
 
 const TOOL_ROW_TEXT_CLASS = '!text-[length:var(--text-meta)] !leading-5 sm:!leading-6 tracking-normal';
 const TOOL_ROW_TITLE_CLASS = cn('typography-meta font-medium', TOOL_ROW_TEXT_CLASS);
@@ -1981,6 +1983,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     const showToolFileIcons = useUIStore((s) => s.showToolFileIcons);
     const currentDirectory = useEffectiveDirectory() ?? '';
     const currentSessionId = useSessionUIStore((s) => s.currentSessionId);
+    const isConnected = useConfigStore((s) => s.isConnected);
 
     const normalizedPartTool = normalizeToolName(part.tool);
     const isTaskTool = normalizedPartTool === 'task';
@@ -2264,7 +2267,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
     ]);
 
     const effectiveTimeEnd = isFinalized ? (pinnedTime.end ?? time?.end ?? localFinalizedAt) : undefined;
-    const isActive = !isFinalized && activeLatched;
+    const isActive = shouldTickToolCounter(isFinalized, activeLatched, isConnected);
     const shouldTreatAsFinalized = isFinalized;
 
     const taskSummaryEntries = React.useMemo<TaskToolSummaryEntry[]>(() => {
