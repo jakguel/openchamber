@@ -604,3 +604,51 @@ describe('isAtBottomSnapshot', () => {
 //     virtualizer ref. No pure seam exists.
 //     Covered by Playwright task .8.17 AC5.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Regression: restoreSnapshot bottom-pin no longer starts follow loop ──────
+// Bug: the 'bottom' branch of restoreSnapshot called startFollowLoop() after
+// writeScrollTopInstant(), triggering a visible LERP animation from the top of
+// the just-rendered message list to the bottom. Fix: removed startFollowLoop()
+// from the branch; startSettleBurst() alone hard-snaps late virtualizer growth
+// with no LERP. goToBottom('smooth') and the streaming-follow useEffect
+// (sessionIsWorking && state==='following') are UNCHANGED — only the session-
+// open restore path is affected.
+//
+// The pure seam: restoreSnapshot is a hook-internal async closure with a live
+// DOM container ref dependency — no pure test seam exists (see "Deferred to
+// .8.17" above for the same pattern). The two assertions below guard:
+//   (1) the routing decision that gates the changed branch (resolveRestoreTarget)
+//   (2) that a position already at bottom needs no LERP follow step (nextFollowTop)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('restoreSnapshot bottom-pin: startFollowLoop removed (no-LERP regression)', () => {
+    // Regression: resolveRestoreTarget must still route to 'bottom' for a saved-
+    // at-bottom snapshot so the fixed branch is reached. If this returns 'ratio'
+    // or 'anchor', the bottom-pin code path (and the startFollowLoop removal) is
+    // silently bypassed on the next session open.
+    // Mutation check: removing the atBottom short-circuit in resolveRestoreTarget
+    // would cause this to fall through to 'anchor' or 'ratio', reddening the test.
+    test('saved-at-bottom snapshot routes to bottom-pin path (precondition for the fix)', () => {
+        expect(resolveRestoreTarget({
+            streaming: false,
+            hasSavedSnapshot: true,
+            atBottom: true,
+            hasMessageAnchor: false,
+            hasValidScrollPosition: true,
+        })).toBe('bottom');
+    });
+
+    // Regression: writeScrollTopInstant places scrollTop at the exact bottom before
+    // startSettleBurst runs. nextFollowTop called from the (now-removed) follow loop
+    // would compute LERP from that already-settled position. A zero LERP delta here
+    // confirms that even if startFollowLoop were accidentally re-added, the first tick
+    // would see a correctly-placed scrollTop and produce no visible animation.
+    // Mutation check: changing nextFollowTop to always return scrollTop+1 reds this test,
+    // proving it asserts the actual computed value, not just "something truthy".
+    test('nextFollowTop at already-settled bottom returns bottom (no LERP animation needed)', () => {
+        const scrollHeight = 3000;
+        const clientHeight = 1000;
+        const bottom = scrollHeight - clientHeight; // 2000 — the position writeScrollTopInstant sets
+        // non-streaming LERP: scrollTop + (target - scrollTop) * 0.18 = bottom + 0 = bottom
+        expect(nextFollowTop({ scrollHeight, clientHeight, scrollTop: bottom, isStreaming: false })).toBe(bottom);
+    });
+});

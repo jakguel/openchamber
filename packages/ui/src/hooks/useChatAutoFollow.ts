@@ -606,7 +606,6 @@ export const useChatAutoFollow = ({
             lastUserReleaseAtRef.current = 0;
             const bottom = Math.max(0, container.scrollHeight - container.clientHeight);
             writeScrollTopInstant(bottom);
-            startFollowLoop();
             startSettleBurst();
             return false;
         }
@@ -648,7 +647,7 @@ export const useChatAutoFollow = ({
         openRestoreWindow(applyRatio);
 
         return true;
-    }, [closeRestoreWindow, isMobile, markProgrammaticWrite, openRestoreWindow, setStateValue, startFollowLoop, startSettleBurst, writeScrollTopInstant]);
+    }, [closeRestoreWindow, isMobile, markProgrammaticWrite, openRestoreWindow, setStateValue, startSettleBurst, writeScrollTopInstant]);
 
     React.useEffect(() => {
         if (!currentSessionId || currentSessionId === lastSessionIdRef.current) {
