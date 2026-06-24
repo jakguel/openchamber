@@ -19,6 +19,104 @@ const SKIP_PARTS = new Set(["patch", "step-start", "step-finish"])
 const DELTA_OVERLAP_FIELDS = ["text", "output"] as const
 const FINAL_TOOL_STATUSES = new Set(["completed", "error", "aborted", "failed", "timeout", "cancelled"])
 
+// ---------------------------------------------------------------------------
+// Orphaned tool-part finalisation (WI1)
+//
+// When the OpenCode upstream dies mid-execution, a tool part can be stranded in
+// `running` forever: the terminal message.part.updated that would stamp it
+// completed/error never arrives, so the shell tool counter ticks indefinitely
+// (ToolPart's isActive stays true). The reconnect / heartbeat-timeout paths
+// (WI2/WI3/WI4) call finalizeOrphanedRunningParts to synthesise a terminal
+// ToolStateError so the counter stops.
+//
+// The synthetic stamp is status:"error" — the only SDK-type-safe terminal status
+// on the ToolState union (pending|running|completed|error). It preserves the part
+// id, so a later REAL terminal event replaces it via the id-keyed
+// message.part.updated path (shouldPreserveExistingPart only blocks final→non-final
+// regressions, never error→error/completed): no real tool result is ever lost.
+// ---------------------------------------------------------------------------
+
+const ORPHANED_TOOL_ERROR = "orphaned: opencode upstream stopped before reporting completion"
+
+/**
+ * Finalises every `running` tool part for `sessionID` by replacing its state with
+ * a synthetic ToolStateError. Mutates `draft.part` in place using two-level lazy
+ * copy-on-write: `draft.part` is cloned at most once (outer map) and each touched
+ * message's parts array is cloned at most once (inner array) — preserving the
+ * referential-equality contract for untouched sessions/messages so Zustand
+ * subscribers do not re-render for unrelated state.
+ *
+ * Returns true iff at least one running tool part was finalised. Already-terminal
+ * and non-tool parts are skipped, so the call is idempotent.
+ */
+export function finalizeOrphanedRunningParts(draft: State, sessionID: string): boolean {
+  const messages = draft.message[sessionID]
+  if (!messages) return false
+
+  let nextPartMap: Record<string, Part[]> | undefined
+  let mutated = false
+
+  for (const message of messages) {
+    const parts = draft.part[message.id]
+    if (!parts) continue
+
+    let nextParts: Part[] | undefined
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index]
+      if (part.type !== "tool") continue
+      const state = part.state
+      if (state.status !== "running") continue
+
+      const start = state.time?.start ?? Date.now()
+      const finalized: Part = {
+        ...part,
+        state: {
+          status: "error",
+          input: state.input ?? {},
+          error: ORPHANED_TOOL_ERROR,
+          time: { start, end: Math.max(start, Date.now()) },
+        },
+      }
+
+      // Inner-array CoW: clone this message's parts array once, on first mutation.
+      if (!nextParts) nextParts = [...parts]
+      nextParts[index] = finalized
+      mutated = true
+    }
+
+    if (nextParts) {
+      // Outer-map CoW: clone draft.part once, on first mutation in this call.
+      if (!nextPartMap) {
+        nextPartMap = { ...draft.part }
+        draft.part = nextPartMap
+      }
+      nextPartMap[message.id] = nextParts
+    }
+  }
+
+  return mutated
+}
+
+/**
+ * Cheap pre-scan: returns true on the FIRST `running` tool part found for
+ * `sessionID`, false otherwise. Used by the heartbeat-timeout path to skip
+ * sessions with nothing actively running before doing any copy-on-write work.
+ */
+export function hasAnyRunningPart(state: State, sessionID: string): boolean {
+  const messages = state.message[sessionID]
+  if (!messages) return false
+
+  for (const message of messages) {
+    const parts = state.part[message.id]
+    if (!parts) continue
+    for (const part of parts) {
+      if (part.type === "tool" && part.state.status === "running") return true
+    }
+  }
+
+  return false
+}
+
 type DedupeMetadata = {
   __dedupeNextDeltaFields?: string[]
 }
