@@ -73,6 +73,15 @@ export interface AutoFollowReleaseDecisionInput {
 // Release only on an upward move that is NOT explained by a maxScroll decrease.
 // A programmatic restore write also moves scrollTop but is hook-driven, so it
 // must NOT be misread as a manual release either (gap#5).
+//
+// Virtua's $fixScrollJump fires via useLayoutEffect and nudges scrollTop by 1–4 px
+// without calling markProgrammaticWrite(). When this lands after the follow loop
+// has settled (> 200 ms since the last tick), the programmatic window is expired
+// and the event appears as a genuine user scroll. RELEASE_MIN_DELTA gates out these
+// micro-corrections: an intentional user scroll-up is always ≥ 20 px; 8 px gives
+// comfortable headroom above the 1–4 px correction range.
+export const RELEASE_MIN_DELTA = 8;
+
 export const shouldReleaseAutoFollowOnScroll = ({
     state,
     currentTop,
@@ -84,6 +93,8 @@ export const shouldReleaseAutoFollowOnScroll = ({
     if (programmatic) return false;
     if (state !== 'following') return false;
     if (currentTop >= previousTop) return false;
+    // Ignore involuntary micro-corrections (virtua $fixScrollJump, browser rounding).
+    if (previousTop - currentTop < RELEASE_MIN_DELTA) return false;
     const isContentDrivenClamp = maxScrollNow < maxScrollPrev;
     return !isContentDrivenClamp;
 };
