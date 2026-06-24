@@ -662,66 +662,6 @@ describe('restoreSnapshot bottom-pin: startFollowLoop removed (no-LERP regressio
 // guard the tiny correction triggers a false release → 1200ms repin grace → repeat.
 // Mutation check: removing `if (previousTop - currentTop < RELEASE_MIN_DELTA) return false`
 // makes the first two tests return true (bug reintroduced).
-// ──────────────────────────────────────────────────────────────────────────────
-describe('shouldReleaseAutoFollowOnScroll — RELEASE_MIN_DELTA micro-correction guard', () => {
-    // 2 px: well inside the 1-4px virtua correction range → must NOT release.
-    test('2 px upward delta (virtua correction range) does NOT release auto-follow', () => {
-        expect(shouldReleaseAutoFollowOnScroll({
-            state: 'following',
-            currentTop: 998,
-            previousTop: 1000,
-            maxScrollNow: 2000,
-            maxScrollPrev: 2000,
-            programmatic: false,
-        })).toBe(false);
-    });
-
-    // 7 px: just below RELEASE_MIN_DELTA=8 → must NOT release.
-    test('7 px upward delta (just below RELEASE_MIN_DELTA threshold) does NOT release', () => {
-        expect(shouldReleaseAutoFollowOnScroll({
-            state: 'following',
-            currentTop: 993,
-            previousTop: 1000,
-            maxScrollNow: 2000,
-            maxScrollPrev: 2000,
-            programmatic: false,
-        })).toBe(false);
-    });
-
-    // 8 px: previousTop - currentTop = 8, NOT < 8 → guard does NOT fire
-    // → falls through → isContentDrivenClamp=false → releases.
-    test('8 px upward delta (exactly at RELEASE_MIN_DELTA) DOES release with unchanged maxScroll', () => {
-        expect(shouldReleaseAutoFollowOnScroll({
-            state: 'following',
-            currentTop: 992,
-            previousTop: 1000,
-            maxScrollNow: 2000,
-            maxScrollPrev: 2000,
-            programmatic: false,
-        })).toBe(true);
-    });
-
-    // 200 px: large genuine user scroll → well above threshold, releases.
-    test('200 px upward delta (genuine user scroll) releases auto-follow', () => {
-        expect(shouldReleaseAutoFollowOnScroll({
-            state: 'following',
-            currentTop: 800,
-            previousTop: 1000,
-            maxScrollNow: 2000,
-            maxScrollPrev: 2000,
-            programmatic: false,
-        })).toBe(true);
-    });
-});
-
-// ─── Scroll jitter regression — RELEASE_MIN_DELTA virtua correction guard ─────
-// Virtua's $fixScrollJump fires via useLayoutEffect without markProgrammaticWrite().
-// After the follow loop settles (> 200ms since last tick), these 1-4px upward
-// corrections land as non-programmatic scroll events. When new content also arrived
-// simultaneously, isContentDrivenClamp=false (maxScroll grew), so without this
-// guard the tiny correction triggers a false release → 1200ms repin grace → repeat.
-// Mutation check: removing `if (previousTop - currentTop < RELEASE_MIN_DELTA) return false`
-// makes the first two tests return true (bug reintroduced).
 // ─────────────────────────────────────────────────────────────────────────────
 describe('shouldReleaseAutoFollowOnScroll — RELEASE_MIN_DELTA micro-correction guard', () => {
     // 2px: well inside the 1-4px virtua $fixScrollJump correction range → must NOT release.
