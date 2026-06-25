@@ -291,4 +291,54 @@ describe("heartbeat-timeout finalize through the real event pipeline", () => {
     expect(toolState(store.getState().part.msg_1[0]).status).toBe("running")
     expect(store.getState().session_status.ses_a).toEqual({ type: "busy" })
   })
+
+  // NEGATIVE (system resume — Story AC8): the OS-suspend-resume hazard. When the
+  // laptop wakes from sleep, the pipeline's real `openchamber:system-resume` listener
+  // (event-pipeline.ts) aborts the stalled attempt with reason `${transport}_system_resume`
+  // and reconnects — the heartbeat that froze during sleep never produces a
+  // `*_heartbeat_timeout`. This negative drives that exact path through the REAL pipeline:
+  // a genuine `sse_system_resume` disconnect reaches onDisconnect on a fully visible +
+  // online tab (so the visibility/online gate would PASS) and the ONLY thing stopping a
+  // finalize is the reason-gate. If that gate were broadened to fire on any disconnect, a
+  // machine waking from sleep would wrongly stamp its still-live tools `error`. The tool
+  // must stay running and the session must stay busy across the resume.
+  test("a real system-resume reconnect reaches onDisconnect but does NOT finalize (visible + online)", async () => {
+    setPipelineEnvironment("visible", true)
+    const store = busyStoreWithRunningTool()
+    let capturedReason = null
+
+    await new Promise((resolve) => {
+      let triggered = false
+      const pipeline = createEventPipeline({
+        sdk: silentSseSdk(),
+        transport: "sse",
+        // Large heartbeat window so the heartbeat timer never fires — the only
+        // disconnect is the OS resume we dispatch below.
+        heartbeatTimeoutMs: 10_000,
+        reconnectDelayMs: 10_000,
+        onEvent: () => {},
+        onReconnect: () => {
+          // The attempt is live; simulate the OS waking from suspend by firing the
+          // real `openchamber:system-resume` window event the pipeline listens for.
+          if (triggered) return
+          triggered = true
+          globalThis.window.dispatch("openchamber:system-resume")
+        },
+        onDisconnect: (reason) => {
+          capturedReason = reason
+          finalizeOrphanedPartsOnHeartbeatTimeout(reason, [store])
+          pipeline.cleanup()
+          resolve()
+        },
+      })
+    })
+
+    // A real pipeline reason produced by the system-resume handler — NOT a heartbeat death.
+    expect(capturedReason).toBe("sse_system_resume")
+    expect(/_heartbeat_timeout$/.test(capturedReason)).toBe(false)
+    // The reason-gate short-circuited despite visible+online: a waking machine keeps its
+    // live tool running and the session busy — no spurious finalize.
+    expect(toolState(store.getState().part.msg_1[0]).status).toBe("running")
+    expect(store.getState().session_status.ses_a).toEqual({ type: "busy" })
+  })
 })
