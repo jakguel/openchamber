@@ -8,7 +8,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { createEventPipeline } from "./event-pipeline"
 import { isVSCodeRuntime } from "@/lib/desktop"
 import { isMobileSurfaceRuntime } from "@/lib/runtimeSurface"
-import { reduceGlobalEvent, applyGlobalProject, applyDirectoryEvent } from "./event-reducer"
+import { reduceGlobalEvent, applyGlobalProject, applyDirectoryEvent, finalizeOrphanedRunningParts } from "./event-reducer"
 import { useGlobalSyncStore, type GlobalSyncStore } from "./global-sync-store"
 import { ChildStoreManager, type DirectoryStore } from "./child-store"
 import {
@@ -522,18 +522,61 @@ export function applySessionStatusSnapshot(
   return changed
 }
 
-async function resyncDirectorySessionStatuses(
+export type ResyncSessionStatusResult = {
+  /** The fetched snapshot, or null when the status fetch failed. */
+  snapshot: DirectorySessionStatusSnapshot | null
+  /**
+   * Candidate sessions the snapshot lowered from a non-idle state to an
+   * EXPLICIT idle. Empty when the fetch failed (null snapshot) or in monotonic
+   * mode (which never lowers). Drives orphaned-tool-part finalization.
+   */
+  loweredIdleSessionIds: string[]
+}
+
+export async function resyncDirectorySessionStatuses(
   directory: string,
   store: StoreApi<DirectoryStore>,
   candidateSessionIds: string[],
   mode: StatusSnapshotMode,
-): Promise<DirectorySessionStatusSnapshot | null> {
-  const nextStatuses = await opencodeClient.getSessionStatusForDirectory(directory)
-  // null = fetch failed; preserve existing state. {} or populated = a snapshot
-  // of active sessions — reconciled per `mode` (absence ≠ idle under monotonic).
-  if (nextStatuses === null) return null
+): Promise<ResyncSessionStatusResult> {
+  let nextStatuses: DirectorySessionStatusSnapshot | null
+  try {
+    nextStatuses = await opencodeClient.getSessionStatusForDirectory(directory)
+  } catch {
+    // A thrown fetch is a fetch failure, identical to a null result: preserve
+    // existing state and finalize nothing. Treating it as "every session went
+    // idle" would let a transient network error stamp live tool parts as
+    // orphaned (AGENTS.md: distinguish fetch failure from empty success).
+    return { snapshot: null, loweredIdleSessionIds: [] }
+  }
+  // null = fetch failed; preserve existing state and signal no lowering so the
+  // caller does not finalize orphaned parts on a transient network blip.
+  // {} or populated = a snapshot of active sessions — reconciled per `mode`
+  // (absence ≠ idle under monotonic).
+  if (nextStatuses === null) return { snapshot: null, loweredIdleSessionIds: [] }
+
+  // Capture statuses BEFORE applying the snapshot so we can detect which
+  // sessions the server lowered from a non-idle state to idle.
+  const previousStatuses = store.getState().session_status ?? {}
   applySessionStatusSnapshot(store, nextStatuses, candidateSessionIds, mode)
-  return nextStatuses
+
+  // Only an authoritative snapshot actually lowers session_status, and only an
+  // EXPLICIT idle entry (not an absent key) is a server statement that a session
+  // went idle. An absent key is "server says nothing" and must NOT finalize
+  // running parts even though authoritative mode lowers its status — a partial
+  // snapshot must not orphan live tool calls.
+  const loweredIdleSessionIds: string[] = []
+  if (mode === "authoritative") {
+    for (const sessionId of candidateSessionIds) {
+      const previous = previousStatuses[sessionId]
+      if (!previous || previous.type === "idle") continue
+      if (toSessionStatus(nextStatuses[sessionId])?.type === "idle") {
+        loweredIdleSessionIds.push(sessionId)
+      }
+    }
+  }
+
+  return { snapshot: nextStatuses, loweredIdleSessionIds }
 }
 
 // After a monotonic poll, decide whether to escalate to a full authoritative
@@ -1225,7 +1268,7 @@ export async function resyncBlockingRequestsForDirectory(
   }
 }
 
-async function resyncDirectoryAfterReconnect(
+export async function resyncDirectoryAfterReconnect(
   directory: string,
   store: StoreApi<DirectoryStore>,
   routingIndex: EventRoutingIndex,
@@ -1234,7 +1277,29 @@ async function resyncDirectoryAfterReconnect(
   const candidateSessionIds = getActiveSessionCandidateIds(directory, current)
   if (candidateSessionIds.length === 0) return
 
-  await resyncDirectorySessionStatuses(directory, store, candidateSessionIds, "authoritative")
+  const { loweredIdleSessionIds } = await resyncDirectorySessionStatuses(
+    directory,
+    store,
+    candidateSessionIds,
+    "authoritative",
+  )
+
+  // The authoritative reconnect snapshot just lowered these sessions to idle
+  // while we held a stale "busy" view. Any tool part still marked running is
+  // orphaned — the server finished (or died) without delivering its terminal
+  // event — so finalize them to stop the shell tool counter ticking forever.
+  // finalizeOrphanedRunningParts owns its draft.part copy-on-write; we only
+  // shallow-copy the top-level state so the live store object is not mutated.
+  if (loweredIdleSessionIds.length > 0) {
+    store.setState((state: DirectoryStore) => {
+      const draft: DirectoryStore = { ...state }
+      let mutated = false
+      for (const sessionId of loweredIdleSessionIds) {
+        if (finalizeOrphanedRunningParts(draft, sessionId)) mutated = true
+      }
+      return mutated ? { part: draft.part } : state
+    })
+  }
 
   const scopedClient = opencodeClient.getScopedSdkClient(directory)
   await Promise.all(candidateSessionIds.map(async (sessionId) => {
@@ -1962,10 +2027,10 @@ export function SyncProvider(props: {
       polling.add(directory)
       try {
         const before = store.getState()
-        const statuses = await resyncDirectorySessionStatuses(directory, store, candidateSessionIds, "monotonic")
-        if (!statuses) return
+        const { snapshot } = await resyncDirectorySessionStatuses(directory, store, candidateSessionIds, "monotonic")
+        if (!snapshot) return
         const needsSnapshot = candidateSessionIds.some((sessionId) => (
-          needsSnapshotAfterStatusPoll(before, sessionId, statuses[sessionId])
+          needsSnapshotAfterStatusPoll(before, sessionId, snapshot[sessionId])
         ))
         if (needsSnapshot) {
           triggerDirectoryResync(directory)
