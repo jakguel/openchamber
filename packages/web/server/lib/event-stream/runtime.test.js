@@ -435,7 +435,7 @@ describe('message stream websocket runtime', () => {
 
         return createSseResponse({
           signal: options.signal,
-          holdOpen: false,
+          holdOpen: true,
           blocks: [
             'id: evt-2\ndata: {"type":"server.connected","properties":{}}\n\n',
           ],
@@ -507,6 +507,173 @@ describe('message stream websocket runtime', () => {
     });
 
     socket.close();
+    await runtime.close();
+  });
+
+  it('triggers a health check on a post-ready upstream disconnect without closing the socket or emitting a death frame', async () => {
+    const server = new EventEmitter();
+    const wsClients = new Set();
+    let triggerHealthCheckCalls = 0;
+    let upstreamAttempt = 0;
+
+    const runtime = createMessageStreamWsRuntime({
+      server,
+      uiAuthController: null,
+      isRequestOriginAllowed: async () => true,
+      rejectWebSocketUpgrade() {
+        throw new Error('upgrade should not be used in this test');
+      },
+      buildOpenCodeUrl: (path) => `http://127.0.0.1:4096${path}`,
+      getOpenCodeAuthHeaders: () => ({}),
+      processForwardedEventPayload() {},
+      wsClients,
+      triggerHealthCheck: () => {
+        triggerHealthCheckCalls += 1;
+      },
+      upstreamReconnectDelayMs: 0,
+      fetchImpl: async (_url, options) => {
+        upstreamAttempt += 1;
+        if (upstreamAttempt === 1) {
+          // Connect (post-ready), then the upstream SSE stream closes cleanly => 'closed' disconnect.
+          return createSseResponse({
+            signal: options.signal,
+            holdOpen: false,
+            blocks: [
+              'id: evt-1\ndata: {"type":"server.connected","properties":{}}\n\n',
+            ],
+          });
+        }
+
+        // The reconnect succeeds and stays open, so there is exactly one upstream drop.
+        return createSseResponse({
+          signal: options.signal,
+          holdOpen: true,
+          blocks: [],
+        });
+      },
+    });
+
+    const socket = new FakeSocket();
+    runtime.wsServer.emit('connection', socket, { url: '/api/global/event/ws' });
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    expect(triggerHealthCheckCalls).toBe(1);
+    expect(socket.readyState).toBe(1);
+    expect(socket.closeCalls).toEqual([]);
+    expect(socket.sent).not.toContainEqual(expect.objectContaining({ type: 'error' }));
+    expect(socket.sent).toContainEqual({ type: 'ready', scope: 'global' });
+
+    socket.close();
+    await runtime.close();
+  });
+
+  it('triggers a health check on a post-ready upstream stream error without closing the socket', async () => {
+    const server = new EventEmitter();
+    const wsClients = new Set();
+    let triggerHealthCheckCalls = 0;
+    let upstreamAttempt = 0;
+
+    const runtime = createMessageStreamWsRuntime({
+      server,
+      uiAuthController: null,
+      isRequestOriginAllowed: async () => true,
+      rejectWebSocketUpgrade() {
+        throw new Error('upgrade should not be used in this test');
+      },
+      buildOpenCodeUrl: (path) => `http://127.0.0.1:4096${path}`,
+      getOpenCodeAuthHeaders: () => ({}),
+      processForwardedEventPayload() {},
+      wsClients,
+      triggerHealthCheck: () => {
+        triggerHealthCheckCalls += 1;
+      },
+      upstreamReconnectDelayMs: 0,
+      fetchImpl: async (_url, options) => {
+        upstreamAttempt += 1;
+        if (upstreamAttempt === 1) {
+          // Connect (post-ready), emit one event, then the stream read throws
+          // (connection reset) => post-ready 'error' (stream_error), not a stall.
+          const encoder = new TextEncoder();
+          const blocks = ['id: evt-1\ndata: {"type":"server.connected","properties":{}}\n\n'];
+          let index = 0;
+          return {
+            ok: true,
+            body: {
+              getReader() {
+                return {
+                  async read() {
+                    if (index < blocks.length) {
+                      return { value: encoder.encode(blocks[index++]), done: false };
+                    }
+                    throw new Error('ECONNRESET');
+                  },
+                };
+              },
+            },
+          };
+        }
+
+        // The reconnect succeeds and stays open.
+        return createSseResponse({
+          signal: options.signal,
+          holdOpen: true,
+          blocks: [],
+        });
+      },
+    });
+
+    const socket = new FakeSocket();
+    runtime.wsServer.emit('connection', socket, { url: '/api/global/event/ws' });
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+
+    expect(triggerHealthCheckCalls).toBeGreaterThanOrEqual(1);
+    expect(socket.readyState).toBe(1);
+    expect(socket.closeCalls).toEqual([]);
+
+    socket.close();
+    await runtime.close();
+  });
+
+  it('does not trigger a health check on a pre-ready initial error and still closes the client', async () => {
+    const server = new EventEmitter();
+    const wsClients = new Set();
+    let triggerHealthCheckCalls = 0;
+
+    const runtime = createMessageStreamWsRuntime({
+      server,
+      uiAuthController: null,
+      isRequestOriginAllowed: async () => true,
+      rejectWebSocketUpgrade() {
+        throw new Error('upgrade should not be used in this test');
+      },
+      // Pre-ready URL build failure => 'initial-error' that must NOT trigger a health check.
+      buildOpenCodeUrl() {
+        throw new Error('missing OpenCode port');
+      },
+      getOpenCodeAuthHeaders: () => ({}),
+      processForwardedEventPayload() {},
+      wsClients,
+      triggerHealthCheck: () => {
+        triggerHealthCheckCalls += 1;
+      },
+      upstreamReconnectDelayMs: 0,
+      fetchImpl: async () => {
+        throw new Error('fetch should not be called');
+      },
+    });
+
+    const socket = new FakeSocket();
+    runtime.wsServer.emit('connection', socket, { url: '/api/global/event/ws' });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // closeClientsWithInitialError still fires unchanged (pre-ready path).
+    expect(socket.sent).toEqual([{ type: 'error', message: 'OpenCode service unavailable' }]);
+    expect(socket.closeCalls).toEqual([{ code: 1011, reason: 'OpenCode service unavailable' }]);
+    expect(triggerHealthCheckCalls).toBe(0);
+
     await runtime.close();
   });
 });

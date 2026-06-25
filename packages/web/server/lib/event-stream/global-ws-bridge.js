@@ -147,6 +147,12 @@ export function createGlobalMessageStreamWsBridge({
     if (status.type === 'error' && status.error?.type === 'stream_error') {
       console.warn('Message stream WS proxy error:', status.error.error);
     }
+
+    const isPostReadyUpstreamDrop =
+      status.type === 'error' || (status.type === 'disconnect' && status.reason === 'closed');
+    if (isPostReadyUpstreamDrop && globalHub.hasConnected()) {
+      triggerHealthCheck?.();
+    }
   });
 
   const accept = (socket, { requestedLastEventId = '' } = {}) => {
