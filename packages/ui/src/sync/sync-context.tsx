@@ -8,7 +8,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
 import { createEventPipeline } from "./event-pipeline"
 import { isVSCodeRuntime } from "@/lib/desktop"
 import { isMobileSurfaceRuntime } from "@/lib/runtimeSurface"
-import { reduceGlobalEvent, applyGlobalProject, applyDirectoryEvent, finalizeOrphanedRunningParts } from "./event-reducer"
+import { reduceGlobalEvent, applyGlobalProject, applyDirectoryEvent, finalizeOrphanedRunningParts, hasAnyRunningPart } from "./event-reducer"
 import { useGlobalSyncStore, type GlobalSyncStore } from "./global-sync-store"
 import { ChildStoreManager, type DirectoryStore } from "./child-store"
 import {
@@ -520,6 +520,83 @@ export function applySessionStatusSnapshot(
   })
 
   return changed
+}
+
+/**
+ * Finalises orphaned running tool parts on a heartbeat-timeout disconnect — the
+ * catch-all for upstream death, where the OpenCode server stalls without ever
+ * sending a terminal event. The session.idle/error reducers (WI2) and the
+ * reconnect resync (WI3) never fire on heartbeat death, so this is the only path
+ * that stops the shell tool counter ticking forever.
+ *
+ * Gated to a FOREGROUND, ONLINE tab seeing a `${transport}_heartbeat_timeout`
+ * reason (see event-pipeline notifyDisconnected). A hidden or offline tab's
+ * heartbeat death is the EXPECTED idle path — the browser throttles timers / the
+ * network is down and the server may still be alive — so finalizing there would
+ * wrongly error tool parts that are still running upstream. Gates run cheapest-
+ * and-most-selective first; each failing gate returns with no store mutation. A
+ * transport switch (WS->SSE fallback) is NOT a disconnect and is intentionally
+ * never wired here.
+ */
+export function finalizeOrphanedPartsOnHeartbeatTimeout(
+  reason: string,
+  stores: Iterable<StoreApi<DirectoryStore>>,
+): void {
+  if (!/_heartbeat_timeout$/.test(reason)) return
+  if (typeof document === "undefined" || document.visibilityState !== "visible") return
+  if (typeof navigator === "undefined" || navigator.onLine !== true) return
+
+  for (const store of stores) {
+    finalizeOrphanedPartsForStore(store)
+  }
+}
+
+/**
+ * Per-store half of the heartbeat-timeout finalize (the gates have already passed).
+ * Pre-scans (AC5) for non-idle sessions that still hold a running tool part —
+ * already-idle sessions and non-idle sessions with no running parts are left
+ * untouched — then, in a single store.setState, drops each to a terminal state: the
+ * WI1 helper stamps the orphaned parts ToolStateError (it owns draft.part
+ * copy-on-write) and the session's status is lowered to { type: "idle" } directly.
+ * Idle (NOT session.error) is deliberate: a synthetic error status would fire a
+ * spurious disconnect notification.
+ */
+function finalizeOrphanedPartsForStore(store: StoreApi<DirectoryStore>): void {
+  const state = store.getState()
+  const statuses = state.session_status
+  const sessionsToFinalize: string[] = []
+  for (const sessionId of Object.keys(statuses)) {
+    if (statuses[sessionId]?.type === "idle") continue
+    if (!hasAnyRunningPart(state, sessionId)) continue
+    sessionsToFinalize.push(sessionId)
+  }
+  if (sessionsToFinalize.length === 0) return
+
+  store.setState((current: DirectoryStore) => {
+    // finalizeOrphanedRunningParts owns its draft.part copy-on-write; we only
+    // shallow-copy the top-level state so the live store object is not mutated.
+    const draft: DirectoryStore = { ...current }
+    let partsMutated = false
+    for (const sessionId of sessionsToFinalize) {
+      if (finalizeOrphanedRunningParts(draft, sessionId)) partsMutated = true
+    }
+
+    // session_status is untouched by the helper — lower each finalized session to
+    // idle ourselves with a single outer-map clone (mirrors applySessionStatusSnapshot).
+    let nextStatus: Record<string, SessionStatus> | undefined
+    for (const sessionId of sessionsToFinalize) {
+      if (current.session_status[sessionId]?.type !== "idle") {
+        nextStatus ??= { ...current.session_status }
+        nextStatus[sessionId] = { type: "idle" }
+      }
+    }
+
+    if (!partsMutated && !nextStatus) return current
+    const patch: Partial<DirectoryStore> = {}
+    if (partsMutated) patch.part = draft.part
+    if (nextStatus) patch.session_status = nextStatus
+    return patch
+  })
 }
 
 export type ResyncSessionStatusResult = {
@@ -1943,6 +2020,12 @@ export function SyncProvider(props: {
           connectionPhase: hasEverConnected ? "reconnecting" : "connecting",
           lastDisconnectReason: reason,
         })
+        // Catch-all for upstream death: a heartbeat-timeout disconnect on a
+        // foreground, online tab means the server stalled with no terminal event
+        // coming, so finalize any orphaned running tool parts (the gate + per-store
+        // finalize live in finalizeOrphanedPartsOnHeartbeatTimeout). Deliberately
+        // NOT wired into onTransportSwitch — a transport switch is not a disconnect.
+        finalizeOrphanedPartsOnHeartbeatTimeout(reason, childStores.children.values())
       },
       onTransportSwitch: () => {
         // Transport changes are gap-prone in real networks. Treat them like a
