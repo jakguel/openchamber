@@ -406,8 +406,14 @@ export function applyDirectoryEvent(
     case "session.idle": {
       const props = event.properties as { sessionID: string }
       const status = { type: "idle" } as const
+      // Finalise orphaned running tool parts BEFORE the status-equality short-circuit.
+      // When the upstream dies mid-execution the idle transition can arrive with the
+      // session_status already lowered to idle (status unchanged), yet running tool
+      // parts stay stranded — so finalize must run regardless of the status diff, and
+      // a finalisation alone counts as a change worth propagating downstream.
+      const finalized = finalizeOrphanedRunningParts(draft, props.sessionID)
       if (areSessionStatusesEqual(draft.session_status[props.sessionID], status)) {
-        return false
+        return finalized
       }
       draft.session_status[props.sessionID] = status
       return true
@@ -416,8 +422,12 @@ export function applyDirectoryEvent(
     case "session.error": {
       const props = event.properties as { sessionID: string }
       const status = { type: "idle" } as const
+      // Same orphan-finalisation as session.idle: an error transition ends the turn,
+      // so any still-running tool parts are orphaned and must be stamped even when
+      // session_status is already idle (status-equality would otherwise short-circuit).
+      const finalized = finalizeOrphanedRunningParts(draft, props.sessionID)
       if (areSessionStatusesEqual(draft.session_status[props.sessionID], status)) {
-        return false
+        return finalized
       }
       draft.session_status[props.sessionID] = status
       return true

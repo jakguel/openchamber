@@ -187,6 +187,134 @@ describe("applyDirectoryEvent", () => {
     expect(draft.session_status.ses_1).toBe(statusRef)
   })
 
+  test("session.idle finalizes an orphaned running tool part and lowers status to idle", () => {
+    const draft = state({
+      message: { ses_1: [assistantMessage("msg_1", "ses_1")] },
+      part: { msg_1: [runningTool("prt_1", "msg_1", "ses_1", 5_000)] },
+      session_status: { ses_1: { type: "busy" } as SessionStatus },
+    })
+
+    const result = applyDirectoryEvent(draft, {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+
+    expect(result).toBe(true)
+    const st = toolState(draft.part.msg_1[0])
+    expect(st.status).toBe("error")
+    if (st.status === "error") {
+      expect(st.error).toBe(ORPHANED_ERROR)
+      // end is stamped to "now" (Math.max(5000, Date.now())), strictly past the start.
+      expect(st.time.end).toBeGreaterThan(st.time.start)
+    }
+    expect(draft.session_status.ses_1.type).toBe("idle")
+  })
+
+  test("session.idle finalizes a running part even when session_status is already idle", () => {
+    // AC3: the status-equality short-circuit must NOT skip orphan finalisation.
+    const draft = state({
+      message: { ses_1: [assistantMessage("msg_1", "ses_1")] },
+      part: { msg_1: [runningTool("prt_1", "msg_1", "ses_1", 5_000)] },
+      session_status: { ses_1: { type: "idle" } as SessionStatus },
+    })
+
+    const result = applyDirectoryEvent(draft, {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+
+    // Status was unchanged, but a part was finalised → reducer still reports a change.
+    expect(result).toBe(true)
+    expect(toolState(draft.part.msg_1[0]).status).toBe("error")
+    expect(draft.session_status.ses_1.type).toBe("idle")
+  })
+
+  test("session.error finalizes an orphaned running tool part and lowers status to idle", () => {
+    const draft = state({
+      message: { ses_1: [assistantMessage("msg_1", "ses_1")] },
+      part: { msg_1: [runningTool("prt_1", "msg_1", "ses_1", 5_000)] },
+      session_status: { ses_1: { type: "busy" } as SessionStatus },
+    })
+
+    const result = applyDirectoryEvent(draft, {
+      type: "session.error",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+
+    expect(result).toBe(true)
+    expect(toolState(draft.part.msg_1[0]).status).toBe("error")
+    expect(draft.session_status.ses_1.type).toBe("idle")
+  })
+
+  test("session.idle leaves already-terminal parts untouched (no copy-on-write)", () => {
+    const parts = [completedTool("prt_1", "msg_1", "ses_1")]
+    const partMap = { msg_1: parts }
+    const draft = state({
+      message: { ses_1: [assistantMessage("msg_1", "ses_1")] },
+      part: partMap,
+      session_status: { ses_1: { type: "idle" } as SessionStatus },
+    })
+
+    const result = applyDirectoryEvent(draft, {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+
+    // Nothing running and status already idle → finalize returned false, no change.
+    expect(result).toBe(false)
+    expect(draft.part).toBe(partMap)
+    expect(draft.part.msg_1).toBe(parts)
+    expect(draft.part.msg_1[0]).toBe(parts[0])
+    expect(toolState(draft.part.msg_1[0]).status).toBe("completed")
+  })
+
+  test("session.idle for a session with no messages does not mutate parts", () => {
+    const partMap = {}
+    const draft = state({
+      message: {},
+      part: partMap,
+      session_status: { ses_1: { type: "idle" } as SessionStatus },
+    })
+
+    const result = applyDirectoryEvent(draft, {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+
+    expect(result).toBe(false)
+    expect(draft.part).toBe(partMap)
+  })
+
+  test("a real terminal message.part.updated replaces the synthetic orphan error (AC4)", () => {
+    const draft = state({
+      message: { ses_1: [assistantMessage("msg_1", "ses_1")] },
+      part: { msg_1: [runningTool("prt_1", "msg_1", "ses_1", 5_000)] },
+      session_status: { ses_1: { type: "busy" } as SessionStatus },
+    })
+
+    // 1) session.idle stamps the orphaned running part with a synthetic error.
+    applyDirectoryEvent(draft, {
+      type: "session.idle",
+      properties: { sessionID: "ses_1" },
+    } as Event)
+    expect(toolState(draft.part.msg_1[0]).status).toBe("error")
+
+    // 2) The REAL terminal result lands afterwards carrying the SAME part id.
+    const result = applyDirectoryEvent(draft, {
+      type: "message.part.updated",
+      properties: { sessionID: "ses_1", part: completedTool("prt_1", "msg_1", "ses_1") },
+    } as Event)
+
+    expect(result).toBe(true)
+    // Synthetic error → real completed via the id-keyed replace path:
+    // shouldPreserveExistingPart only blocks final→non-final, never final→final.
+    const st = toolState(draft.part.msg_1[0])
+    expect(st.status).toBe("completed")
+    if (st.status === "completed") {
+      expect(st.output).toBe("ok")
+    }
+  })
+
   test("detects retry status metadata changes", () => {
     const draft = state({
       session_status: {
