@@ -43,7 +43,7 @@ const createMockChild = () => {
   return child;
 };
 
-const createRuntime = (overrides = {}) => {
+const buildRuntime = (overrides = {}) => {
   const state = {
     openCodeWorkingDirectory: '/tmp/project',
     openCodeProcess: null,
@@ -67,7 +67,7 @@ const createRuntime = (overrides = {}) => {
     resolvedWslDistro: null,
   };
 
-  return createOpenCodeLifecycleRuntime({
+  const runtime = createOpenCodeLifecycleRuntime({
     state,
     env: {
       ENV_CONFIGURED_OPENCODE_PORT: 45678,
@@ -102,7 +102,11 @@ const createRuntime = (overrides = {}) => {
     })),
     ...overrides,
   });
+
+  return { runtime, state };
 };
+
+const createRuntime = (overrides = {}) => buildRuntime(overrides).runtime;
 
 describe('OpenCode lifecycle', () => {
   it('launches managed OpenCode with the managed PATH', async () => {
@@ -235,4 +239,93 @@ describe('OpenCode lifecycle', () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     await server.close();
   });
+});
+
+describe('OpenCode managed-process exit observation + alive check', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  const queueReadyChild = (pid = process.pid) => {
+    const child = createMockChild();
+    child.pid = pid;
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return child;
+    });
+    return child;
+  };
+
+  const simulateChildExit = (child, code, signal) => {
+    child.exitCode = code ?? null;
+    child.signalCode = signal ?? null;
+    child.emit('exit', code, signal);
+  };
+
+  const failHealthProbe = () => {
+    global.fetch = vi.fn(async () => {
+      throw new Error('health probe failed');
+    });
+  };
+
+  it('records real child exit state and a per-spawn generation on the managed handle', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const firstChild = queueReadyChild();
+    const { runtime } = buildRuntime();
+
+    const handle1 = await runtime.startOpenCode();
+    expect(typeof handle1.generation).toBe('number');
+    expect(handle1.exited).toBe(false);
+    expect(handle1.exitCode).toBe(null);
+    expect(handle1.signalCode).toBe(null);
+
+    simulateChildExit(firstChild, 7, null);
+    expect(handle1.exited).toBe(true);
+    expect(handle1.exitCode).toBe(7);
+    expect(handle1.signalCode).toBe(null);
+
+    queueReadyChild();
+    const handle2 = await runtime.startOpenCode();
+    expect(handle2.generation).toBe(handle1.generation + 1);
+    expect(handle2.exited).toBe(false);
+  });
+
+  it('keeps a live-but-unhealthy OpenCode running on the first health failure (no restart, no exit recorded)', async () => {
+    delete process.env.OPENCODE_BINARY;
+    queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime();
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    failHealthProbe();
+    await runtime.triggerHealthCheck();
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(state.openCodeProcess.exited).toBe(false);
+    expect(state.openCodeProcess.exitCode).toBe(null);
+  });
+
+  it('restarts promptly when the managed child has genuinely exited', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const firstChild = queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime();
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    simulateChildExit(firstChild, 1, null);
+    expect(state.openCodeProcess.exited).toBe(true);
+
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(state.openCodeProcess.generation).toBe(2);
+    expect(state.openCodeProcess.exited).toBe(false);
+  }, 15000);
 });

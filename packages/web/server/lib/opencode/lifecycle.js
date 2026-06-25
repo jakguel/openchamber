@@ -61,12 +61,19 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
   const hasChildProcessExited = (child) => !child || child.exitCode !== null || child.signalCode !== null;
 
+  let managedProcessGeneration = 0;
+
+  // state.openCodeProcess is the {url,pid,close} handle, not the raw child, so its
+  // own exitCode/signalCode are always undefined: `undefined !== null` made every
+  // probe read as "exited" and fired the death/restart branch on the first health
+  // failure. Read the observed exit recorded by the handle's 'exit' listener.
   const isManagedOpenCodeProcessAlive = () => {
-    const child = state.openCodeProcess;
-    if (!child || hasChildProcessExited(child)) return false;
-    if (!child.pid) return true;
+    const handle = state.openCodeProcess;
+    if (!handle) return false;
+    if (handle.exited === true) return false;
+    if (!handle.pid) return true;
     try {
-      process.kill(child.pid, 0);
+      process.kill(handle.pid, 0);
       return true;
     } catch {
       return false;
@@ -324,13 +331,29 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       child.on('error', onError);
     });
 
-    return {
+    managedProcessGeneration += 1;
+    const handle = {
       url,
       pid: child.pid || null,
+      generation: managedProcessGeneration,
+      exited: false,
+      exitCode: null,
+      signalCode: null,
       async close() {
         await closeManagedOpenCodeChild(child);
       },
     };
+
+    // Startup's temporary 'exit' listener was already detached by finish(), so
+    // this persistent observation is the sole owner of the post-startup exit and
+    // records the real exit state for isManagedOpenCodeProcessAlive (no emit here).
+    child.once('exit', (code, signal) => {
+      handle.exited = true;
+      handle.exitCode = code ?? null;
+      handle.signalCode = signal ?? null;
+    });
+
+    return handle;
   };
 
   const resolveManagedOpenCodePort = async (requestedPort, hostname = '127.0.0.1') => {
