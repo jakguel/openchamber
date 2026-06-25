@@ -243,9 +243,12 @@ describe('OpenCode lifecycle', () => {
 
 describe('OpenCode managed-process exit observation + alive check', () => {
   const originalFetch = global.fetch;
+  let activeSpies = [];
 
   afterEach(() => {
     global.fetch = originalFetch;
+    for (const spy of activeSpies) spy.mockRestore();
+    activeSpies = [];
   });
 
   const queueReadyChild = (pid = process.pid) => {
@@ -328,4 +331,38 @@ describe('OpenCode managed-process exit observation + alive check', () => {
     expect(state.openCodeProcess.generation).toBe(2);
     expect(state.openCodeProcess.exited).toBe(false);
   }, 15000);
+
+  it('keeps a live-but-busy unhealthy OpenCode running through the failure threshold + stale-busy grace, then restarts once the grace expires', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const T0 = 1_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(T0);
+    // process.kill is the OS boundary: signal 0 = liveness probe (alive), and any
+    // real signal (incl. the negative-pid group SIGTERM/SIGKILL from
+    // signalProcessTree during restart) is swallowed so the test process group is
+    // never signalled. The mock child's own kill() still emits 'close' so restart
+    // closes the live child cleanly.
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    activeSpies.push(nowSpy, killSpy);
+
+    queueReadyChild(12345);
+    const { runtime, state } = buildRuntime({ getActiveSessionCount: () => 1 });
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    failHealthProbe();
+
+    for (let i = 0; i < 30; i += 1) {
+      await runtime.triggerHealthCheck();
+    }
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(state.openCodeProcess.exited).toBe(false);
+
+    nowSpy.mockReturnValue(T0 + 5 * 60 * 1000);
+    queueReadyChild(12345);
+    await runtime.triggerHealthCheck();
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(state.openCodeProcess.exited).toBe(false);
+  }, 20000);
 });
