@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createGlobalUiEventBroadcaster } from '../event-stream/runtime.js';
+
 const spawnMock = vi.fn();
 
 vi.mock('node:child_process', () => ({
@@ -502,5 +504,104 @@ describe('OpenCode managed-process exit observation + alive check', () => {
         timestamp: expect.any(Number),
       },
     });
+  }, 15000);
+});
+
+describe('OpenCode upstream-death message-stream delivery (integration)', () => {
+  const originalFetch = global.fetch;
+  let activeSpies = [];
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    for (const spy of activeSpies) spy.mockRestore();
+    activeSpies = [];
+  });
+
+  const queueReadyChild = (pid = process.pid) => {
+    const child = createMockChild();
+    child.pid = pid;
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return child;
+    });
+    return child;
+  };
+
+  const simulateChildExit = (child, code, signal) => {
+    child.exitCode = code ?? null;
+    child.signalCode = signal ?? null;
+    child.emit('exit', code, signal);
+  };
+
+  const failHealthProbe = () => {
+    global.fetch = vi.fn(async () => {
+      throw new Error('health probe failed');
+    });
+  };
+
+  it('delivers exactly one upstream-status death frame to a connected message-stream client before the replacement respawns, through the real broadcaster + protocol framing', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const FIXED_NOW = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+    activeSpies.push(nowSpy);
+
+    const deliveredFrames = [];
+    let spawnCountAtDeathDelivery = null;
+    // Fake browser WS transport — the only test double; everything between the
+    // lifecycle death decision and this socket (the real createGlobalUiEventBroadcaster
+    // and the real sendMessageStreamWsEvent/Frame protocol layer) is exercised live.
+    const socket = {
+      readyState: 1,
+      send(raw) {
+        const frame = JSON.parse(raw);
+        deliveredFrames.push(frame);
+        if (frame?.payload?.type === 'openchamber:upstream-status') {
+          spawnCountAtDeathDelivery = spawnMock.mock.calls.length;
+        }
+      },
+      close() {},
+    };
+    const wsClients = new Set([socket]);
+    const emitSynthetic = createGlobalUiEventBroadcaster({
+      sseClients: new Set(),
+      wsClients,
+      writeSseEvent: () => {},
+    });
+
+    const firstChild = queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic });
+    state.openCodeProcess = await runtime.startOpenCode();
+    const deadGeneration = state.openCodeProcess.generation;
+
+    simulateChildExit(firstChild, 1, null);
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+
+    const deathFrames = deliveredFrames.filter(
+      (frame) => frame?.payload?.type === 'openchamber:upstream-status'
+    );
+    expect(deathFrames).toHaveLength(1);
+    // Exact on-the-wire frame WI4's client event-pipeline will receive.
+    expect(deathFrames[0]).toEqual({
+      type: 'event',
+      payload: {
+        type: 'openchamber:upstream-status',
+        properties: {
+          state: 'died',
+          cause: 'upstream_exited',
+          generation: deadGeneration,
+          timestamp: FIXED_NOW,
+        },
+      },
+      directory: 'global',
+    });
+    // Delivered to the client while only the original process had spawned, i.e.
+    // before the replacement generation respawned.
+    expect(spawnCountAtDeathDelivery).toBe(1);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   }, 15000);
 });
