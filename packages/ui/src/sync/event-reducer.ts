@@ -181,7 +181,7 @@ function getToolStatus(part: Part): string | undefined {
 //   ToolStateError     { status: "error",      time: { start, end } }  ← final
 // No version/sequence field exists on ToolPart itself, so timestamp comparison is
 // not possible; the monotonic contract is the only safe guard.
-function shouldPreserveExistingPart(previous: Part, next: Part): boolean {
+export function shouldPreserveExistingPart(previous: Part, next: Part): boolean {
   if (previous.type !== "tool" || next.type !== "tool") {
     return false
   }

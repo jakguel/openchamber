@@ -124,6 +124,93 @@ describe("materializeSessionSnapshots", () => {
   })
 })
 
+// WI5: a reconnect-resync snapshot must not resurrect a locally-finalized terminal
+// tool part back to "running" (irreversible-finalize invariant). Drives the REAL
+// merge (materializeSessionSnapshots); only the snapshot records are faked (the
+// post-fetch I/O boundary) — no internal module is mocked.
+function toolPart(id: string, messageID: string, status: string, opts: { end?: number } = {}): Part {
+  const time = opts.end !== undefined ? { start: 1, end: opts.end } : { start: 1 }
+  return {
+    id,
+    messageID,
+    sessionID: "ses_1",
+    type: "tool",
+    callID: `call_${id}`,
+    tool: "bash",
+    state: { status, input: { command: "sleep 999" }, time },
+  } as Part
+}
+
+function partStatus(value: Part | undefined): string | undefined {
+  return (value as { state?: { status?: string } } | undefined)?.state?.status
+}
+
+describe("materializeSessionSnapshots — terminal tool-part preservation (reconnect-resync)", () => {
+  // AC1: a locally-finalized terminal "error" part must survive a resync snapshot
+  // that re-delivers it as "running". Without the merge guard, mergeMaterializedPart
+  // returns the snapshot's running part and resurrects the finalized counter.
+  test("a running resync snapshot does NOT overwrite a locally-finalized error part", () => {
+    const localError = toolPart("prt_1", "msg_1", "error", { end: 9_000 })
+    const state = {
+      message: { ses_1: [message("msg_1")] },
+      part: { msg_1: [localError] },
+    }
+
+    const result = materializeSessionSnapshots(
+      state,
+      "ses_1",
+      [{ info: message("msg_1"), parts: [toolPart("prt_1", "msg_1", "running")] }],
+    )
+
+    expect(partStatus(result.part.msg_1[0])).toBe("error")
+  })
+
+  // AC3: legitimate forward progress is preserved — a "completed" snapshot still
+  // advances a locally-"running" part. The guard must not over-preserve.
+  test("a completed resync snapshot still advances a locally-running part", () => {
+    const localRunning = toolPart("prt_1", "msg_1", "running")
+    const state = {
+      message: { ses_1: [message("msg_1")] },
+      part: { msg_1: [localRunning] },
+    }
+
+    const result = materializeSessionSnapshots(
+      state,
+      "ses_1",
+      [{ info: message("msg_1"), parts: [toolPart("prt_1", "msg_1", "completed", { end: 9_000 })] }],
+    )
+
+    expect(partStatus(result.part.msg_1[0])).toBe("completed")
+  })
+
+  // Negative (no over-preservation): preserving one finalized part must NOT block a
+  // brand-new running part the snapshot introduces. The terminal part stays "error"
+  // AND the new running part is added.
+  test("preserves a terminal part while still adding a brand-new running snapshot part", () => {
+    const localError = toolPart("prt_1", "msg_1", "error", { end: 9_000 })
+    const state = {
+      message: { ses_1: [message("msg_1")] },
+      part: { msg_1: [localError] },
+    }
+
+    const result = materializeSessionSnapshots(
+      state,
+      "ses_1",
+      [
+        {
+          info: message("msg_1"),
+          parts: [toolPart("prt_1", "msg_1", "running"), toolPart("prt_2", "msg_1", "running")],
+        },
+      ],
+    )
+
+    const byId = new Map(result.part.msg_1.map((item) => [item.id, item]))
+    expect(result.part.msg_1.map((item) => item.id)).toEqual(["prt_1", "prt_2"])
+    expect(partStatus(byId.get("prt_1"))).toBe("error")
+    expect(partStatus(byId.get("prt_2"))).toBe("running")
+  })
+})
+
 describe("getSessionMaterializationStatus", () => {
   test("requires assistant parts for renderable cached state", () => {
     const state = {

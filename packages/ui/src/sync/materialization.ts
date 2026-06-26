@@ -1,5 +1,6 @@
 import type { Message, Part } from "@opencode-ai/sdk/v2/client"
 import { mergeMessages } from "./optimistic"
+import { shouldPreserveExistingPart } from "./event-reducer"
 
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 const STREAMING_PART_FIELDS = ["text", "output"] as const
@@ -79,6 +80,9 @@ function hasLiveStreamingField(part: Part): boolean {
 
 function mergeMaterializedPart(existing: Part | undefined, next: Part): Part {
   if (!existing || getPartEndTime(next) !== undefined) return next
+  // Never resurrect a locally-finalized terminal tool part to a non-terminal one
+  // from a stale reconnect-resync snapshot (irreversible-finalize invariant).
+  if (shouldPreserveExistingPart(existing, next)) return existing
 
   let merged: Part = next
   for (const field of STREAMING_PART_FIELDS) {
