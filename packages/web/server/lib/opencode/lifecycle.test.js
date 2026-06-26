@@ -365,4 +365,142 @@ describe('OpenCode managed-process exit observation + alive check', () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     expect(state.openCodeProcess.exited).toBe(false);
   }, 20000);
+
+  // WI3: synthetic upstream-death emit on the message-stream path, gated on the
+  // OBSERVED child exit, de-duped by generation, emitted BEFORE the restart.
+  // emitSynthetic is injected as a spy (the only test double beyond the OS
+  // boundaries spawn/fetch/Date.now/process.kill the harness already controls).
+  it('emits exactly one synthetic upstream-death event with the WI4 contract shape on observed child exit, before the replacement respawns', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const FIXED_NOW = 1_700_000_000_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(FIXED_NOW);
+    activeSpies.push(nowSpy);
+
+    let spawnCountAtEmit = null;
+    const emitSynthetic = vi.fn(() => {
+      spawnCountAtEmit = spawnMock.mock.calls.length;
+    });
+
+    const firstChild = queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic });
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const deadGeneration = state.openCodeProcess.generation;
+
+    simulateChildExit(firstChild, 1, null);
+    expect(state.openCodeProcess.exited).toBe(true);
+
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+
+    expect(emitSynthetic).toHaveBeenCalledTimes(1);
+    expect(emitSynthetic).toHaveBeenCalledWith({
+      type: 'openchamber:upstream-status',
+      properties: {
+        state: 'died',
+        cause: 'upstream_exited',
+        generation: deadGeneration,
+        timestamp: FIXED_NOW,
+      },
+    });
+    // Ordering: the emit fired while only the original spawn had happened, i.e.
+    // strictly before the replacement generation respawned.
+    expect(spawnCountAtEmit).toBe(1);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+  }, 15000);
+
+  it('does not emit on an alive-but-unhealthy forced restart (no observed exit)', async () => {
+    delete process.env.OPENCODE_BINARY;
+    // process.kill is the OS boundary: signal 0 keeps the alive-check true, and
+    // the negative-pid group signals from the forced restart are swallowed so the
+    // test process group is never signalled.
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    activeSpies.push(killSpy);
+
+    const emitSynthetic = vi.fn();
+    queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic, getActiveSessionCount: () => 0 });
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    // 20 consecutive failures against a still-alive process reaches the restart
+    // threshold and forces a restart WITHOUT any observed exit.
+    for (let i = 0; i < 20; i += 1) {
+      await runtime.triggerHealthCheck();
+    }
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(state.openCodeProcess.exited).toBe(false);
+    expect(emitSynthetic).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('emits once for a single dead generation even when the same death is re-observed across health cycles', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const emitSynthetic = vi.fn();
+    const firstChild = queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic });
+    state.openCodeProcess = await runtime.startOpenCode();
+    const deadHandle = state.openCodeProcess;
+    const deadGeneration = deadHandle.generation;
+
+    simulateChildExit(firstChild, 1, null);
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+    expect(emitSynthetic).toHaveBeenCalledTimes(1);
+    expect(state.openCodeProcess.generation).toBe(deadGeneration + 1);
+
+    // Re-surface the SAME dead generation in a later cycle. The only thing that
+    // can suppress a second emit here is the generation de-dupe guard.
+    state.openCodeProcess = deadHandle;
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+
+    expect(emitSynthetic).toHaveBeenCalledTimes(1);
+  }, 15000);
+
+  it('emits again for a new generation: death -> restart -> death yields two emits', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const emitSynthetic = vi.fn();
+    const firstChild = queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic });
+    state.openCodeProcess = await runtime.startOpenCode();
+    const gen1 = state.openCodeProcess.generation;
+
+    simulateChildExit(firstChild, 1, null);
+    failHealthProbe();
+    const secondChild = queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+    expect(emitSynthetic).toHaveBeenCalledTimes(1);
+    const gen2 = state.openCodeProcess.generation;
+    expect(gen2).toBe(gen1 + 1);
+    expect(state.openCodeProcess.exited).toBe(false);
+
+    simulateChildExit(secondChild, 1, null);
+    expect(state.openCodeProcess.exited).toBe(true);
+    failHealthProbe();
+    queueReadyChild(process.pid);
+
+    await runtime.triggerHealthCheck();
+
+    expect(emitSynthetic).toHaveBeenCalledTimes(2);
+    expect(emitSynthetic).toHaveBeenLastCalledWith({
+      type: 'openchamber:upstream-status',
+      properties: {
+        state: 'died',
+        cause: 'upstream_exited',
+        generation: gen2,
+        timestamp: expect.any(Number),
+      },
+    });
+  }, 15000);
 });

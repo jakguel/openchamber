@@ -38,6 +38,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     buildManagedOpenCodePath,
     getManagedOpenCodeShellEnvSnapshot,
     getActiveSessionCount = () => 0,
+    emitSynthetic = () => {},
   } = deps;
 
   const killProcessOnPort = (port) => {
@@ -845,6 +846,42 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   let healthCheckCyclePromise = null;
   let lastHealthProbeResult = null;
 
+  // De-dupe synthetic upstream-death emits by the managed-process generation
+  // token. The generation advances in createManagedOpenCodeServerProcess on each
+  // spawn, so a death -> restart (new generation) -> death again yields two
+  // emits, while the same dead generation re-observed across health cycles yields
+  // exactly one. null < any real generation (which start at 1) so the first death
+  // always emits.
+  let lastEmittedDeadGeneration = null;
+
+  // Emit ONE synthetic upstream-death event onto the message stream the client
+  // sync pipeline reads (same envelope + transport as real forwarded OpenCode
+  // events), strictly gated on an OBSERVED child exit (WI1's recorded exit state)
+  // — never on a mere health-probe failure of a still-alive process. Must be
+  // called BEFORE restartOpenCode() so the client sees the death before the
+  // replacement generation comes up.
+  const emitUpstreamDeathIfObservedExit = () => {
+    const handle = state.openCodeProcess;
+    if (!handle || handle.exited !== true) return;
+    const generation = typeof handle.generation === 'number' ? handle.generation : null;
+    if (generation === null) return;
+    if (generation === lastEmittedDeadGeneration) return;
+    lastEmittedDeadGeneration = generation;
+    try {
+      emitSynthetic({
+        type: 'openchamber:upstream-status',
+        properties: {
+          state: 'died',
+          cause: 'upstream_exited',
+          generation,
+          timestamp: Date.now(),
+        },
+      });
+    } catch (error) {
+      console.error(`[lifecycle] failed to emit synthetic upstream-death event: ${error?.message || error}`);
+    }
+  };
+
   const resetHealthFailureState = () => {
     consecutiveHealthFailures = 0;
     lastUnhealthyWithBusySessionsAt = 0;
@@ -907,6 +944,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
           console.log(`[lifecycle] ${source} health check: OpenCode process exited, restarting...`);
           consecutiveHealthFailures = 0;
           lastHealthProbeResult = null;
+          // Observed-exit death path: tell clients before the replacement spawns.
+          // Strictly gated on handle.exited; a process gone only by liveness probe
+          // (no recorded exit) emits nothing.
+          emitUpstreamDeathIfObservedExit();
           await restartOpenCode();
           return;
         }
@@ -919,6 +960,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         console.log(`[lifecycle] ${source} health check failure threshold reached, restarting OpenCode...`);
         consecutiveHealthFailures = 0;
         lastHealthProbeResult = null;
+        // Reached only with a live-but-unhealthy process (handle.exited === false),
+        // so this stays a no-op: a forced busy-grace restart with no observed exit
+        // emits nothing. Kept here so every restart is preceded by the gated check.
+        emitUpstreamDeathIfObservedExit();
         await restartOpenCode();
       } else {
         resetHealthFailureState();
