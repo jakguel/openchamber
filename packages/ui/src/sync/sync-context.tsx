@@ -599,6 +599,59 @@ function finalizeOrphanedPartsForStore(store: StoreApi<DirectoryStore>): void {
   })
 }
 
+/**
+ * Module-scoped high-water mark of the upstream-death generation already
+ * processed. Starts at 0 so the FIRST real death (generation 1) passes. Each
+ * processed death raises it; a death whose generation is NOT strictly greater is
+ * either a duplicate (same generation delivered twice) or a stale/superseded death
+ * (a delayed frame for a generation a newer death already covered) and is dropped.
+ * One comparison yields both idempotency and stale-drop.
+ */
+let lastProcessedDeathGeneration = 0
+
+/**
+ * Authoritative upstream-death finalize (WI4 client half). WI3's server half pushes
+ * `openchamber:upstream-status` { state: "died" } over the message stream the instant
+ * the managed OpenCode child is OBSERVED exited. Unlike finalizeOrphanedPartsOnHeartbeatTimeout
+ * — which INFERS death from local silence and is therefore gated to a foreground, online
+ * tab — this path RECEIVES an authoritative server confirmation, so it is deliberately NOT
+ * gated on visibility/online: a hidden or offline tab whose server has confirmed death must
+ * still stop its tool counters ticking forever.
+ *
+ * Reuses the SAME per-store finalize (finalizeOrphanedPartsForStore) as the heartbeat path:
+ * every non-idle session holding a running tool part is dropped to a terminal state (parts ->
+ * ToolStateError via the WI1 finalizeOrphanedRunningParts helper, reused UNCHANGED;
+ * session_status -> idle).
+ *
+ * Generation guard: a death is processed only when its generation strictly exceeds the
+ * high-water mark, which is then raised — so a repeat of the same generation finalizes once
+ * (idempotent) and a delayed/lower generation is ignored (stale).
+ */
+export function finalizeOrphanedPartsOnUpstreamDeath(
+  payload: Event,
+  stores: Iterable<StoreApi<DirectoryStore>>,
+): void {
+  const record = payload as unknown as {
+    type?: unknown
+    properties?: { state?: unknown; generation?: unknown }
+  }
+  if (record.type !== "openchamber:upstream-status") return
+  const properties = record.properties
+  if (!properties || properties.state !== "died") return
+
+  // Honor generation strictly: a missing/non-numeric generation cannot be ordered
+  // against the high-water mark, so the malformed death is dropped rather than
+  // finalized on an unverifiable authoritative signal.
+  const generation = properties.generation
+  if (typeof generation !== "number") return
+  if (generation <= lastProcessedDeathGeneration) return
+  lastProcessedDeathGeneration = generation
+
+  for (const store of stores) {
+    finalizeOrphanedPartsForStore(store)
+  }
+}
+
 export type ResyncSessionStatusResult = {
   /** The fetched snapshot, or null when the status fetch failed. */
   snapshot: DirectorySessionStatusSnapshot | null
@@ -1461,12 +1514,22 @@ export async function resyncDirectoryAfterReconnect(
   ingestDirectoryStateIntoRoutingIndex(routingIndex, directory, store.getState())
 }
 
-function handleEvent(
+export function handleEvent(
   rawDirectory: string,
   payload: Event,
   childStores: ChildStoreManager,
   routingIndex: EventRoutingIndex,
 ) {
+  // Authoritative upstream-death (WI4): WI3 pushes openchamber:upstream-status
+  // { state: "died" } the instant the managed OpenCode child is observed exited.
+  // Finalize orphaned running tool parts across EVERY directory store immediately —
+  // no visibility/online gate (this is a confirmed server signal, not the heartbeat
+  // path's inference) — and return; the event routes to no per-directory store.
+  if ((payload as { type?: unknown }).type === "openchamber:upstream-status") {
+    finalizeOrphanedPartsOnUpstreamDeath(payload, childStores.children.values())
+    return
+  }
+
   const directory = resolveDirectoryFromRoutingIndex(routingIndex, rawDirectory, payload, childStores)
 
   if (handleUiNotificationEvent(payload, directory)) {
