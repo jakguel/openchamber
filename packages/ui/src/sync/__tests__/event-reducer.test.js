@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { applyDirectoryEvent } from '../event-reducer'
+import { applyDirectoryEvent, finalizeOrphanedRunningParts } from '../event-reducer'
 import { INITIAL_STATE } from '../types'
 
 describe('applyDirectoryEvent', () => {
@@ -196,5 +196,39 @@ describe('applyDirectoryEvent', () => {
 
     expect(state.part[messageID]?.[0]?.state?.status).toBe('completed')
     expect(state.part[messageID]?.[0]?.state?.time?.end).toBe(20)
+  })
+})
+
+describe('finalizeOrphanedRunningParts — return contract', () => {
+  it('reports a mutation on the first finalize and a no-op (false) on a second pass over already-finalized parts', () => {
+    const state = structuredClone(INITIAL_STATE)
+    const sessionID = 'ses_x'
+    const messageID = 'msg_x'
+    state.message = {
+      [sessionID]: [{ id: messageID, sessionID, role: 'assistant', time: { created: 1 } }],
+    }
+    state.part = {
+      [messageID]: [
+        {
+          id: 'prt_x',
+          sessionID,
+          messageID,
+          type: 'tool',
+          callID: 'call_x',
+          tool: 'bash',
+          state: { status: 'running', input: { command: 'sleep 999' }, time: { start: 5_000 } },
+        },
+      ],
+    }
+
+    const firstPass = finalizeOrphanedRunningParts(state, sessionID)
+    expect(firstPass).toBe(true)
+    const finalizedPart = state.part[messageID][0]
+    expect(finalizedPart.state.status).toBe('error')
+
+    const secondPass = finalizeOrphanedRunningParts(state, sessionID)
+    expect(secondPass).toBe(false)
+    expect(state.part[messageID][0]).toBe(finalizedPart)
+    expect(state.part[messageID][0].state.status).toBe('error')
   })
 })

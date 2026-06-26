@@ -441,6 +441,43 @@ describe('OpenCode managed-process exit observation + alive check', () => {
     expect(emitSynthetic).not.toHaveBeenCalled();
   }, 20000);
 
+  // WI3 false-positive guard (transient ~250ms reconnect blip): the SSE-drop fast
+  // trigger (global-ws-bridge -> triggerHealthCheck) fires the instant the upstream
+  // stream drops, but the child is still alive and the health probe RECOVERS. The
+  // real cycle takes the healthy branch (resetHealthFailureState) and never reaches
+  // the observed-exit emit gate, so a raw reconnect blip yields ZERO death emits and
+  // no restart. A regression that emitted on the trigger itself — or on a recovering
+  // health probe — rather than on a recorded child exit would call emitSynthetic here
+  // and fail this test.
+  it('does not emit on a transient reconnect blip: a triggered health check against an alive, healthy process emits nothing and keeps the same generation', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const emitSynthetic = vi.fn();
+    let healthProbes = 0;
+    queueReadyChild(process.pid);
+    const { runtime, state } = buildRuntime({ emitSynthetic });
+    state.openCodeProcess = await runtime.startOpenCode();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const aliveGeneration = state.openCodeProcess.generation;
+
+    // The health probe SUCCEEDS (the blip recovered): ok response + { healthy: true },
+    // so the cycle resets failure state instead of restarting or emitting.
+    global.fetch = vi.fn(async () => {
+      healthProbes += 1;
+      return { ok: true, json: async () => ({ healthy: true }) };
+    });
+
+    await runtime.triggerHealthCheck();
+
+    // The probe genuinely ran and reported healthy (the recovery branch executed)...
+    expect(healthProbes).toBeGreaterThanOrEqual(1);
+    // ...so nothing was emitted and nothing was restarted: the same live generation
+    // is still running, unexited.
+    expect(emitSynthetic).not.toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(state.openCodeProcess.exited).toBe(false);
+    expect(state.openCodeProcess.generation).toBe(aliveGeneration);
+  }, 15000);
+
   it('emits once for a single dead generation even when the same death is re-observed across health cycles', async () => {
     delete process.env.OPENCODE_BINARY;
     const emitSynthetic = vi.fn();
