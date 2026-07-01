@@ -1020,12 +1020,6 @@ class OpencodeService {
     return unwrapSdkData(response, 'session.fork');
   }
 
-  async getSessionStatus(): Promise<
-    Record<string, { type: "idle" | "busy" | "retry"; attempt?: number; message?: string; next?: number }>
-  > {
-    return (await this.getSessionStatusForDirectory(this.currentDirectory ?? null)) ?? {};
-  }
-
   /**
    * Returns the upstream `/session/status` map, or `null` if the fetch failed.
    *
