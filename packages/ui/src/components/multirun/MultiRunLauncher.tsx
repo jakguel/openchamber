@@ -394,7 +394,9 @@ export const MultiRunLauncher: React.FC<MultiRunLauncherProps> = ({
       const result = await createMultiRun(params);
       if (result) {
         if (result.firstSessionId) {
-          useSessionUIStore.getState().setCurrentSession(result.firstSessionId);
+          const sessionStore = useSessionUIStore.getState();
+          const firstSessionDirectory = sessionStore.getDirectoryForSession(result.firstSessionId);
+          sessionStore.setCurrentSession(result.firstSessionId, firstSessionDirectory);
         }
         onCreated?.();
       }

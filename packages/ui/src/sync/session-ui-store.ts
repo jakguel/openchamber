@@ -483,8 +483,14 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       id,
       (sid) => get().worktreeMetadata.get(sid),
     )
-    const fallbackDir = opencodeClient.getDirectory() ?? directoryState.currentDirectory ?? null
-    const resolvedDir = (directoryHint ? normalizePath(directoryHint) : null) ?? sessionDir ?? fallbackDir
+    // No hint + no authoritative session directory => store null. NEVER fall
+    // back to opencodeClient.getDirectory()/directoryState.currentDirectory: for
+    // a store-absent NEW session those hold the PREVIOUS project's process-global,
+    // and leaking it here misroutes the new session's first prompt into the prior
+    // project (bug .20). The current-session last-resort lives in
+    // getDirectoryForSession; later authoritative resolution (SSE session
+    // .directory) self-heals a transiently-null new session.
+    const resolvedDir = (directoryHint ? normalizePath(directoryHint) : null) ?? sessionDir ?? null
     const projectsState = useProjectsStore.getState()
     const sessionProject = resolvedDir
       ? resolveProjectForSessionDirectory(

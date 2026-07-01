@@ -1203,8 +1203,9 @@ export async function forkFromMessage(sessionId: string, messageId: string): Pro
     store.setState({ session: sessions })
   }
 
-  // Switch to new session
-  useSessionUIStore.getState().setCurrentSession(forkedSession.id)
+  // Switch to new session — pass the parent's directory so the store-absent
+  // fork inherits it instead of falling through to a null/leaked directory.
+  useSessionUIStore.getState().setCurrentSession(forkedSession.id, directory)
 
   // Restore forked message text and file attachments to input
   if (messageText) {

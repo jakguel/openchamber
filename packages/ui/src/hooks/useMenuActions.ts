@@ -156,7 +156,8 @@ export const useMenuActions = (
 
     setActiveMainTab('chat');
     setSessionSwitcherOpen(false);
-    useSessionUIStore.getState().setCurrentSession(nextSession.id);
+    const sessionStore = useSessionUIStore.getState();
+    sessionStore.setCurrentSession(nextSession.id, sessionStore.getDirectoryForSession(nextSession.id));
   }, [setActiveMainTab, setSessionSwitcherOpen]);
 
   const navigateProject = React.useCallback((direction: -1 | 1) => {
