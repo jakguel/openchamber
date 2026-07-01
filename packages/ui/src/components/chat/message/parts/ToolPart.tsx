@@ -1318,7 +1318,6 @@ const TaskToolSummary: React.FC<{
     isActive?: boolean;
 }> = ({ entries, isExpanded, isMobile, output, sessionId, onShowPopup, input, animateTailText = true, isActive = false }) => {
     const { t } = useI18n();
-    const currentDirectory = useEffectiveDirectory();
     const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
     const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
     const showToolFileIcons = useUIStore((state) => state.showToolFileIcons);
@@ -1332,11 +1331,12 @@ const TaskToolSummary: React.FC<{
 
     const handleOpenSession = (event: React.MouseEvent) => {
         event.stopPropagation();
-        // Resolve the opened session's OWN directory at call time (never the active
-        // session's currentDirectory) so opening a subtask routes to its project.
+        // Resolve the opened session's OWN directory at call time. If it cannot be
+        // resolved, do NOT fall back to the active/global directory (that is the
+        // re-poison) — treat the open as non-resolvable.
         const sessionDirectory = sessionId
-            ? (useSessionUIStore.getState().getDirectoryForSession(sessionId) ?? currentDirectory)
-            : undefined;
+            ? useSessionUIStore.getState().getDirectoryForSession(sessionId)
+            : null;
         if (sessionId && sessionDirectory) {
             if (isMobile || runtime?.runtime.isVSCode) {
                 setCurrentSession(sessionId, sessionDirectory);
