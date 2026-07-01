@@ -19,6 +19,7 @@ import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { getSyncMessages, getSyncParts, registerSessionDirectory } from '@/sync/sync-refs';
 import { markPendingUserSendAnimation } from '@/lib/userSendAnimation';
+import { resolveSessionSendDirectory } from '@/lib/session/sessionSendDirectory';
 
 const HANDOFF_TIMEOUT_MS = 180_000;
 const HANDOFF_POLL_MS = 400;
@@ -208,6 +209,13 @@ const createOrReuseReviewSession = async (originalSessionID: string, directory: 
 };
 
 export const startReviewFlow = async (input: StartReviewFlowInput): Promise<void> => {
+  // Bug .20: re-resolve the original session's authoritative directory here and
+  // ignore input.directory — callers (ChatInput/DiffView) fall it back to
+  // currentDirectory/effectiveDirectory (the process-global) when
+  // getDirectoryForSession is null, which would misroute the review send. The
+  // review session is a child created in this same project, so threading the
+  // original's authoritative directory is correct; null => throw (NON-SENDABLE).
+  const directory = resolveSessionSendDirectory(input.originalSessionID);
   await waitForConnectionOrThrow();
   let reviewPrompt: string;
 
@@ -215,21 +223,21 @@ export const startReviewFlow = async (input: StartReviewFlowInput): Promise<void
     const visibleText = await renderMagicPrompt('session.reviewHandoff.visible');
     const instructionsText = await renderMagicPrompt('session.reviewHandoff.instructions');
     const startedAt = Date.now();
-    await sendPlainMessage(input.originalSessionID, input.directory, visibleText, null, [
+    await sendPlainMessage(input.originalSessionID, directory, visibleText, null, [
       { text: instructionsText, synthetic: true },
     ]);
 
     const continueFromHandoff = async (): Promise<void> => {
-      const handoff = await waitForAssistantText(input.originalSessionID, input.directory, startedAt);
+      const handoff = await waitForAssistantText(input.originalSessionID, directory, startedAt);
       const handoffReviewPrompt = await renderMagicPrompt('session.reviewSession.visible', { handoff });
-      const reviewSession = await createOrReuseReviewSession(input.originalSessionID, input.directory);
-      await sendPlainMessage(reviewSession.id, input.directory, handoffReviewPrompt, {
+      const reviewSession = await createOrReuseReviewSession(input.originalSessionID, directory);
+      await sendPlainMessage(reviewSession.id, directory, handoffReviewPrompt, {
         providerID: input.providerID,
         modelID: input.modelID,
         agent: input.agent,
         variant: input.variant,
       });
-      openReviewSessionPanel(input.directory, reviewSession);
+      openReviewSessionPanel(directory, reviewSession);
     };
 
     if (input.returnAfterHandoffRequest) {
@@ -245,17 +253,20 @@ export const startReviewFlow = async (input: StartReviewFlowInput): Promise<void
     reviewPrompt = await renderMagicPrompt('session.reviewSessionWithoutHandoff.visible');
   }
 
-  const reviewSession = await createOrReuseReviewSession(input.originalSessionID, input.directory);
-  await sendPlainMessage(reviewSession.id, input.directory, reviewPrompt, {
+  const reviewSession = await createOrReuseReviewSession(input.originalSessionID, directory);
+  await sendPlainMessage(reviewSession.id, directory, reviewPrompt, {
     providerID: input.providerID,
     modelID: input.modelID,
     agent: input.agent,
     variant: input.variant,
   });
-  openReviewSessionPanel(input.directory, reviewSession);
+  openReviewSessionPanel(directory, reviewSession);
 };
 
-export const sendReviewFeedbackToOriginal = async (reviewSessionID: string, directory: string, reviewFeedback: string): Promise<void> => {
+export const sendReviewFeedbackToOriginal = async (reviewSessionID: string, _directory: string, reviewFeedback: string): Promise<void> => {
+  // Bug .20: ignore the caller-passed _directory (effectiveDirectory) and resolve
+  // the review session's authoritative directory; null => throw (NON-SENDABLE).
+  const directory = resolveSessionSendDirectory(reviewSessionID);
   const reviewSession = await opencodeClient.getSession(reviewSessionID, directory);
   const originalSessionID = getOriginalSessionID(reviewSession);
   if (!originalSessionID) throw new Error('Original session is missing');
@@ -263,7 +274,10 @@ export const sendReviewFeedbackToOriginal = async (reviewSessionID: string, dire
   await sendPlainMessage(originalSessionID, directory, prompt);
 };
 
-export const sendImplementationResponseToReviewer = async (originalSessionID: string, directory: string, implementationResponse: string): Promise<void> => {
+export const sendImplementationResponseToReviewer = async (originalSessionID: string, _directory: string, implementationResponse: string): Promise<void> => {
+  // Bug .20: ignore the caller-passed _directory (effectiveDirectory) and resolve
+  // the original session's authoritative directory; null => throw (NON-SENDABLE).
+  const directory = resolveSessionSendDirectory(originalSessionID);
   const originalSession = await opencodeClient.getSession(originalSessionID, directory);
   const reviewSessionID = getReviewSessionID(originalSession);
   if (!reviewSessionID) throw new Error('Review session is missing');
