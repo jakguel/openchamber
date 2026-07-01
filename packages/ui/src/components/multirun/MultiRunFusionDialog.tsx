@@ -15,6 +15,7 @@ import { useAllLiveSessions } from '@/sync/sync-context';
 import { getSyncMessages, getSyncParts } from '@/sync/sync-refs';
 import { flattenAssistantTextParts } from '@/lib/messages/messageText';
 import { getFusionSessionTitle, parseMultiRunSessionTitle } from '@/lib/multirun/title';
+import { resolveFusionSendDirectory } from '@/lib/multirun/fusionSendDirectory';
 import { renderMagicPrompt } from '@/lib/magicPrompts';
 import { AgentSelector } from './AgentSelector';
 import { ModelMultiSelect, generateInstanceId, type ModelSelectionWithId } from './ModelMultiSelect';
@@ -178,7 +179,7 @@ export function MultiRunFusionDialog({
           ...usableSources.map((item, index) => ({ text: buildSourcePart(item.source, item.text, index), synthetic: true })),
           { text: '\n\n--- FUSION INPUTS END ---\nNow write the final fused answer.', synthetic: true },
         ],
-        directory: directory ?? opencodeClient.getDirectory(),
+        directory: resolveFusionSendDirectory(fusionSession.id),
       });
     } catch (error) {
       console.error('[MultiRunFusion] Failed to start fusion', error);
