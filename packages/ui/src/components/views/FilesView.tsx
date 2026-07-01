@@ -666,8 +666,13 @@ const Dialogs: React.FC<DialogsProps> = ({
     );
 };
 
+export type FilesViewRef = {
+  closeFile: (path: string) => void;
+};
+
 interface FilesViewProps {
   mode?: 'full' | 'editor-only';
+  onFileClose?: (path: string) => void;
 }
 
 /**
@@ -726,7 +731,8 @@ const useAssetAuthRefresh = (
   return { readyKey, nonce };
 };
 
-export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
+export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
+  ({ mode = 'full', onFileClose }, ref) => {
   const { t } = useI18n();
   const { files, runtime } = useRuntimeAPIs();
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
@@ -929,6 +935,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
   const pendingSelectFileRef = React.useRef<FileNode | null>(null);
   const pendingTabRef = React.useRef<import('@/stores/useUIStore').MainTab | null>(null);
   const pendingClosePathRef = React.useRef<string | null>(null);
+  const pendingExternalClosePath = React.useRef<string | null>(null);
   const skipDirtyOnceRef = React.useRef(false);
   const copiedContentTimeoutRef = React.useRef<number | null>(null);
   const copiedPathTimeoutRef = React.useRef<number | null>(null);
@@ -1609,6 +1616,22 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
 
   const isDirty = draftContent !== displayedContent;
 
+  React.useImperativeHandle(ref, () => ({
+    closeFile: (path: string) => {
+      const normalized = normalizePath(path.trim());
+      if (!normalized) return;
+      if (selectedFile?.path === normalized && isDirty) {
+        pendingExternalClosePath.current = normalized;
+        setConfirmDiscardOpen(true);
+      } else {
+        if (root) {
+          useFilesViewTabsStore.getState().removeOpenPath(root, normalized);
+        }
+        onFileClose?.(normalized);
+      }
+    },
+  }), [isDirty, onFileClose, root, selectedFile?.path]);
+
   const saveDraft = React.useCallback(async () => {
     if (!selectedFile || !files.writeFile) {
       toast.error(t('filesView.toast.savingNotSupported'));
@@ -2086,7 +2109,12 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
       setMainTabGuard(null);
       useUIStore.getState().setActiveMainTab(nextTab);
     }
-  }, [displayedContent, handleSelectFile, isMobile, removeOpenPath, root, selectedFile?.path, setMainTabGuard, setSelectedPath]);
+    if (pendingExternalClosePath.current) {
+      const externalClosePath = pendingExternalClosePath.current;
+      pendingExternalClosePath.current = null;
+      onFileClose?.(externalClosePath);
+    }
+  }, [displayedContent, handleSelectFile, isMobile, onFileClose, removeOpenPath, root, selectedFile?.path, setMainTabGuard, setSelectedPath]);
 
   const saveAndContinue = React.useCallback(async () => {
     const nextFile = pendingSelectFileRef.current;
@@ -2140,7 +2168,12 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
       setMainTabGuard(null);
       useUIStore.getState().setActiveMainTab(nextTab);
     }
-  }, [handleSelectFile, isMobile, removeOpenPath, root, saveDraft, selectedFile?.path, setMainTabGuard, setSelectedPath]);
+    if (pendingExternalClosePath.current) {
+      const externalClosePath = pendingExternalClosePath.current;
+      pendingExternalClosePath.current = null;
+      onFileClose?.(externalClosePath);
+    }
+  }, [handleSelectFile, isMobile, onFileClose, removeOpenPath, root, saveDraft, selectedFile?.path, setMainTabGuard, setSelectedPath]);
 
   const handleCloseFile = React.useCallback((path: string) => {
     const isActive = selectedFile?.path === path;
@@ -4232,4 +4265,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full' }) => {
        )}
     </div>
   );
-};
+  }
+);
+
+FilesView.displayName = 'FilesView';
