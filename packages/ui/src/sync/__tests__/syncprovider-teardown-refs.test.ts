@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { create, type StoreApi } from "zustand"
-import type { OpencodeClient } from "@opencode-ai/sdk/v2/client"
+import type { OpencodeClient, Session } from "@opencode-ai/sdk/v2/client"
 
 import { INITIAL_STATE, type State } from "../types"
 import type { ChildStoreManager, DirectoryStore } from "../child-store"
@@ -10,21 +10,43 @@ import {
   getSyncSDK,
   getSyncChildStores,
   getSyncDirectory,
+  getDirectoryState,
+  getAllSyncSessions,
+  getSyncSessions,
 } from "../sync-refs"
 import { setActionRefs, resetActionRefs, forkFromMessage } from "../session-actions"
 import { useSessionUIStore } from "@/sync/session-ui-store"
 
-// SyncProvider's ref effect (sync-context.tsx) sets these refs on mount and,
-// on unmount, runs resetSyncRefs() + resetActionRefs() as its cleanup. This
-// suite pins that unmount contract: after the same cleanup pair runs, both
-// modules are pristine again (null refs), so any code touching them throws the
-// "not initialized" guard instead of reading a stale _sdk / _childStores.
+// SyncProvider's ref effect (sync-context.tsx) calls setSyncRefs + setActionRefs
+// on mount and, on unmount, runs resetSyncRefs() + resetActionRefs() as its
+// cleanup. This suite exercises that mount→unmount ref lifecycle through the
+// exact public DI seam the provider uses, across the real sync-refs,
+// session-actions, session-ui-store and child-store modules:
+//   • mount phase  → the ref-dependent read surface (getSyncSDK, child-store
+//     reads, session lists) resolves against injected state.
+//   • unmount phase → the same reset pair the provider cleanup invokes returns
+//     every ref to pristine (null), so readers throw the "not initialized"
+//     guard and a real cross-module action (forkFromMessage) rejects.
 //
-// Real production modules run; the only faked seam is the external SDK I/O
-// boundary (a stub OpencodeClient), injected via the public setSyncRefs /
-// setActionRefs DI setters. No internal module is mock.module()'d.
+// A createRoot()-based mount/unmount of <SyncProvider/> is intentionally not
+// used: bun test provides no document/window, the monorepo ships no
+// happy-dom/jsdom/testing-library/react-test-renderer, and adding one is out of
+// scope (project rule: no new deps). Fully mounting SyncProvider would also
+// start its SSE/reconnect/bootstrap effects and leak timers into the rest of
+// src/sync. The provider's ref contract is therefore verified via its DI seam.
+// Only the external SDK I/O boundary is a stub; no internal module is mocked.
 
 const DIR = "/proj"
+
+function makeSession(id: string, directory: string): Session {
+  return {
+    id,
+    title: id,
+    directory,
+    time: { created: 1, updated: 1 },
+    version: "1",
+  } as unknown as Session
+}
 
 function makeChildStores(): ChildStoreManager {
   const children = new Map<string, StoreApi<DirectoryStore>>()
@@ -53,15 +75,17 @@ const stubSdk = {
   },
 } as unknown as OpencodeClient
 
-function wireMounted() {
+// Mirror what SyncProvider's ref effect does on mount.
+function mountRefs() {
   const mgr = makeChildStores()
+  mgr.ensureChild(DIR).getState().patch({ session: [makeSession("ses_live", DIR)] })
   setSyncRefs(stubSdk, mgr, DIR)
   setActionRefs(stubSdk, mgr, () => DIR)
   return mgr
 }
 
 // Mirror SyncProvider's unmount cleanup.
-function runTeardown() {
+function unmountRefs() {
   resetSyncRefs()
   resetActionRefs()
 }
@@ -72,11 +96,11 @@ beforeEach(() => {
     currentSessionDirectory: null,
     worktreeMetadata: new Map(),
   })
-  wireMounted()
+  mountRefs()
 })
 
 afterAll(() => {
-  runTeardown()
+  unmountRefs()
   useSessionUIStore.setState({
     currentSessionId: null,
     currentSessionDirectory: null,
@@ -84,26 +108,31 @@ afterAll(() => {
   })
 })
 
-describe("SyncProvider teardown resets sync/action refs", () => {
-  test("mounted refs resolve to the injected sdk/childStores/directory", () => {
-    const mgr = wireMounted()
+describe("SyncProvider mount/unmount ref lifecycle", () => {
+  test("mount: the ref-dependent read surface resolves against injected state", () => {
+    const mgr = mountRefs()
     expect(getSyncSDK()).toBe(stubSdk)
     expect(getSyncChildStores()).toBe(mgr)
     expect(getSyncDirectory()).toBe(DIR)
+    expect(getDirectoryState(DIR)).toBeTruthy()
+    expect(getSyncSessions(DIR).map((s) => s.id)).toEqual(["ses_live"])
+    expect(getAllSyncSessions().map((s) => s.id)).toEqual(["ses_live"])
   })
 
-  test("after teardown, sync-refs getters throw the unmounted guard", () => {
-    runTeardown()
+  test("unmount: sync-refs getters/readers return to pristine", () => {
+    unmountRefs()
     expect(() => getSyncSDK()).toThrow(/not initialized/i)
     expect(() => getSyncChildStores()).toThrow(/not initialized/i)
     expect(getSyncDirectory()).toBe("")
+    expect(getDirectoryState(DIR)).toBe(undefined)
+    expect(getAllSyncSessions()).toEqual([])
   })
 
-  test("after teardown, a session action can no longer read stale action refs", async () => {
-    runTeardown()
+  test("unmount: a real cross-module session action can no longer read stale refs", async () => {
+    unmountRefs()
     let error: unknown
     try {
-      await forkFromMessage("ses_gone", "msg_gone")
+      await forkFromMessage("ses_live", "msg_gone")
     } catch (e) {
       error = e
     }
