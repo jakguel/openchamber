@@ -553,11 +553,12 @@ class OpencodeService {
     return unwrapSdkData(response, 'session.messages');
   }
 
-  async getSessionTodos(sessionId: string): Promise<Array<{ id: string; content: string; status: string; priority: string }>> {
+  async getSessionTodos(sessionId: string, directory?: string | null): Promise<Array<{ id: string; content: string; status: string; priority: string }>> {
     try {
+      const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
       const response = await this.client.session.todo({
         sessionID: sessionId,
-        ...(this.currentDirectory ? { directory: this.currentDirectory } : {}),
+        ...(requestDirectory ? { directory: requestDirectory } : {}),
       });
       if (response.error) {
         return [];
@@ -1440,38 +1441,39 @@ class OpencodeService {
   // all SSE event ingestion via the SDK's global.event() async iterator.
 
   // File Operations
-  async readFile(path: string): Promise<string> {
+  async readFile(path: string, directory?: string | null): Promise<string> {
     try {
+      const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
       const response = await this.client.file.read({
         path,
-        ...(this.currentDirectory ? { directory: this.currentDirectory } : {}),
+        ...(requestDirectory ? { directory: requestDirectory } : {}),
       });
       return String(unwrapSdkData(response, 'file.read'));
     } catch {
-      // Return placeholder for development
       return `// Content of ${path}\n// This would be loaded from the server`;
     }
   }
 
-  async listFiles(directory?: string): Promise<Record<string, unknown>[]> {
+  async listFiles(directory?: string | null): Promise<Record<string, unknown>[]> {
     try {
-      const targetDir = directory || this.currentDirectory || '/';
+      const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
+      const targetDir = requestDirectory || '/';
       const response = await this.client.file.list({
         path: targetDir,
-        ...(this.currentDirectory ? { directory: this.currentDirectory } : {}),
+        ...(requestDirectory ? { directory: requestDirectory } : {}),
       });
       const data = unwrapSdkData(response, 'file.list');
       return Array.isArray(data) ? data as Record<string, unknown>[] : [];
     } catch {
-      // Return mock data for development
       return [];
     }
   }
 
   // Command Management
-  async listCommands(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string }>> {
+  async listCommands(directory?: string | null): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string }>> {
+    const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
     const response = await this.client.command.list(
-      this.currentDirectory ? { directory: this.currentDirectory } : undefined
+      requestDirectory ? { directory: requestDirectory } : undefined
     );
     const commands = unwrapSdkData(response, 'command.list');
     // Return only lightweight info for autocomplete
@@ -1485,9 +1487,10 @@ class OpencodeService {
     }));
   }
 
-  async listCommandsWithDetails(): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string; template?: string }>> {
+  async listCommandsWithDetails(directory?: string | null): Promise<Array<{ name: string; description?: string; agent?: string; model?: string; source?: string; template?: string }>> {
+    const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
     const response = await this.client.command.list(
-      this.currentDirectory ? { directory: this.currentDirectory } : undefined
+      requestDirectory ? { directory: requestDirectory } : undefined
     );
     const commands = unwrapSdkData(response, 'command.list');
     // Return full command details including template
@@ -1501,10 +1504,11 @@ class OpencodeService {
     }));
   }
 
-  async listSkillsWithDetails(): Promise<Array<{ name: string; description?: string; location: string; content?: string }>> {
+  async listSkillsWithDetails(directory?: string | null): Promise<Array<{ name: string; description?: string; location: string; content?: string }>> {
     try {
+      const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;
       const response = await this.client.app.skills(
-        this.currentDirectory ? { directory: this.currentDirectory } : undefined,
+        requestDirectory ? { directory: requestDirectory } : undefined,
       );
       const data = response.data;
       if (!Array.isArray(data)) {
