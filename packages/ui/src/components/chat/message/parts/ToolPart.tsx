@@ -1332,13 +1332,18 @@ const TaskToolSummary: React.FC<{
 
     const handleOpenSession = (event: React.MouseEvent) => {
         event.stopPropagation();
-        if (sessionId && currentDirectory) {
+        // Resolve the opened session's OWN directory at call time (never the active
+        // session's currentDirectory) so opening a subtask routes to its project.
+        const sessionDirectory = sessionId
+            ? (useSessionUIStore.getState().getDirectoryForSession(sessionId) ?? currentDirectory)
+            : undefined;
+        if (sessionId && sessionDirectory) {
             if (isMobile || runtime?.runtime.isVSCode) {
-                setCurrentSession(sessionId, currentDirectory);
+                setCurrentSession(sessionId, sessionDirectory);
                 return;
             }
 
-            openContextPanelTab(currentDirectory, {
+            openContextPanelTab(sessionDirectory, {
                 mode: 'chat',
                 dedupeKey: `session:${sessionId}`,
                 label: agentType.charAt(0).toUpperCase() + agentType.slice(1),

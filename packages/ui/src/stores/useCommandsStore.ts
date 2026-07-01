@@ -169,10 +169,7 @@ export const useCommandsStore = create<CommandsStore>()(
                 const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
                 // Ensure the list is scoped to the same directory we use for config source detection.
-                const commands = await opencodeClient.withDirectory(
-                  directory,
-                  () => opencodeClient.listCommandsWithDetails()
-                );
+                const commands = await opencodeClient.listCommandsWithDetails(directory);
 
                 const configurableCommands = commands.filter((cmd) => cmd.source !== 'skill');
                 const commandsWithScope = await Promise.all(
