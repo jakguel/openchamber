@@ -1407,9 +1407,6 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
   },
 
   getDirectoryForSession: (sessionId) => {
-    if (sessionId === get().currentSessionId && get().currentSessionDirectory) {
-      return get().currentSessionDirectory
-    }
     const resolved = resolveSessionDirectory(sessionId, (sid) => get().worktreeMetadata.get(sid))
     if (resolved) return resolved
     const attachmentDirectory = getAttachedSessionDirectory(getAttachmentForSession(sessionId))
@@ -1421,6 +1418,13 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     const globalSession = [...globalStore.activeSessions, ...globalStore.archivedSessions]
       .find((s) => s.id === sessionId)
     if (globalSession) return resolveGlobalSessionDirectory(globalSession)
+    // Last-resort ONLY: currentSessionDirectory is checked after every authoritative
+    // source so a poisoned value can never win over sync/attachment/global truth.
+    // Preserves the startup-race contract — a brand-new current session whose
+    // directory is not yet in any store still routes here (see setCurrentSession).
+    if (sessionId === get().currentSessionId && get().currentSessionDirectory) {
+      return get().currentSessionDirectory
+    }
     return null
   },
 

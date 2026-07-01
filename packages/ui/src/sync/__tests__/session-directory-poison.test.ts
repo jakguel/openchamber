@@ -1,11 +1,12 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test"
 import { create, type StoreApi } from "zustand"
-import type { OpencodeClient, Session } from "@opencode-ai/sdk/v2/client"
+import type { Event, OpencodeClient, Session } from "@opencode-ai/sdk/v2/client"
 
 import { INITIAL_STATE, type State } from "../types"
 import type { ChildStoreManager, DirectoryStore } from "../child-store"
 import { setSyncRefs, resetSyncRefs } from "../sync-refs"
 import { setActionRefs, resetActionRefs, forkFromMessage } from "../session-actions"
+import { applyDirectoryEvent } from "../event-reducer"
 import { useSessionUIStore } from "@/sync/session-ui-store"
 import { useDirectoryStore } from "@/stores/useDirectoryStore"
 import { opencodeClient } from "@/lib/opencode/client"
@@ -168,5 +169,53 @@ describe("forkFromMessage — registers the parent session's directory (bug .20)
 
     expect(useSessionUIStore.getState().currentSessionId).toBe("ses_forked")
     expect(useSessionUIStore.getState().getDirectoryForSession("ses_forked")).toBe(PROJ_B)
+  })
+})
+
+describe("getDirectoryForSession — authoritative-first ordering (bug .20 defense)", () => {
+  beforeEach(() => {
+    wireRefs(makeChildStores().mgr)
+  })
+
+  // Fails if currentSessionDirectory short-circuits BEFORE authoritative resolution:
+  // a poisoned /projA would win over the sync session's real /projB.
+  test("an authoritative sync session directory beats a poisoned currentSessionDirectory", () => {
+    const { mgr, children, createChild } = makeChildStores()
+    children.set(PROJ_B, createChild([makeSession("ses_b", PROJ_B)]))
+    wireRefs(mgr)
+
+    useSessionUIStore.setState({ currentSessionId: "ses_b", currentSessionDirectory: PROJ_A })
+
+    expect(useSessionUIStore.getState().getDirectoryForSession("ses_b")).toBe(PROJ_B)
+  })
+
+  // Regression guard: fails if the currentSessionDirectory last-resort is removed.
+  // A brand-new current session with no authoritative source must still resolve it.
+  test("currentSessionDirectory stays the last-resort for the current session with no authoritative source", () => {
+    useSessionUIStore.setState({ currentSessionId: "ses_brandnew", currentSessionDirectory: PROJ_A })
+
+    expect(useSessionUIStore.getState().getDirectoryForSession("ses_brandnew")).toBe(PROJ_A)
+  })
+
+  // Fails if the SSE reducer stops persisting session.directory: the post-SSE
+  // authoritative chain (getAllSyncSessions -> resolveDirectoryKey) is the real
+  // self-heal for a transiently-null new session.
+  test("a session.updated SSE event self-heals a stale currentSessionDirectory via the real reducer", () => {
+    const { mgr, children, createChild } = makeChildStores()
+    const store = createChild([])
+    children.set(PROJ_B, store)
+    wireRefs(mgr)
+
+    useSessionUIStore.setState({ currentSessionId: "ses_b", currentSessionDirectory: PROJ_A })
+
+    const draft: State = { ...INITIAL_STATE, session: [...store.getState().session] }
+    applyDirectoryEvent(draft, {
+      type: "session.updated",
+      properties: { info: makeSession("ses_b", PROJ_B) },
+    } as Event)
+    store.getState().patch({ session: draft.session })
+
+    expect((draft.session[0] as { directory?: string | null })?.directory).toBe(PROJ_B)
+    expect(useSessionUIStore.getState().getDirectoryForSession("ses_b")).toBe(PROJ_B)
   })
 })
