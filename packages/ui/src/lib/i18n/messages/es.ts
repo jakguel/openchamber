@@ -29,6 +29,8 @@ export const dict: Record<I18nKey, string> = {
   "layout.mainTab.files": "Archivos",
   "layout.mainTab.terminal": "Terminal",
   "layout.mainTab.context": "Contexto",
+  "sessionTabs.chat": "Chat",
+  "sessionTabs.closeFile": "Cerrar {name}",
   "mobile.nav.aria": "Navegación móvil",
   "mobile.nav.changes": "Cambios",
   "mobile.nav.settings": "Ajustes",

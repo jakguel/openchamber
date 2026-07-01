@@ -28,6 +28,8 @@ export const dict = {
   'layout.mainTab.files': 'Files',
   'layout.mainTab.terminal': 'Terminal',
   'layout.mainTab.context': 'Context',
+  'sessionTabs.chat': 'Chat',
+  'sessionTabs.closeFile': 'Close {name}',
   'mobile.nav.aria': 'Mobile navigation',
   'mobile.nav.changes': 'Changes',
   'mobile.nav.settings': 'Settings',

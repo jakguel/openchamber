@@ -30,6 +30,8 @@ export const dict: Record<I18nKey, string> = {
   'layout.mainTab.files': 'Pliki',
   'layout.mainTab.terminal': 'Terminal',
   'layout.mainTab.context': 'Kontekst',
+  'sessionTabs.chat': 'Czat',
+  'sessionTabs.closeFile': 'Zamknij {name}',
   'mobile.nav.aria': 'Nawigacja mobilna',
   'mobile.nav.changes': 'Zmiany',
   'mobile.nav.settings': 'Ustawienia',

@@ -27,6 +27,8 @@ export const dict = {
   'layout.mainTab.files': 'Fichiers',
   'layout.mainTab.terminal': 'Terminal',
   'layout.mainTab.context': 'Contexte',
+  'sessionTabs.chat': 'Chat',
+  'sessionTabs.closeFile': 'Fermer {name}',
   'layout.rightSidebar.git': 'Git',
   'layout.rightSidebar.files': 'Fichiers',
   'layout.rightSidebar.context': 'Contexte',

@@ -29,6 +29,8 @@ export const dict: Record<I18nKey, string> = {
   'layout.mainTab.files': '檔案',
   'layout.mainTab.terminal': '終端機',
   'layout.mainTab.context': '上下文',
+  'sessionTabs.chat': '聊天',
+  'sessionTabs.closeFile': '關閉 {name}',
   'mobile.nav.aria': '行動導覽',
   'mobile.nav.changes': '變更',
   'mobile.nav.settings': '設定',
