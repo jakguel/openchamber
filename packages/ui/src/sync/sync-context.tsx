@@ -22,8 +22,8 @@ import {
 import { bootstrapGlobal, bootstrapDirectory } from "./bootstrap"
 import { retry } from "./retry"
 import { updateStreamingState } from "./streaming"
-import { setActionRefs } from "./session-actions"
-import { setSyncRefs, getAllSyncSessions } from "./sync-refs"
+import { setActionRefs, resetActionRefs } from "./session-actions"
+import { setSyncRefs, resetSyncRefs, getAllSyncSessions } from "./sync-refs"
 import { stripMessageDiffSnapshots, stripSessionDiffSnapshots } from "./sanitize"
 import { syncDebug } from "./debug"
 import { getReconnectCandidateSessionIds } from "./reconnect-recovery"
@@ -2293,6 +2293,12 @@ export function SyncProvider(props: {
       childStores,
       () => opencodeClient.getDirectory() || props.directory,
     )
+    // StrictMode-safe: mount→cleanup→remount runs synchronously, and the remount
+    // re-invokes the setters above, so refs are never left null for a mounted tree.
+    return () => {
+      resetSyncRefs()
+      resetActionRefs()
+    }
   }, [props.sdk, props.directory, childStores, routingIndex])
 
   // Subscribe to child store for streaming state derivation
