@@ -5,7 +5,6 @@ import type { QuestionRequest } from "@/types/question"
 // Mock SDK client that records permission.reply / question.reply calls
 const replyCalls: Array<{ method: string; params: Record<string, unknown> }> = []
 const scopedClientDirectories: string[] = []
-const registeredSessionDirectories: Array<{ sessionID: string; directory: string }> = []
 let sessionRevertResult: { data?: unknown; error?: unknown; response?: { status?: number } } = {}
 let questionReplyError: unknown | null = null
 let sessionShareResult: { data?: unknown; error?: unknown; response?: { status?: number } } = {}
@@ -77,35 +76,44 @@ const mockSdk = {
   },
 }
 
-// Mock opencodeClient singleton
-mock.module("@/lib/opencode/client", () => ({
-  opencodeClient: {
-    getScopedSdkClient: (directory: string) => {
-      scopedClientDirectories.push(directory)
-      return mockScopedClient
+// Mock opencodeClient singleton. Includes setDirectory/getDirectory/forkSession
+// so the real session-ui-store + useDirectoryStore (no longer mocked below) run
+// against a complete client surface.
+mock.module("@/lib/opencode/client", () => {
+  let clientDirectory: string | undefined = "/test/project"
+  return {
+    opencodeClient: {
+      getScopedSdkClient: (directory: string) => {
+        scopedClientDirectories.push(directory)
+        return mockScopedClient
+      },
+      getDirectory: () => clientDirectory,
+      setDirectory: (directory: string | undefined) => {
+        clientDirectory = directory
+      },
+      forkSession: async (sessionId: string) => ({ id: `${sessionId}-fork`, time: { created: 1, updated: 1 } }),
+      replyToPermission: mock((requestId: string, reply: string, options?: { directory?: string | null }) => {
+        replyCalls.push({ method: "permission.reply", params: { requestID: requestId, reply, directory: options?.directory } })
+        return Promise.resolve(true)
+      }),
+      replyToQuestion: mock((requestId: string, answers: string[] | string[][], directory?: string | null) => {
+        replyCalls.push({ method: "question.reply", params: { requestID: requestId, answers, directory } })
+        return Promise.resolve(true)
+      }),
+      revertSession: mock((sessionId: string, messageId: string, partId?: string, directory?: string | null) => {
+        replyCalls.push({
+          method: "session.revert",
+          params: { sessionID: sessionId, messageID: messageId, partID: partId, directory },
+        })
+        if (sessionRevertResult.error) {
+          const status = sessionRevertResult.response?.status
+          throw new Error(`session.revert failed${status ? ` (${status})` : ""}: rejected`)
+        }
+        return Promise.resolve(sessionRevertResult.data)
+      }),
     },
-    getDirectory: () => "/test/project",
-    replyToPermission: mock((requestId: string, reply: string, options?: { directory?: string | null }) => {
-      replyCalls.push({ method: "permission.reply", params: { requestID: requestId, reply, directory: options?.directory } })
-      return Promise.resolve(true)
-    }),
-    replyToQuestion: mock((requestId: string, answers: string[] | string[][], directory?: string | null) => {
-      replyCalls.push({ method: "question.reply", params: { requestID: requestId, answers, directory } })
-      return Promise.resolve(true)
-    }),
-    revertSession: mock((sessionId: string, messageId: string, partId?: string, directory?: string | null) => {
-      replyCalls.push({
-        method: "session.revert",
-        params: { sessionID: sessionId, messageID: messageId, partID: partId, directory },
-      })
-      if (sessionRevertResult.error) {
-        const status = sessionRevertResult.response?.status
-        throw new Error(`session.revert failed${status ? ` (${status})` : ""}: rejected`)
-      }
-      return Promise.resolve(sessionRevertResult.data)
-    }),
-  },
-}))
+  }
+})
 
 // Mock useConfigStore
 mock.module("@/stores/useConfigStore", () => ({
@@ -113,19 +121,6 @@ mock.module("@/stores/useConfigStore", () => ({
     getState: () => ({
       isConnected: true,
       hasEverConnected: true,
-    }),
-  },
-}))
-
-// Mock useSessionUIStore
-mock.module("./session-ui-store", () => ({
-  useSessionUIStore: {
-    getState: () => ({
-      getDirectoryForSession: (sessionId: string) => {
-        if (sessionId === "session-a") return "/test/project"
-        if (sessionId === "session-b") return "/other/project"
-        return null
-      },
     }),
   },
 }))
@@ -166,18 +161,15 @@ mock.module("@/stores/useGlobalSessionsStore", () => ({
       upsertSession: (session: unknown) => {
         globalUpsertedSessions.push(session)
       },
+      activeSessions: [],
+      archivedSessions: [],
     }),
-  },
-}))
-
-mock.module("./sync-refs", () => ({
-  registerSessionDirectory: (sessionID: string, directory: string) => {
-    registeredSessionDirectories.push({ sessionID, directory })
   },
 }))
 
 import { create, type StoreApi } from "zustand"
 import { INITIAL_STATE } from "./types"
+import { useSessionUIStore } from "./session-ui-store"
 import type { DirectoryStore } from "./child-store"
 import type { Message, OpencodeClient, Part, Session } from "@opencode-ai/sdk/v2/client"
 
@@ -400,6 +392,14 @@ describe("respondToPermission passes directory", () => {
 
   test("passes directory from session mapping when permission not in store", async () => {
     const childStores = createChildStores([])
+
+    // Real getDirectoryForSession resolves this; the session-ui-store mock was removed to fix a global mock-leak.
+    useSessionUIStore.getState().setWorktreeMetadata("session-b", {
+      path: "/other/project",
+      projectDirectory: "/other/project",
+      branch: "main",
+      label: "other",
+    })
 
     const { setActionRefs, respondToPermission } = await import("./session-actions")
     setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/test/project")

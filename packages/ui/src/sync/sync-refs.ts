@@ -30,6 +30,17 @@ export function setSyncRefs(
   }
 }
 
+// Return the module refs to their pristine (unmounted) defaults. Used by
+// SyncProvider teardown and by tests to avoid leaking injected stubs into
+// subsequent code that expects the unmounted state.
+export function resetSyncRefs() {
+  _sdk = null
+  _childStores = null
+  _directory = ""
+  _registerSessionDirectory = null
+  configListeners.clear()
+}
+
 /** Pre-register a session→directory mapping in the routing index.
  *  Called from session-actions when creating sessions so SSE events
  *  arriving before session.created can be routed correctly. */

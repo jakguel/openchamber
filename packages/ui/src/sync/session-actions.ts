@@ -134,6 +134,17 @@ export function setOptimisticRefs(
   _optimisticRemove = remove
 }
 
+// Return the module refs to their pristine (unmounted) defaults. Used by
+// SyncProvider teardown and by tests to avoid leaking injected stubs into
+// subsequent code that expects the unmounted state.
+export function resetActionRefs() {
+  _sdk = null
+  _childStores = null
+  _getDirectory = () => ""
+  _optimisticAdd = null
+  _optimisticRemove = null
+}
+
 function sdk() {
   if (!_sdk) throw new Error("SDK not initialized — is SyncProvider mounted?")
   return _sdk

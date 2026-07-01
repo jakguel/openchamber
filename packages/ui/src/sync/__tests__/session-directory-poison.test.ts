@@ -4,8 +4,8 @@ import type { OpencodeClient, Session } from "@opencode-ai/sdk/v2/client"
 
 import { INITIAL_STATE, type State } from "../types"
 import type { ChildStoreManager, DirectoryStore } from "../child-store"
-import { setSyncRefs, getSyncSDK, getSyncChildStores, getSyncDirectory } from "../sync-refs"
-import { setActionRefs, forkFromMessage } from "../session-actions"
+import { setSyncRefs, resetSyncRefs } from "../sync-refs"
+import { setActionRefs, resetActionRefs, forkFromMessage } from "../session-actions"
 import { useSessionUIStore } from "@/sync/session-ui-store"
 import { useDirectoryStore } from "@/stores/useDirectoryStore"
 import { opencodeClient } from "@/lib/opencode/client"
@@ -13,7 +13,9 @@ import { opencodeClient } from "@/lib/opencode/client"
 // Real stores/reducers/resolvers run as production code. The only faked seam is
 // the external I/O boundary (stub SDK session.messages + reassigned forkSession),
 // injected via the public setSyncRefs/setActionRefs DI setters. No internal
-// module is mock.module()'d.
+// module is mock.module()'d. afterAll resets every injected seam so no stub
+// leaks into later test files (resetSyncRefs/resetActionRefs return the modules
+// to their pristine unmounted state).
 
 const PROJ_A = "/projA"
 const PROJ_B = "/projB"
@@ -62,22 +64,11 @@ const stubSdk = {
 const realForkSession = opencodeClient.forkSession.bind(opencodeClient)
 const realGetDirectory = opencodeClient.getDirectory()
 
-// Capture sync refs so a real SyncProvider-backed suite is not left pointing at
-// this file's stub after it runs.
-const priorSyncRefs = (() => {
-  try {
-    return { sdk: getSyncSDK(), childStores: getSyncChildStores(), directory: getSyncDirectory() }
-  } catch {
-    return null
-  }
-})()
-
 afterAll(() => {
   opencodeClient.forkSession = realForkSession
   opencodeClient.setDirectory(realGetDirectory)
-  if (priorSyncRefs) {
-    setSyncRefs(priorSyncRefs.sdk, priorSyncRefs.childStores, priorSyncRefs.directory)
-  }
+  resetSyncRefs()
+  resetActionRefs()
   useSessionUIStore.setState({
     currentSessionId: null,
     currentSessionDirectory: null,
@@ -118,7 +109,6 @@ describe("setCurrentSession — directory poison removal (bug .20)", () => {
     const { mgr, children, createChild } = makeChildStores()
     children.set(PROJ_B, createChild([makeSession("ses_b", PROJ_B)]))
     wireRefs(mgr)
-    children.set(PROJ_B, createChild([makeSession("ses_b", PROJ_B)]))
 
     opencodeClient.setDirectory(PROJ_A)
     useSessionUIStore.getState().setCurrentSession("ses_b", null)
@@ -134,6 +124,25 @@ describe("setCurrentSession — directory poison removal (bug .20)", () => {
 
     expect(useSessionUIStore.getState().currentSessionDirectory).toBe(PROJ_B)
     expect(useSessionUIStore.getState().getDirectoryForSession("ses_created")).toBe(PROJ_B)
+  })
+
+  // Mirrors the MultiRunLauncher/useMenuActions call sites: resolve the created
+  // session's directory via getDirectoryForSession, pass it as the switch hint.
+  // Fails if that resolve-then-hint path stops registering the directory.
+  test("creator resolve-then-hint: a registered session's directory is resolved and stored on switch", () => {
+    const { mgr, children, createChild } = makeChildStores()
+    children.set(PROJ_B, createChild([makeSession("ses_multirun", PROJ_B)]))
+    wireRefs(mgr)
+
+    opencodeClient.setDirectory(PROJ_A)
+    const store = useSessionUIStore.getState()
+    const resolved = store.getDirectoryForSession("ses_multirun")
+    expect(resolved).toBe(PROJ_B)
+
+    store.setCurrentSession("ses_multirun", resolved)
+
+    expect(useSessionUIStore.getState().currentSessionDirectory).toBe(PROJ_B)
+    expect(useSessionUIStore.getState().getDirectoryForSession("ses_multirun")).toBe(PROJ_B)
   })
 })
 
