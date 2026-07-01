@@ -257,6 +257,7 @@ const decorateMermaid = (root: HTMLElement, ctx: DecorateContext): void => {
     if (rendered.svg) {
       const svgHost = document.createElement('div');
       svgHost.setAttribute('data-markdown', 'mermaid');
+      svgHost.setAttribute('data-md-diagram', 'mermaid');
       setHtml(svgHost, rendered.svg);
       scroll.appendChild(svgHost);
       const copy = makeIconButton('copy', ctx.labels.copyDiagram, 'mermaid-copy');

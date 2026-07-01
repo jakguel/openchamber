@@ -27,6 +27,7 @@ import {
   type DecorateLabels,
   type MermaidRender,
 } from './markdown/decorate';
+import { applyDiagramBodyScale } from './markdown/diagramScale';
 
 const useCurrentMermaidTheme = () => {
   const themeSystem = useOptionalThemeSystem();
@@ -1039,6 +1040,7 @@ const useMorphdomMarkdown = ({
       // the structure here keeps the async morph to syntax colors only.
       decorateMarkdown(block, ctx);
       target.appendChild(block);
+      applyDiagramBodyScale(target);
     }
   }, [containerRef, text, ctx]);
 
@@ -1079,6 +1081,8 @@ const useMorphdomMarkdown = ({
       for (let i = existing.length - 1; i >= blocks.length; i -= 1) {
         existing[i]?.remove();
       }
+
+      applyDiagramBodyScale(target);
     });
 
     return () => {
