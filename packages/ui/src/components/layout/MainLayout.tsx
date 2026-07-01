@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 
 import { ChatView } from '@/components/views/ChatView';
+import { SessionViewWrapper } from './SessionViewWrapper';
 import { DiffView } from '@/components/views/DiffView';
 import { FilesView } from '@/components/views/FilesView';
 import { GitView } from '@/components/views/GitView';
@@ -511,7 +512,7 @@ export const MainLayout: React.FC = () => {
                                         <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true">
                                             <main className="flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true">
                                                 <div className={cn('absolute inset-0', !isChatActive && 'invisible')}>
-                                                    <ErrorBoundary><ChatView /></ErrorBoundary>
+                                                    <ErrorBoundary><SessionViewWrapper /></ErrorBoundary>
                                                 </div>
                                                 {secondaryView && (
                                                     <div className="absolute inset-0">
