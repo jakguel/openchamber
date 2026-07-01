@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { devtools, persist, createJSONStorage } from 'zustand/middleware';
 import type { SidebarSection } from '@/constants/sidebar';
 import { getSafeStorage } from './utils/safeStorage';
+import { useFilesViewTabsStore } from './useFilesViewTabsStore';
 import { SEMANTIC_TYPOGRAPHY, getTypographyVariable, type SemanticTypographyKey } from '@/lib/typography';
 import type { ShortcutCombo } from '@/lib/shortcuts';
 import type { DraftStarterRef } from '@/lib/draftStarters';
@@ -124,12 +125,16 @@ export type SessionWindowState = {
   isBottomTerminalOpen: boolean;
   isBottomTerminalExpanded: boolean;
   activeMainTab: MainTab;
+  sessionFileTabs: string[];
+  activeSessionFileTabId: 'chat' | string;
 };
 
 const DEFAULT_SESSION_WINDOW_STATE: SessionWindowState = {
   isBottomTerminalOpen: false,
   isBottomTerminalExpanded: false,
   activeMainTab: 'chat',
+  sessionFileTabs: [],
+  activeSessionFileTabId: 'chat',
 };
 
 const sessionWindowStateBySession = new Map<string, SessionWindowState>();
@@ -151,6 +156,8 @@ const isSessionWindowState = (value: unknown): value is SessionWindowState => {
     typeof candidate.isBottomTerminalOpen === 'boolean'
     && typeof candidate.isBottomTerminalExpanded === 'boolean'
     && isMainTab(candidate.activeMainTab)
+    && Array.isArray(candidate.sessionFileTabs)
+    && typeof candidate.activeSessionFileTabId === 'string'
   );
 };
 
@@ -572,6 +579,8 @@ interface UIStore {
   isSessionSwitcherOpen: boolean;
   isSessionDropdownOpen: boolean;
   activeMainTab: MainTab;
+  sessionFileTabs: string[];
+  activeSessionFileTabId: 'chat' | string;
   mainTabGuard: MainTabGuard | null;
   sidebarOpenBeforeFullscreenTab: boolean | null;
   pendingDiffFile: string | null;
@@ -698,6 +707,9 @@ interface UIStore {
   openContextPlan: (directory: string) => void;
   openContextPreview: (directory: string, url: string) => void;
   openContextBrowser: (directory: string, url?: string) => void;
+  openSessionFileTab: (directory: string, path: string) => void;
+  closeSessionFileTab: (directory: string, path: string) => void;
+  setActiveSessionFileTabId: (directory: string, tabId: 'chat' | string) => void;
   setContextPanelTabTargetPath: (directory: string, tabID: string, targetPath: string) => void;
   setActiveContextPanelTab: (directory: string, tabID: string) => void;
   reorderContextPanelTabs: (directory: string, activeTabID: string, overTabID: string) => void;
@@ -862,6 +874,8 @@ export const useUIStore = create<UIStore>()(
         isSessionSwitcherOpen: false,
         isSessionDropdownOpen: false,
         activeMainTab: 'chat',
+        sessionFileTabs: [],
+        activeSessionFileTabId: 'chat',
         mainTabGuard: null,
         sidebarOpenBeforeFullscreenTab: null,
         pendingDiffFile: null,
@@ -1092,7 +1106,7 @@ export const useUIStore = create<UIStore>()(
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'file', targetPath: normalizedFilePath });
+          get().openSessionFileTab(normalizedDirectory, normalizedFilePath);
           get().setPendingFileFocusPath(normalizedFilePath);
           get().setPendingFileNavigation(null);
         },
@@ -1106,13 +1120,76 @@ export const useUIStore = create<UIStore>()(
             return;
           }
 
-          get().openContextPanelTab(normalizedDirectory, { mode: 'file', targetPath: normalizedFilePath });
+          get().openSessionFileTab(normalizedDirectory, normalizedFilePath);
           get().setPendingFileFocusPath(null);
           get().setPendingFileNavigation({
             path: normalizedFilePath,
             line: normalizedLine,
             column: normalizedColumn,
           });
+        },
+
+        openSessionFileTab: (directory, path) => {
+          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedPath = normalizeContextTargetPath(path);
+          if (!normalizedDirectory || !normalizedPath) {
+            return;
+          }
+
+          set((state) => {
+            if (state.sessionFileTabs.includes(normalizedPath)) {
+              if (state.activeSessionFileTabId === normalizedPath) {
+                return state;
+              }
+              return { activeSessionFileTabId: normalizedPath };
+            }
+            return {
+              sessionFileTabs: [...state.sessionFileTabs, normalizedPath],
+              activeSessionFileTabId: normalizedPath,
+            };
+          });
+
+          get().setActiveMainTab('chat');
+          useFilesViewTabsStore.getState().setSelectedPath(normalizedDirectory, normalizedPath);
+        },
+
+        closeSessionFileTab: (directory, path) => {
+          const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+          const normalizedPath = normalizeContextTargetPath(path);
+          if (!normalizedDirectory || !normalizedPath) {
+            return;
+          }
+
+          set((state) => {
+            if (!state.sessionFileTabs.includes(normalizedPath)) {
+              return state;
+            }
+            const closedIndex = state.sessionFileTabs.indexOf(normalizedPath);
+            const remaining = state.sessionFileTabs.filter((tab) => tab !== normalizedPath);
+            let activeSessionFileTabId = state.activeSessionFileTabId;
+            if (activeSessionFileTabId === normalizedPath) {
+              if (remaining.length === 0) {
+                activeSessionFileTabId = 'chat';
+              } else {
+                const fallbackIndex = Math.min(Math.max(closedIndex, 0), remaining.length - 1);
+                activeSessionFileTabId = remaining[fallbackIndex] ?? 'chat';
+              }
+            }
+            return { sessionFileTabs: remaining, activeSessionFileTabId };
+          });
+
+          useFilesViewTabsStore.getState().removeOpenPath(normalizedDirectory, normalizedPath);
+        },
+
+        setActiveSessionFileTabId: (directory, tabId) => {
+          set({ activeSessionFileTabId: tabId });
+
+          if (tabId !== 'chat') {
+            const normalizedDirectory = normalizeDirectoryPath((directory || '').trim());
+            if (normalizedDirectory) {
+              useFilesViewTabsStore.getState().setSelectedPath(normalizedDirectory, tabId);
+            }
+          }
         },
 
         openContextOverview: (directory) => {
@@ -1449,6 +1526,8 @@ export const useUIStore = create<UIStore>()(
             isBottomTerminalOpen: get().isBottomTerminalOpen,
             isBottomTerminalExpanded: get().isBottomTerminalExpanded,
             activeMainTab: get().activeMainTab,
+            sessionFileTabs: get().sessionFileTabs,
+            activeSessionFileTabId: get().activeSessionFileTabId,
           };
           console.debug('[sessionWindowState] prepareForSessionSwitch', sessionId.slice(-8), JSON.stringify(state));
           sessionWindowStateBySession.set(sessionId, state);
@@ -1462,6 +1541,8 @@ export const useUIStore = create<UIStore>()(
             isBottomTerminalOpen: restored.isBottomTerminalOpen,
             isBottomTerminalExpanded: restored.isBottomTerminalExpanded,
             activeMainTab: restored.activeMainTab,
+            sessionFileTabs: restored.sessionFileTabs,
+            activeSessionFileTabId: restored.activeSessionFileTabId,
           });
         },
 
