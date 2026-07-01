@@ -544,15 +544,6 @@ class OpencodeService {
     return unwrapSdkData(response, 'session.update');
   }
 
-  async getSessionMessages(id: string, limit?: number): Promise<{ info: Message; parts: Part[] }[]> {
-    const response = await this.client.session.messages({
-      sessionID: id,
-      ...(this.currentDirectory ? { directory: this.currentDirectory } : {}),
-      ...(typeof limit === 'number' ? { limit } : {}),
-    });
-    return unwrapSdkData(response, 'session.messages');
-  }
-
   async getSessionTodos(sessionId: string, directory?: string | null): Promise<Array<{ id: string; content: string; status: string; priority: string }>> {
     try {
       const requestDirectory = this.normalizeCandidatePath(directory) ?? this.currentDirectory;

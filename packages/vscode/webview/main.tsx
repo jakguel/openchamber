@@ -12,6 +12,7 @@ import {
 } from '@openchamber/ui/lib/theme/vscode/adapter';
 import { getBootstrapMessages, readStoredLocaleForBootstrap } from '@openchamber/ui/lib/i18n';
 import type { VSCodeActiveEditorFile } from '@/sync/input-store';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'error' | 'disconnected';
 type PanelType = 'chat' | 'agentManager';
@@ -1541,7 +1542,13 @@ const fetchLastAssistantMessageText = async (sessionId: string, messageId?: stri
   if (!sessionId) return '';
 
   try {
-    const messages = await opencodeClient.getSessionMessages(sessionId, 5);
+    const directory = useSessionUIStore.getState().getDirectoryForSession(sessionId) ?? undefined;
+    const response = await opencodeClient.getSdkClient().session.messages({
+      sessionID: sessionId,
+      ...(directory ? { directory } : {}),
+      limit: 5,
+    });
+    const messages = response.data ?? [];
     if (!Array.isArray(messages)) return '';
 
     let target = messageId
