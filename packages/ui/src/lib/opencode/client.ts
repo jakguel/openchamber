@@ -810,7 +810,14 @@ class OpencodeService {
       throw new Error('Message must have at least one part (text or file)');
     }
 
-    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
+    // Send guard: a send with no resolvable directory is non-sendable. Never fall
+    // back to this.currentDirectory (the process-global) — that silent fallback is
+    // the cross-project misroute poison vector. Callers must resolve the session's
+    // directory before sending.
+    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null);
+    if (!requestDirectory) {
+      throw new Error(`Cannot send message to session ${params.id}: no directory resolved (refusing to fall back to the process-global directory)`);
+    }
 
     if (params.format) {
       console.info('[git-generation][browser] send structured message', {
@@ -917,7 +924,10 @@ class OpencodeService {
       }
     }
 
-    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
+    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null);
+    if (!requestDirectory) {
+      throw new Error(`Cannot send command to session ${params.id}: no directory resolved (refusing to fall back to the process-global directory)`);
+    }
 
     const response = await this.client.session.command({
       sessionID: params.id,
@@ -954,7 +964,10 @@ class OpencodeService {
     messageId?: string;
     directory?: string | null;
   }): Promise<{ info: Message; parts: Part[] }> {
-    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null) ?? this.currentDirectory;
+    const requestDirectory = this.normalizeCandidatePath(params.directory ?? null);
+    if (!requestDirectory) {
+      throw new Error(`Cannot run shell in session ${params.sessionId}: no directory resolved (refusing to fall back to the process-global directory)`);
+    }
     const response = await this.client.session.shell({
       sessionID: params.sessionId,
       ...(requestDirectory ? { directory: requestDirectory } : {}),

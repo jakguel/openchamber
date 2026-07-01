@@ -220,4 +220,34 @@ describe('routeMessage directory scoping', () => {
     expect(calls[0].sessionId).toBe('session-a');
     expect(calls[0].directory).toBe('/session/project');
   });
+
+  // Fails if routeMessage stops guarding a null directory: the send would be
+  // dispatched with no directory and route through the process-global.
+  test('refuses to dispatch a send when no directory resolves', async () => {
+    const calls = [];
+    const originalShellSession = opencodeClient.shellSession;
+    opencodeClient.shellSession = async (params) => {
+      calls.push(params);
+      return { info: {}, parts: [] };
+    };
+
+    let threw = false;
+    try {
+      await routeMessage({
+        sessionId: 'session-a',
+        directory: null,
+        content: 'pwd',
+        providerID: 'provider-a',
+        modelID: 'model-a',
+        inputMode: 'shell',
+      });
+    } catch {
+      threw = true;
+    } finally {
+      opencodeClient.shellSession = originalShellSession;
+    }
+
+    expect(threw).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
 });

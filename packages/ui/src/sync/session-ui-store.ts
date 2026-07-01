@@ -83,6 +83,11 @@ export function routeMessage(params: {
   additionalParts?: Array<{ text: string; synthetic?: boolean; files?: Array<{ type: "file"; mime: string; url: string; filename: string }> }>
 }): Promise<void> {
   const requestDirectory = params.directory ?? undefined
+  // Send guard (store dispatch): a send with no resolved directory is non-sendable.
+  // Refuse to dispatch rather than let it route through the process-global directory.
+  if (!requestDirectory || requestDirectory.trim().length === 0) {
+    throw new Error(`Cannot send to session ${params.sessionId || "(unknown)"}: no directory resolved for the session`)
+  }
   if (params.inputMode === "shell") {
     return opencodeClient.shellSession({
       sessionId: params.sessionId,

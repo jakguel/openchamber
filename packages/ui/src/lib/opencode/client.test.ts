@@ -7,6 +7,10 @@ type ConfigResponse = { data: Record<string, unknown> };
 const configResolvers: Array<(response: ConfigResponse) => void> = [];
 let configCalls = 0;
 
+const promptCalls: Array<Record<string, unknown>> = [];
+const commandCalls: Array<Record<string, unknown>> = [];
+const shellCalls: Array<Record<string, unknown>> = [];
+
 mock.module('@opencode-ai/sdk/v2', () => ({
   createOpencodeClient: mock(() => ({
     config: {
@@ -15,6 +19,20 @@ mock.module('@opencode-ai/sdk/v2', () => ({
         return new Promise<ConfigResponse>((resolve) => {
           configResolvers.push(resolve);
         });
+      }),
+    },
+    session: {
+      promptAsync: mock((params: Record<string, unknown>) => {
+        promptCalls.push(params);
+        return Promise.resolve({ data: true });
+      }),
+      command: mock((params: Record<string, unknown>) => {
+        commandCalls.push(params);
+        return Promise.resolve({ data: true });
+      }),
+      shell: mock((params: Record<string, unknown>) => {
+        shellCalls.push(params);
+        return Promise.resolve({ data: { info: { id: 'msg_x', time: { created: 1 } }, parts: [] } });
       }),
     },
   })),
@@ -70,5 +88,63 @@ describe('opencodeClient getConfig cache', () => {
     const cached = await opencodeClient.getConfig('/workspace/project');
     expect(cached).toEqual({ model: 'new/model' });
     expect(configCalls).toBe(2);
+  });
+});
+
+describe('send guards — a send with no resolvable directory is non-sendable', () => {
+  const base = { id: 'session-a', providerID: 'test-provider', modelID: 'test-model' };
+
+  async function expectRejection(run: () => Promise<unknown>): Promise<void> {
+    let threw = false;
+    try {
+      await run();
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBe(true);
+  }
+
+  // Fails if `?? this.currentDirectory` is reintroduced: promptAsync would be
+  // called with the poisoned process-global instead of throwing.
+  test('sendMessage throws and never calls promptAsync when no directory resolves', async () => {
+    promptCalls.length = 0;
+    opencodeClient.setDirectory('/projA');
+
+    await expectRejection(() => opencodeClient.sendMessage({ ...base, text: 'hello', directory: null }));
+    expect(promptCalls).toHaveLength(0);
+  });
+
+  test('sendCommand throws and never calls session.command when no directory resolves', async () => {
+    commandCalls.length = 0;
+    opencodeClient.setDirectory('/projA');
+
+    await expectRejection(() => opencodeClient.sendCommand({ ...base, command: 'build', directory: null }));
+    expect(commandCalls).toHaveLength(0);
+  });
+
+  test('shellSession throws and never calls session.shell when no directory resolves', async () => {
+    shellCalls.length = 0;
+    opencodeClient.setDirectory('/projA');
+
+    await expectRejection(() => opencodeClient.shellSession({
+      sessionId: 'session-a',
+      command: 'ls',
+      agent: 'build',
+      model: { providerID: 'test-provider', modelID: 'test-model' },
+      directory: null,
+    }));
+    expect(shellCalls).toHaveLength(0);
+  });
+
+  // Happy path: a resolved directory is forwarded unchanged, never the global.
+  test('sendMessage forwards a resolved directory to promptAsync unchanged', async () => {
+    promptCalls.length = 0;
+    opencodeClient.setDirectory('/projA');
+
+    const id = await opencodeClient.sendMessage({ ...base, text: 'hello', directory: '/projB' });
+
+    expect(typeof id).toBe('string');
+    expect(promptCalls).toHaveLength(1);
+    expect(promptCalls[0].directory).toBe('/projB');
   });
 });
