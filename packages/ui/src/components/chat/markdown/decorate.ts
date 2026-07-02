@@ -1,6 +1,9 @@
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { getExternalFaviconUrl, isExternalHttpUrl, isLoopbackHttpUrl } from '@/lib/url';
 import { dropdownMenuItemClass, dropdownMenuPopupClass } from '@/components/ui/dropdown-menu.styles';
+import { createPlantumlRenderQueue, type PlantumlRenderQueue } from './plantuml/renderQueue';
+import { renderPlantuml } from './plantuml/renderPlantuml';
+import { PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
 
 // ---------------------------------------------------------------------------
 // Shared decoration context
@@ -20,12 +23,36 @@ export type DecorateLabels = {
   previewTitle: string;
 };
 
+export type PlantumlRenderSlot = {
+  queue: PlantumlRenderQueue;
+  themeId: string;
+  dark: boolean;
+  labels: { loading: string; error: string };
+};
+
 export type DecorateContext = {
   labels: DecorateLabels;
   // Renders a mermaid block source to svg/ascii using current theme colors.
   renderMermaid: (source: string) => MermaidRender;
+  // Async twin of renderMermaid: the persistent PlantUML render queue plus theme context.
+  // Optional so existing callers and non-plantuml content are unaffected, and the synchronous
+  // renderMermaid contract above stays UNTOUCHED. Wired by the renderer in f9d.16.5; when
+  // absent, decoratePlantuml is a no-op.
+  renderPlantuml?: PlantumlRenderSlot;
   onPreviewLoopback?: (url: string) => void;
 };
+
+/**
+ * Build the persistent single-flight PlantUML render queue with the A2 engine renderer
+ * (renderPlantuml) injected as its sole external boundary. Call ONCE per renderer instance:
+ * the queue must survive morphdom re-decoration to dedup/supersede across passes. The
+ * ~8.6MB @plantuml/core engine is not loaded here — renderPlantuml lazy-loads it, so only an
+ * actual enqueue() from decoratePlantuml (a real plantuml block) triggers that load.
+ */
+export const createPlantumlQueue = (): PlantumlRenderQueue =>
+  createPlantumlRenderQueue({
+    render: (_key, source, dark) => renderPlantuml(source, dark),
+  });
 
 // Reference the app's icon sprite (injected into <body> by the shared Icon
 // component) so DOM-built controls use the same themed icons as the rest of
@@ -83,8 +110,8 @@ const decorateInlineCode = (root: HTMLElement): void => {
 const decorateCodeBlocks = (root: HTMLElement, labels: DecorateLabels): void => {
   const blocks = root.querySelectorAll<HTMLPreElement>('pre');
   for (const pre of Array.from(blocks)) {
-    // Skip mermaid placeholders (handled separately).
-    if (pre.querySelector('code.language-mermaid')) continue;
+    // Skip diagram placeholders (mermaid/plantuml handled separately).
+    if (pre.querySelector('code.language-mermaid, code.language-plantuml')) continue;
     const parent = pre.parentElement;
     if (!parent) continue;
     // Already wrapped (idempotent across morphdom passes).
@@ -296,6 +323,91 @@ const decorateMermaid = (root: HTMLElement, ctx: DecorateContext): void => {
 };
 
 // ---------------------------------------------------------------------------
+// PlantUML: async twin of mermaid — placeholder -> queued render -> guarded inject
+// ---------------------------------------------------------------------------
+
+const buildPlantumlPlaceholder = (label: string): HTMLElement => {
+  const wrap = document.createElement('div');
+  wrap.setAttribute('data-markdown', 'plantuml-loading');
+  wrap.className = 'flex items-center gap-2 px-3 py-6 text-sm text-muted-foreground';
+  const spinner = document.createElement('span');
+  spinner.className = 'inline-block size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent';
+  spinner.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.textContent = label;
+  wrap.appendChild(spinner);
+  wrap.appendChild(text);
+  return wrap;
+};
+
+const buildPlantumlError = (title: string, detail?: string): HTMLElement => {
+  const wrap = document.createElement('div');
+  wrap.setAttribute('data-markdown', 'plantuml-error');
+  wrap.className = 'px-3 py-4 text-sm text-destructive';
+  const heading = document.createElement('div');
+  heading.className = 'font-medium';
+  heading.textContent = title;
+  wrap.appendChild(heading);
+  if (detail && detail.trim().length > 0) {
+    const sub = document.createElement('div');
+    sub.className = 'mt-1 text-xs text-muted-foreground';
+    sub.textContent = detail;
+    wrap.appendChild(sub);
+  }
+  return wrap;
+};
+
+const decoratePlantuml = (root: HTMLElement, ctx: DecorateContext): void => {
+  const slot = ctx.renderPlantuml;
+  // Block-presence gate (AC6): with no wiring OR no plantuml block present this is a no-op,
+  // so the ~8.6MB engine is never touched. renderPlantuml (and its lazy engine load) only
+  // runs via the enqueue below, i.e. only when a real plantuml block is being decorated.
+  if (!slot) return;
+  const codes = root.querySelectorAll<HTMLElement>('pre > code.language-plantuml');
+  for (const code of Array.from(codes)) {
+    const pre = code.parentElement as HTMLPreElement | null;
+    if (!pre) continue;
+    const source = (code.textContent ?? '').replace(/\s+$/, '');
+
+    const block = document.createElement('div');
+    block.setAttribute('data-markdown', 'plantuml-block');
+    block.setAttribute(PLANTUML_SOURCE_ATTR, source);
+    block.className = 'group relative';
+
+    const scroll = document.createElement('div');
+    scroll.setAttribute('data-markdown', 'plantuml-scroll');
+
+    const svgHost = document.createElement('div');
+    svgHost.setAttribute('data-markdown', 'plantuml');
+    svgHost.setAttribute('data-md-diagram', 'plantuml');
+    svgHost.appendChild(buildPlantumlPlaceholder(slot.labels.loading));
+
+    scroll.appendChild(svgHost);
+    block.appendChild(scroll);
+
+    const host = pre.parentElement;
+    if (!host) continue;
+    host.replaceChild(block, pre);
+
+    const key = `${slot.themeId}:${slot.dark ? 'dark' : 'light'}:${source}`;
+    const handle = slot.queue.enqueue(key, source, slot.dark, block);
+    void handle.promise.then((result) => {
+      // Render-generation guard (AC3): morphdom reuses/replaces nodes during streaming, so a
+      // late resolve MUST only paint when this exact node is still connected AND still carries
+      // the same key+generation — otherwise it would paint a detached or repurposed node.
+      if (!slot.queue.isEligible(block, handle.key, handle.generation)) return;
+      if (result.svg) {
+        setHtml(svgHost, result.svg);
+      } else {
+        // AC4: error affordance in-place — the placeholder is replaced, never left spinning.
+        setHtml(svgHost, '');
+        svgHost.appendChild(buildPlantumlError(slot.labels.error, result.error));
+      }
+    });
+  }
+};
+
+// ---------------------------------------------------------------------------
 // External links: favicon + loopback preview button
 // ---------------------------------------------------------------------------
 
@@ -343,6 +455,7 @@ const decorateLinks = (root: HTMLElement, ctx: DecorateContext): void => {
 export const decorateMarkdown = (root: HTMLElement, ctx: DecorateContext): void => {
   decorateInlineCode(root);
   decorateMermaid(root, ctx);
+  decoratePlantuml(root, ctx);
   decorateCodeBlocks(root, ctx.labels);
   decorateTables(root, ctx.labels);
   decorateLinks(root, ctx);
