@@ -88,6 +88,9 @@ export const SessionViewWrapper: React.FC = () => {
           onClose={handleClose}
           layoutMode="scrollable"
           variant="default"
+          pinFirstTab={true}
+          showScrollButtons={true}
+          equalTabWidth={true}
         />
       </div>
       <div className="relative min-h-0 flex-1 overflow-hidden">
