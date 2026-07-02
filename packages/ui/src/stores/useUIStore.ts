@@ -139,6 +139,12 @@ const DEFAULT_SESSION_WINDOW_STATE: SessionWindowState = {
 
 const sessionWindowStateBySession = new Map<string, SessionWindowState>();
 
+// Tracks the session whose SessionWindowState is currently live in the store.
+// Set by restoreForSessionSwitch when a session becomes active. Used to fold the
+// live window state into the persisted snapshot (see serializeSessionWindowStates,
+// FIX #2) so a reload never restores a stale (pre-close) file-tab list.
+let currentSnapshotSessionId: string | null = null;
+
 const isMainTab = (value: unknown): value is MainTab =>
   value === 'chat'
   || value === 'plan'
@@ -171,6 +177,29 @@ const rehydrateSessionWindowStates = (raw: unknown): void => {
       sessionWindowStateBySession.set(id, value);
     }
   }
+};
+
+// FIX #2: fold the live window state into the active session's serialized entry.
+// sessionWindowStateBySession is otherwise only refreshed on session switch, so
+// closing/opening a file tab WITHOUT switching sessions persists a stale entry —
+// and restoreForSessionSwitch then restores an already-closed (phantom) active
+// tab after reload. partialize runs on every persist write (including the one
+// closeSessionFileTab triggers), so injecting the live state here keeps the
+// persisted snapshot current for the visible session without mutating the Map.
+const serializeSessionWindowStates = (
+  live: SessionWindowState,
+): Array<[string, SessionWindowState]> => {
+  const entries = Array.from(sessionWindowStateBySession.entries());
+  if (!currentSnapshotSessionId) {
+    return entries;
+  }
+  const index = entries.findIndex(([id]) => id === currentSnapshotSessionId);
+  if (index >= 0) {
+    entries[index] = [currentSnapshotSessionId, live];
+  } else {
+    entries.push([currentSnapshotSessionId, live]);
+  }
+  return entries;
 };
 
 const normalizeDirectoryPath = (value: string): string => {
@@ -1536,13 +1565,28 @@ export const useUIStore = create<UIStore>()(
         restoreForSessionSwitch: (sessionId: string | null) => {
           const saved = sessionId ? sessionWindowStateBySession.get(sessionId) : null;
           const restored = saved ?? DEFAULT_SESSION_WINDOW_STATE;
+          // FIX #1: reconcile a dangling active pointer against the restored list.
+          // A persisted/legacy snapshot may point activeSessionFileTabId at a file
+          // that is no longer in sessionFileTabs (e.g. closed before reload).
+          // Restoring it verbatim shows a phantom title with no matching tab, so
+          // fall back to the nearest surviving tab, or 'chat' when none remain.
+          let activeSessionFileTabId = restored.activeSessionFileTabId;
+          if (
+            activeSessionFileTabId !== 'chat'
+            && !restored.sessionFileTabs.includes(activeSessionFileTabId)
+          ) {
+            activeSessionFileTabId = restored.sessionFileTabs[restored.sessionFileTabs.length - 1] ?? 'chat';
+          }
           console.debug('[sessionWindowState] restoreForSessionSwitch', sessionId?.slice(-8), saved ? 'from-map' : 'DEFAULT', JSON.stringify(restored));
+          // Track the now-live session so persist writes fold its live window state
+          // back into the snapshot (FIX #2), keeping the persisted list fresh.
+          currentSnapshotSessionId = sessionId;
           set({
             isBottomTerminalOpen: restored.isBottomTerminalOpen,
             isBottomTerminalExpanded: restored.isBottomTerminalExpanded,
             activeMainTab: restored.activeMainTab,
             sessionFileTabs: restored.sessionFileTabs,
-            activeSessionFileTabId: restored.activeSessionFileTabId,
+            activeSessionFileTabId,
           });
         },
 
@@ -2342,7 +2386,13 @@ export const useUIStore = create<UIStore>()(
           todoPanelHeight: state.todoPanelHeight,
           isSessionSwitcherOpen: state.isSessionSwitcherOpen,
           activeMainTab: state.activeMainTab,
-          sessionWindowStates: Array.from(sessionWindowStateBySession.entries()),
+          sessionWindowStates: serializeSessionWindowStates({
+            isBottomTerminalOpen: state.isBottomTerminalOpen,
+            isBottomTerminalExpanded: state.isBottomTerminalExpanded,
+            activeMainTab: state.activeMainTab,
+            sessionFileTabs: state.sessionFileTabs,
+            activeSessionFileTabId: state.activeSessionFileTabId,
+          }),
           sidebarSection: state.sidebarSection,
           settingsPage: state.settingsPage,
           settingsHasOpenedOnce: state.settingsHasOpenedOnce,

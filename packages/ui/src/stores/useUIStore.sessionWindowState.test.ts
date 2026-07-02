@@ -263,4 +263,98 @@ describe('SessionWindowState', () => {
       expect(useUIStore.getState().activeMainTab).toBe('git');
     });
   });
+
+  describe('AC5 — file-tab reconciliation survives reload', () => {
+    const dir = '/repo';
+    const fileX = '/repo/src/x.ts';
+    const fileY = '/repo/src/y.ts';
+
+    beforeEach(() => {
+      // Reset the live file-tab state and clear the active-session pointer so each
+      // test starts from a clean baseline (module-level state persists across tests).
+      useUIStore.getState().restoreForSessionSwitch(null);
+    });
+
+    // FIX #2: closing the active tab WITHOUT switching sessions then reloading must
+    // restore the surviving list — not the pre-close snapshot. Removing the
+    // partialize freshness fold makes this test fail (the closed tab Y reappears).
+    test('reload after closing the active tab (no session switch) restores the surviving list, not the closed tab', () => {
+      const sessionId = 'ses_ac5_reload_desync';
+
+      // Become the active session (sets the snapshot pointer) and open two tabs.
+      useUIStore.getState().restoreForSessionSwitch(sessionId);
+      useUIStore.getState().openSessionFileTab(dir, fileX);
+      useUIStore.getState().openSessionFileTab(dir, fileY);
+      expect(useUIStore.getState().sessionFileTabs).toEqual([fileX, fileY]);
+      expect(useUIStore.getState().activeSessionFileTabId).toBe(fileY);
+
+      // Snapshot the session once (simulates a prior switch-away/back) so the Map
+      // holds an entry that would otherwise go stale on close.
+      useUIStore.getState().prepareForSessionSwitch(sessionId);
+
+      // Close the active tab Y WITHOUT switching sessions.
+      useUIStore.getState().closeSessionFileTab(dir, fileY);
+      expect(useUIStore.getState().sessionFileTabs).toEqual([fileX]);
+      expect(useUIStore.getState().activeSessionFileTabId).toBe(fileX);
+
+      // Simulate a reload: serialize via partialize, then rehydrate the Map from
+      // the serialized payload, then restore the session as the app does on boot.
+      const { partialize, onRehydrateStorage } = useUIStore.persist.getOptions();
+      if (!partialize) throw new Error('partialize not configured on useUIStore');
+      if (!onRehydrateStorage) throw new Error('onRehydrateStorage not configured on useUIStore');
+
+      const persisted = partialize(useUIStore.getState());
+      const serializedStates = (persisted as { sessionWindowStates?: unknown }).sessionWindowStates;
+
+      // Fresh boot: live file-tab state is empty and the pointer is cleared.
+      useUIStore.getState().restoreForSessionSwitch(null);
+
+      const postRehydrate = onRehydrateStorage(useUIStore.getState());
+      if (postRehydrate) {
+        postRehydrate(
+          { sessionWindowStates: serializedStates } as unknown as Parameters<typeof postRehydrate>[0],
+          undefined,
+        );
+      }
+
+      useUIStore.getState().restoreForSessionSwitch(sessionId);
+
+      // The closed tab Y must NOT reappear as the active title or in the list.
+      expect(useUIStore.getState().sessionFileTabs).not.toContain(fileY);
+      expect(useUIStore.getState().activeSessionFileTabId).not.toBe(fileY);
+      expect(useUIStore.getState().sessionFileTabs).toEqual([fileX]);
+      expect(useUIStore.getState().activeSessionFileTabId).toBe(fileX);
+    });
+
+    // FIX #1: a corrupt/legacy snapshot whose active pointer is missing from the
+    // saved list must be reconciled to a valid surviving tab (or 'chat'), never
+    // restored verbatim. Removing the restore clamp makes this test fail.
+    test('reconciles a dangling active-tab pointer that is missing from the restored list', () => {
+      const sessionId = 'ses_ac5_dangling_pointer';
+
+      // Craft a snapshot where the active pointer references a tab that is NOT in
+      // the list (e.g. persisted before the freshness fix).
+      useUIStore.setState({ sessionFileTabs: [fileX], activeSessionFileTabId: fileY });
+      useUIStore.getState().prepareForSessionSwitch(sessionId);
+
+      // Clobber the live state (simulates switching away / reload).
+      useUIStore.getState().restoreForSessionSwitch(null);
+      expect(useUIStore.getState().activeSessionFileTabId).toBe('chat');
+
+      // Restore the corrupt session — the dangling pointer must be reconciled.
+      useUIStore.getState().restoreForSessionSwitch(sessionId);
+
+      const state = useUIStore.getState();
+      // The list is preserved as saved, but the active pointer must be a valid,
+      // surviving tab (or 'chat') — never the missing file Y.
+      expect(state.sessionFileTabs).toEqual([fileX]);
+      expect(state.activeSessionFileTabId).not.toBe(fileY);
+      expect(
+        state.activeSessionFileTabId === 'chat'
+        || state.sessionFileTabs.includes(state.activeSessionFileTabId),
+      ).toBe(true);
+      // Deterministic fallback: nearest surviving tab.
+      expect(state.activeSessionFileTabId).toBe(fileX);
+    });
+  });
 });
