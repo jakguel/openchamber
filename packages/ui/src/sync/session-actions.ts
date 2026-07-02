@@ -42,10 +42,6 @@ type OptimisticRemoveInput = { sessionID: string; directory?: string | null; mes
 
 let _optimisticAdd: ((input: OptimisticAddInput) => void) | null = null
 let _optimisticRemove: ((input: OptimisticRemoveInput) => void) | null = null
-// Identifies the current owner of the optimistic refs (the mounted
-// SyncOptimisticBridge). resetOptimisticRefs only clears the refs for the
-// matching owner, so a stale bridge unmount cannot null a newer bridge's refs.
-let _optimisticOwner: symbol | string | null = null
 
 /**
  * Tracks requestIds the user has already answered, keyed by directory, so a
@@ -133,22 +129,16 @@ export function setActionRefs(
 export function setOptimisticRefs(
   add: (input: OptimisticAddInput) => void,
   remove: (input: OptimisticRemoveInput) => void,
-  token?: symbol | string,
 ) {
   _optimisticAdd = add
   _optimisticRemove = remove
-  _optimisticOwner = token ?? null
 }
 
-// Clear the optimistic refs. Owned exclusively by SyncOptimisticBridge, which
-// passes its per-mount token so a stale bridge unmount cannot null a newer
-// bridge's refs (guarded reset). Idempotent. A missing token forces the reset
-// unconditionally (test teardown / hard reset).
-export function resetOptimisticRefs(token?: symbol | string) {
-  if (token !== undefined && token !== _optimisticOwner) return
+// Clear the optimistic refs. Owned exclusively by SyncOptimisticBridge (set on
+// mount). Idempotent — safe to call when already null.
+export function resetOptimisticRefs() {
   _optimisticAdd = null
   _optimisticRemove = null
-  _optimisticOwner = null
 }
 
 // Return the action refs to their pristine (unmounted) defaults. Used by

@@ -86,12 +86,11 @@ afterAll(() => {
 
 describe("optimistic-ref ownership survives a directory switch", () => {
   test("optimisticSend routes to optimisticAdd after resetActionRefs + setActionRefs without re-setting optimistic refs", async () => {
-    const owner = Symbol("bridge-owner")
     const mgr = makeChildStores()
     mgr.ensureChild(DIR)
     let added: OptimisticAddCall | null = null
 
-    setOptimisticRefs((input) => { added = input }, () => {}, owner)
+    setOptimisticRefs((input) => { added = input }, () => {})
     setActionRefs(stubSdk, mgr, () => DIR)
 
     resetActionRefs()
@@ -107,11 +106,10 @@ describe("optimistic-ref ownership survives a directory switch", () => {
   })
 
   test("resetActionRefs alone leaves the optimistic refs set — send fails past the guard, not on it", async () => {
-    const owner = Symbol("bridge-owner")
     const mgr = makeChildStores()
     mgr.ensureChild(DIR)
 
-    setOptimisticRefs(() => {}, () => {}, owner)
+    setOptimisticRefs(() => {}, () => {})
     setActionRefs(stubSdk, mgr, () => DIR)
     resetActionRefs()
 
@@ -128,22 +126,17 @@ describe("optimistic-ref ownership survives a directory switch", () => {
   })
 })
 
-describe("resetOptimisticRefs owner-token guard", () => {
-  test("wrong-token reset is a no-op; correct-token reset nulls the refs; second reset is safe", async () => {
-    const owner = Symbol("bridge-owner")
+describe("resetOptimisticRefs clears the optimistic refs", () => {
+  test("after resetOptimisticRefs() a subsequent optimisticSend throws the guard; second reset is a no-op", async () => {
     const mgr = makeChildStores()
     mgr.ensureChild(DIR)
     let addCount = 0
 
     setActionRefs(stubSdk, mgr, () => DIR)
-    setOptimisticRefs(() => { addCount += 1 }, () => {}, owner)
+    setOptimisticRefs(() => { addCount += 1 }, () => {})
 
-    resetOptimisticRefs(Symbol("not-the-owner"))
-    await baseSend({ sessionId: "ses_wrong_token" })
-    expect(addCount).toBe(1)
-
-    resetOptimisticRefs(owner)
-    resetOptimisticRefs(owner)
+    resetOptimisticRefs()
+    resetOptimisticRefs()
 
     let thrown: unknown
     try {
@@ -154,6 +147,6 @@ describe("resetOptimisticRefs owner-token guard", () => {
 
     expect(thrown instanceof Error).toBe(true)
     expect((thrown as Error).message).toContain("Optimistic refs not set")
-    expect(addCount).toBe(1)
+    expect(addCount).toBe(0)
   })
 })
