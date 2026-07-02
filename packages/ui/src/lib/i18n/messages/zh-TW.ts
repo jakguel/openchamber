@@ -2560,6 +2560,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.downloadSvgTitle': '下載 SVG',
   'markdownRenderer.mermaid.actions.expandTitle': '全螢幕',
   'markdownRenderer.mermaid.toast.downloadFailed': '下載圖表失敗',
+  'markdownRenderer.plantuml.status.loading': '正在算繪圖表...',
+  'markdownRenderer.plantuml.status.error': '無法算繪 PlantUML 圖表。',
   'contextPanel.preview.title': '預覽',
   'contextPanel.preview.description': '使用專案操作或終端機 Preview 按鈕開啟預覽。',
   'contextPanel.preview.startPreview': '啟動預覽',

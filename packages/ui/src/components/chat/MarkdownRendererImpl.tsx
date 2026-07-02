@@ -22,11 +22,14 @@ import { renderMarkdownBlocks, renderMarkdownSync } from './markdown/markdownCor
 import { ensureMarkdownShikiTheme, getMarkdownSyntaxVars } from './markdown/markdownTheme';
 import {
   attachMarkdownInteractions,
+  createPlantumlQueue,
   decorateMarkdown,
   type DecorateContext,
   type DecorateLabels,
   type MermaidRender,
+  type PlantumlRenderSlot,
 } from './markdown/decorate';
+import { extractPlantumlBlocks, PLANTUML_BLOCK_SELECTOR } from './markdown/plantuml/extractPlantumlBlocks';
 import { applyDiagramBodyScale } from './markdown/diagramScale';
 
 const useCurrentMermaidTheme = () => {
@@ -870,6 +873,113 @@ const useMermaidInlineInteractions = ({
   }, [allowWheelZoom, containerRef, mermaidBlocks, onShowPopup]);
 };
 
+// Async twin of useMermaidInlineInteractions. PlantUML sources live on the already-decorated
+// DOM (decoratePlantuml stamps data-plantuml-source), so — unlike mermaid, which is parsed
+// from the markdown string — the positional lookup reads the DOM via extractPlantumlBlocks
+// using its OWN [data-markdown="plantuml-block"] selector. This keeps indices correct when
+// mermaid and plantuml blocks interleave. The fullscreen popup itself is Story D; here we only
+// emit the diagram payload with kind:'plantuml'. The synchronous mermaid path is untouched.
+const usePlantumlInlineInteractions = ({
+  containerRef,
+  onShowPopup,
+  allowWheelZoom,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onShowPopup?: (content: ToolPopupContent) => void;
+  allowWheelZoom?: boolean;
+}) => {
+  React.useEffect(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const handlePlantumlClick = (event: MouseEvent) => {
+      if (!onShowPopup) {
+        return;
+      }
+
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      // The magnify toolbar button (Story D) explicitly opens the popup via
+      // data-md-action="plantuml-expand"; handle it BEFORE the button guard since the control
+      // is itself a <button>. Until Story D adds it, a plain block click still opens the popup,
+      // mirroring mermaid.
+      const expandButton = target.closest('[data-md-action="plantuml-expand"]');
+
+      // Any other button/link (copy, download) is handled by the DOM dispatcher, not here.
+      if (!expandButton && target.closest('button, a, [role="button"]')) {
+        return;
+      }
+
+      const block = (expandButton ?? target).closest(PLANTUML_BLOCK_SELECTOR);
+      if (!block) {
+        return;
+      }
+
+      const renderedBlocks = Array.from(container.querySelectorAll(PLANTUML_BLOCK_SELECTOR));
+      const blockIndex = renderedBlocks.indexOf(block);
+      if (blockIndex < 0) {
+        return;
+      }
+
+      // Positional source lookup off plantuml's OWN selector so interleaved mermaid+plantuml
+      // blocks never misalign.
+      const source = extractPlantumlBlocks(container)[blockIndex]?.source;
+      if (!source || source.trim().length === 0) {
+        return;
+      }
+
+      const filename = `Diagram ${blockIndex + 1}`;
+      onShowPopup({
+        open: true,
+        title: filename,
+        content: '',
+        metadata: {
+          tool: 'plantuml-preview',
+          filename,
+        },
+        diagram: {
+          kind: 'plantuml',
+          url: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
+          source,
+          filename,
+        },
+      });
+    };
+
+    const handleInlineWheel = (event: WheelEvent) => {
+      if (allowWheelZoom) {
+        return;
+      }
+
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const block = target.closest(PLANTUML_BLOCK_SELECTOR);
+      if (!block) {
+        return;
+      }
+
+      // Keep regular page scroll while preventing Streamdown inline wheel-zoom handlers.
+      event.stopPropagation();
+    };
+
+    container.addEventListener('click', handlePlantumlClick);
+    container.addEventListener('wheel', handleInlineWheel, { capture: true, passive: true });
+
+    return () => {
+      container.removeEventListener('click', handlePlantumlClick);
+      container.removeEventListener('wheel', handleInlineWheel, true);
+    };
+  }, [allowWheelZoom, containerRef, onShowPopup]);
+};
+
 // ---------------------------------------------------------------------------
 // Rendering core: marked -> math -> shiki -> sanitize -> decorate -> morphdom
 // ---------------------------------------------------------------------------
@@ -988,6 +1098,22 @@ const useDecorateContext = (
     previewTitle: t('terminalView.preview.openTitle'),
   }), [t]);
 
+  // B deferred i18n of the async PlantUML placeholder/error text to the caller (here), so
+  // the loading + error labels are sourced from the locale system like every other diagram
+  // string above — never hardcoded literals.
+  const plantumlLabels = React.useMemo(() => ({
+    loading: t('markdownRenderer.plantuml.status.loading'),
+    error: t('markdownRenderer.plantuml.status.error'),
+  }), [t]);
+
+  // The PlantUML queue is a single-flight, dedup/backpressure boundary that MUST persist
+  // across morphdom re-decorations, so it is created ONCE per renderer instance (ref, not
+  // memo — a memo keyed on theme would rebuild it and lose in-flight/cache state).
+  const plantumlQueueRef = React.useRef<ReturnType<typeof createPlantumlQueue> | null>(null);
+  if (plantumlQueueRef.current === null) {
+    plantumlQueueRef.current = createPlantumlQueue();
+  }
+
   return React.useMemo<DecorateContext>(() => {
     const colors = mermaidColorsFromTheme(currentTheme);
     const mode = useUIStore.getState().mermaidRenderingMode;
@@ -1001,8 +1127,14 @@ const useDecorateContext = (
           return {};
         }
       });
-    return { labels, renderMermaid, onPreviewLoopback };
-  }, [currentTheme, labels, onPreviewLoopback]);
+    const renderPlantuml: PlantumlRenderSlot = {
+      queue: plantumlQueueRef.current!,
+      themeId,
+      dark: currentTheme.metadata?.variant === 'dark',
+      labels: plantumlLabels,
+    };
+    return { labels, renderMermaid, renderPlantuml, onPreviewLoopback };
+  }, [currentTheme, labels, plantumlLabels, onPreviewLoopback]);
 };
 
 // Runs the async render pipeline into the container and keeps a stable
@@ -1163,6 +1295,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
 
   const mermaidBlocks = React.useMemo(() => extractMermaidBlocks(content), [content]);
   useMermaidInlineInteractions({ containerRef, mermaidBlocks, onShowPopup });
+  usePlantumlInlineInteractions({ containerRef, onShowPopup });
   useFileReferenceInteractions({
     containerRef,
     effectiveDirectory,
@@ -1244,6 +1377,11 @@ const SimpleMarkdownRendererImpl: React.FC<{
   useMermaidInlineInteractions({
     containerRef,
     mermaidBlocks,
+    onShowPopup,
+    allowWheelZoom: allowMermaidWheelZoom,
+  });
+  usePlantumlInlineInteractions({
+    containerRef,
     onShowPopup,
     allowWheelZoom: allowMermaidWheelZoom,
   });

@@ -77,6 +77,10 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@opencode-ai/sdk/v2'],
+    // Keep the ~8.6MB @plantuml/core engine out of dev prebundling so it stays a real
+    // dynamic chunk (lazy-loaded only when a plantuml block renders) and never gets pulled
+    // into the baseline main chunk.
+    exclude: ['@plantuml/core'],
   },
   server: {
     port: 5173,
@@ -109,6 +113,11 @@ export default defineConfig({
       external: ['node:child_process', 'node:fs', 'node:path', 'node:url'],
       output: {
         manualChunks(id) {
+          // Force the ~8.6MB @plantuml/core engine into its OWN chunk. It is reached ONLY via
+          // dynamic import() (loadEngine.ts), so an isolated manualChunk stays a lazy async
+          // chunk. Without this the generic rule below collapses its .bun-nested path into the
+          // statically-loaded vendor-.bun chunk, pulling the engine into the baseline bundle.
+          if (id.includes('@plantuml/core')) return 'vendor-plantuml-core';
           if (!id.includes('node_modules')) return undefined;
 
           const match = id.split('node_modules/')[1];

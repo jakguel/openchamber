@@ -2084,6 +2084,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'Pobierz SVG',
   'markdownRenderer.mermaid.actions.expandTitle': 'Pełny ekran',
   'markdownRenderer.mermaid.toast.downloadFailed': 'Nie udało się pobrać diagramu',
+  'markdownRenderer.plantuml.status.loading': 'Renderowanie diagramu...',
+  'markdownRenderer.plantuml.status.error': 'Nie udało się wyrenderować diagramu PlantUML.',
   'markdownRenderer.table.actions.copyTitle': 'Kopiuj tabelę',
   'markdownRenderer.table.actions.downloadTitle': 'Pobierz tabelę',
   'markdownRenderer.table.toast.downloadedAsFormat': 'Tabela została pobrana jako {format}',

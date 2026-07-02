@@ -2597,6 +2597,8 @@ export const dict = {
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'Download SVG',
   'markdownRenderer.mermaid.actions.expandTitle': 'Fullscreen',
   'markdownRenderer.mermaid.toast.downloadFailed': 'Failed to download diagram',
+  'markdownRenderer.plantuml.status.loading': 'Rendering diagram...',
+  'markdownRenderer.plantuml.status.error': 'Unable to render PlantUML diagram.',
   'common.date.today': 'Today',
   'common.date.yesterday': 'Yesterday',
   'common.date.yesterdayWithTime': 'Yesterday {time}',

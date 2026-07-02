@@ -2597,6 +2597,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'SVG 다운로드',
   'markdownRenderer.mermaid.actions.expandTitle': '전체 화면',
   'markdownRenderer.mermaid.toast.downloadFailed': '다이어그램 다운로드 실패',
+  'markdownRenderer.plantuml.status.loading': '다이어그램 렌더링 중...',
+  'markdownRenderer.plantuml.status.error': 'PlantUML 다이어그램을 렌더링할 수 없습니다.',
   'common.date.today': 'Today',
   'common.date.yesterday': 'Yesterday',
   'common.date.yesterdayWithTime': 'Yesterday {time}',

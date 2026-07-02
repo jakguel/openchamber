@@ -2563,6 +2563,8 @@ export const dict: Record<I18nKey, string> = {
   "markdownRenderer.mermaid.actions.downloadSvgTitle": "Завантажити SVG",
   "markdownRenderer.mermaid.actions.expandTitle": "На весь екран",
   "markdownRenderer.mermaid.toast.downloadFailed": "Не вдалося завантажити діаграму",
+  "markdownRenderer.plantuml.status.loading": "Відтворення діаграми...",
+  "markdownRenderer.plantuml.status.error": "Не вдалося відтворити діаграму PlantUML.",
   "contextPanel.preview.title": "Попередній перегляд",
   "contextPanel.preview.description": "Використайте дії проєкту або кнопку Preview у терміналі, щоб відкрити перегляд.",
   "contextPanel.preview.startPreview": "Почати перегляд",

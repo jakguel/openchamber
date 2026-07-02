@@ -2563,6 +2563,8 @@ export const dict: Record<I18nKey, string> = {
   "markdownRenderer.mermaid.actions.downloadSvgTitle": "Baixar SVG",
   "markdownRenderer.mermaid.actions.expandTitle": "Tela cheia",
   "markdownRenderer.mermaid.toast.downloadFailed": "Não foi possível baixar o diagrama",
+  "markdownRenderer.plantuml.status.loading": "Renderizando diagrama...",
+  "markdownRenderer.plantuml.status.error": "Não foi possível renderizar o diagrama PlantUML.",
   "contextPanel.preview.title": "Visualização",
   "contextPanel.preview.description": "Use Ações do projeto ou o botão Preview do terminal para abrir uma visualização.",
   "contextPanel.preview.startPreview": "Iniciar visualização",
