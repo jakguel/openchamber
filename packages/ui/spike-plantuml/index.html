@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PlantUML C0 Spike</title>
+    <style>
+        body { font-family: monospace; margin: 16px; }
+        .host { border: 1px solid #ccc; margin: 8px 0; min-height: 24px; padding: 8px; }
+        .host svg { max-width: 100%; height: auto; }
+    </style>
+</head>
+<body>
+    <div id="status" data-status="idle">idle</div>
+
+    <h3>render() light</h3><div id="light-host" class="host"></div>
+    <h3>render() dark</h3><div id="dark-host" class="host"></div>
+    <h3>renderToString() light</h3><div id="rts-light" class="host"></div>
+    <h3>renderToString(..., {dark:true})</h3><div id="rts-dark" class="host"></div>
+    <h3>C4 sample (stdlib-injected)</h3><div id="c4-host" class="host"></div>
+    <h3>render() invalid source</h3><div id="err-host" class="host"></div>
+    <h3>renderToString() invalid source</h3><div id="rts-err" class="host"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
