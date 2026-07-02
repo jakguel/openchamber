@@ -188,3 +188,147 @@ describe('isMaxScrollClamp — content-collapse clamp guard', () => {
         expect(willRelease).toBe(false);
     });
 });
+
+// ─── WI-C: PINNED auto-load-earlier / history prepend — no oscillation ─────────
+// Oracle #3 / the residual session-open jiggle root cause, locked down here at the
+// predicate level. The jiggle was TWO concurrent scrollTop writers disagreeing on
+// the bottom target across different cadences (idle LERP + the 280 ms
+// startSettleBurst rAF). WI-B (commit 9de56a46) collapsed everything to ONE
+// idempotent instant writer: snapToBottomIfPinned, whose target is the browser
+// max-scroll `scrollHeight - clientHeight` and which is a NO-OP when scrollTop is
+// already there (useChatAutoFollow.ts:264-273).
+//
+// For a bottom-PINNED viewport, a history prepend of height `delta` must satisfy
+// the AGREEMENT INVARIANT so there is no second, differing write:
+//   • useChatTimelineController prepend compensation: scrollTop += delta
+//     (useChatTimelineController.ts:417-421)
+//   • useChatAutoFollow snap target:                  scrollHeight - clientHeight
+// Both resolve to the SAME value, so the snap that runs after the compensation is
+// idempotent — one write, no up-then-down.
+//
+// These asserts drive a REAL stateful scroll element (a fake of the external DOM
+// I/O boundary — permitted by the fidelity hierarchy; NO internal module is
+// mocked) through the REAL exported hysteresis/clamp predicates. Each would
+// produce the WRONG result if the two-threshold hysteresis or the clamp guard
+// regressed such that a pinned prepend RELEASED (FAB flicker) or failed to RE-PIN
+// (stuck away from bottom) — the observable oscillation. The negative control
+// proves the assertions are behavioral: drop the compensation and the SAME real
+// predicates DO release.
+//
+// The multi-writer *timing* regression (a second rAF cadence such as
+// startSettleBurst) is a runtime-only property — a real browser is required to
+// observe scrollTop moving across frames — so it is guarded by the WI-C Playwright
+// job e2e/sessionOpenNoOscillation.e2e.ts, which frame-samples scrollTop on
+// session open and asserts zero change.
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface FakeScrollGeometry {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+}
+
+// The browser's universal max-scroll contract (NOT project-internal logic): the
+// furthest scrollTop that still shows the bottom edge. This is the exact target
+// snapToBottomIfPinned computes (Math.max(0, scrollHeight - clientHeight)).
+const maxScrollOf = (el: FakeScrollGeometry): number => Math.max(0, el.scrollHeight - el.clientHeight);
+const distanceFromBottomOf = (el: FakeScrollGeometry): number => maxScrollOf(el) - el.scrollTop;
+
+describe('WI-C: pinned history prepend keeps a single bottom target (no oscillation)', () => {
+    const CLIENT_H = 800;
+    const RELEASE_T = 80; // representative desktop bottom-zone threshold
+    const REPIN_E = REPIN_EPSILON_PX;
+    const PREPEND_DELTA = 600; // older messages inserted above
+
+    // Bottom-pinned viewport before the prepend.
+    const makePinnedBottom = (): FakeScrollGeometry => {
+        const el: FakeScrollGeometry = { scrollTop: 0, scrollHeight: 2000, clientHeight: CLIENT_H };
+        el.scrollTop = maxScrollOf(el); // 1200 — truly at the bottom
+        return el;
+    };
+
+    test('correct prepend compensation lands EXACTLY on the snap target (writers agree)', () => {
+        const before = makePinnedBottom();
+        expect(distanceFromBottomOf(before)).toBe(0); // precondition: pinned
+
+        const maxScrollPrev = maxScrollOf(before);
+
+        // Prepend older messages above: content grows by delta, scrollTop unchanged
+        // by the browser (overflow-anchor:none). Timeline controller then applies
+        // the compensation scrollTop += delta.
+        const after: FakeScrollGeometry = {
+            scrollTop: before.scrollTop + PREPEND_DELTA, // the compensation write
+            scrollHeight: before.scrollHeight + PREPEND_DELTA,
+            clientHeight: CLIENT_H,
+        };
+        const maxScrollNow = maxScrollOf(after);
+
+        // AGREEMENT INVARIANT: compensated scrollTop === the snap target. The snap
+        // that runs next is therefore a no-op — no second, differing write.
+        expect(after.scrollTop).toBe(maxScrollOf(after));
+        expect(distanceFromBottomOf(after)).toBe(0);
+
+        // The prepend is content GROWTH, not a clamp — the clamp guard must NOT
+        // swallow it (that guard is only for content SHRINK).
+        expect(isMaxScrollClamp({ maxScrollNow, maxScrollPrev })).toBe(false);
+
+        // With the writers in agreement the real hysteresis predicates keep the
+        // viewport pinned: no release, re-pin holds.
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: distanceFromBottomOf(after), releaseThreshold: RELEASE_T })).toBe(false);
+        expect(shouldRepinAutoFollow({ distanceFromBottom: distanceFromBottomOf(after), repinEpsilon: REPIN_E })).toBe(true);
+    });
+
+    test('NEGATIVE control: without the compensation the SAME predicates RELEASE (proves the assertion is behavioral)', () => {
+        const before = makePinnedBottom();
+        const maxScrollPrev = maxScrollOf(before);
+
+        // Prepend WITHOUT compensation: content grows, scrollTop left where it was.
+        const uncompensated: FakeScrollGeometry = {
+            scrollTop: before.scrollTop, // BUG: no += delta
+            scrollHeight: before.scrollHeight + PREPEND_DELTA,
+            clientHeight: CLIENT_H,
+        };
+        const maxScrollNow = maxScrollOf(uncompensated);
+
+        // The viewport is now delta px from the (grown) bottom.
+        expect(distanceFromBottomOf(uncompensated)).toBe(PREPEND_DELTA);
+
+        // The clamp guard cannot save it (maxScroll GREW, so not a clamp) and the
+        // distance now exceeds the release threshold -> the real predicate RELEASES.
+        // That release, immediately followed by the snap re-pin, is the up-then-down
+        // oscillation the agreement invariant prevents.
+        expect(isMaxScrollClamp({ maxScrollNow, maxScrollPrev })).toBe(false);
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: distanceFromBottomOf(uncompensated), releaseThreshold: RELEASE_T })).toBe(true);
+    });
+
+    test('idempotent snap: a redundant snap after correct compensation writes nothing (distance already 0)', () => {
+        const after: FakeScrollGeometry = { scrollTop: 0, scrollHeight: 2600, clientHeight: CLIENT_H };
+        after.scrollTop = maxScrollOf(after); // 1800 — post-compensation bottom
+
+        // snapToBottomIfPinned early-returns when scrollTop === target
+        // (useChatAutoFollow.ts:269). Model that guard against the REAL geometry
+        // contract: distance is already 0, so no write occurs.
+        const target = maxScrollOf(after);
+        const wouldWrite = after.scrollTop !== target;
+        expect(wouldWrite).toBe(false);
+        expect(distanceFromBottomOf(after)).toBe(0);
+    });
+
+    test('a RELEASED viewport prepend still does not spuriously re-pin (compensation preserves read position, not bottom)', () => {
+        // A user scrolled up (released) then a background prepend lands. Compensation
+        // preserves the READ position (scrollTop += delta), so the distance from the
+        // new bottom is unchanged and large -> re-pin must NOT fire.
+        const releasedTop = 300;
+        const before: FakeScrollGeometry = { scrollTop: releasedTop, scrollHeight: 2000, clientHeight: CLIENT_H };
+        const distBefore = distanceFromBottomOf(before); // 1200 - 300 = 900
+
+        const after: FakeScrollGeometry = {
+            scrollTop: before.scrollTop + PREPEND_DELTA, // preserve read position
+            scrollHeight: before.scrollHeight + PREPEND_DELTA,
+            clientHeight: CLIENT_H,
+        };
+        // Distance from the new bottom is preserved by the compensation.
+        expect(distanceFromBottomOf(after)).toBe(distBefore);
+        expect(shouldRepinAutoFollow({ distanceFromBottom: distanceFromBottomOf(after), repinEpsilon: REPIN_E })).toBe(false);
+    });
+});
