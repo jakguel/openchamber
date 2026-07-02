@@ -148,6 +148,63 @@ textarea[data-chat-input="true"]:focus-visible {
   background: color-mix(in srgb, var(--primary-base) 22%, transparent);
 }
 
+/* Live external-diff one-shot decorations (WI3). Durations/percentages mirror
+   the LIVE_DIFF_* constants in lib/codemirror/liveDiffDecorations.ts: the flash
+   holds for 2000ms (71.43% of 2800ms) then fades over 800ms; the removed-line
+   collapse duration is set inline on the widget from LIVE_DIFF_COLLAPSE_MS. */
+@keyframes cm-live-diff-flash {
+  0%,
+  71.43% {
+    background-color: color-mix(in srgb, var(--status-success) 30%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.cm-line-added {
+  animation: cm-live-diff-flash 2800ms linear forwards;
+}
+
+.cm-live-diff-replaced-span {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: color-mix(in srgb, var(--status-success) 85%, transparent);
+  text-underline-offset: 2px;
+}
+
+@keyframes cm-live-diff-collapse {
+  0% {
+    max-height: 12rem;
+    opacity: 1;
+  }
+  55% {
+    opacity: 0.35;
+  }
+  100% {
+    max-height: 0;
+    opacity: 0;
+  }
+}
+
+.oc-live-diff-removed {
+  overflow: hidden;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--status-error) 20%, transparent);
+  border-left: 2px solid var(--status-error);
+  animation-name: cm-live-diff-collapse;
+  animation-timing-function: ease;
+  animation-fill-mode: forwards;
+}
+
+.oc-live-diff-removed-line {
+  padding: 0 0.5rem;
+  white-space: pre;
+  color: color-mix(in srgb, var(--status-error) 90%, var(--surface-foreground));
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
 .pierre-diff-wrapper {
   --diffs-bg-selection-override: color-mix(in srgb, var(--primary-base) 22%, transparent);
   --diffs-bg-selection-background-override: color-mix(in srgb, var(--primary-base) 14%, transparent);

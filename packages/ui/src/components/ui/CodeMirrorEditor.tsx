@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { createVimModeExtensions } from '@/lib/codemirror/vimModeExtension';
 import { cn } from '@/lib/utils';
 
-import { buildExternalUpdateTransaction } from './codeMirrorExternalUpdate';
+import { applyExternalUpdate, liveDiffDecorationsExtension } from '@/lib/codemirror/liveDiffDecorations';
 
 /** Patches `title` attributes onto CodeMirror search-panel controls for icon-only tooltips. */
 const buttonTooltips: Record<string, string> = {
@@ -151,6 +151,7 @@ type CodeMirrorEditorProps = {
 const lineNumbersCompartment = new Compartment();
 const editableCompartment = new Compartment();
 const externalExtensionsCompartment = new Compartment();
+const liveDiffCompartment = new Compartment();
 const highlightLinesCompartment = new Compartment();
 const blockWidgetsCompartment = new Compartment();
 const searchCompartment = new Compartment();
@@ -404,6 +405,7 @@ export function CodeMirrorEditor({
         }),
         editableCompartment.of(EditorView.editable.of(!readOnly)),
         externalExtensionsCompartment.of(extensions ?? []),
+        liveDiffCompartment.of(liveDiffDecorationsExtension()),
         highlightLinesCompartment.of(createHighlightLinesExtension(highlightLines)),
         blockWidgetsCompartment.of(createBlockWidgetsExtension(blockWidgets, widgetContainersRef.current)),
         searchCompartment.of(enableSearch ? [search({ top: true }), keymap.of(toViewKeyBindings(searchKeymap))] : []),
@@ -504,11 +506,11 @@ export function CodeMirrorEditor({
     }
     appliedExternalVersionRef.current = externalUpdate.version;
 
-    const result = buildExternalUpdateTransaction(view.state.doc, externalUpdate.content, view.state.selection);
-    if (!result) {
+    // WI4 will compute `animate` from reduced-motion / large-file; WI3 always animates.
+    const applied = applyExternalUpdate(view, externalUpdate.content, { animate: true });
+    if (!applied) {
       return;
     }
-    view.dispatch(result.selection ? { changes: result.changes, selection: result.selection } : { changes: result.changes });
     valueRef.current = view.state.doc.toString();
     forceParsingCompat(view, view.state.doc.length, 300);
     view.requestMeasure();
