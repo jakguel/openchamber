@@ -123,6 +123,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   activePillLowercase = true,
   pinFirstTab = false,
   showScrollButtons = false,
+  equalTabWidth = false,
   className,
 }) => {
   const { t } = useI18n();
@@ -144,6 +145,10 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const shouldAnimateActivePill = animateActivePill ?? isAnimatedVariant;
   const reorderEnabled = typeof onReorder === 'function';
   const Wrapper = reorderEnabled ? SortableTabWrapper : StaticTabWrapper;
+  // File tabs render at a fixed equal width with a right-edge ombre fade
+  // (replacing truncation) ONLY on the default underline variant when scrollable.
+  // Off by default -> byte-identical for every other caller.
+  const equalWidthFileTabs = equalTabWidth && useUnderlineIndicator && isScrollable;
   const tabRefs = React.useRef<Map<string, HTMLElement>>(new Map());
   const [pillRect, setPillRect] = React.useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
@@ -531,7 +536,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                 className={cn(
                   'group flex h-full min-w-0 flex-nowrap items-center',
                   (isScrollable || useIntrinsicPillSizing)
-                    ? 'shrink-0'
+                    ? (equalWidthFileTabs ? 'w-[140px] shrink-0' : 'shrink-0')
                     : usesActivePillIndicator
                       ? 'w-full'
                       : 'w-full min-w-0',
@@ -551,7 +556,9 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                   className={cn(
                     usesActivePillIndicator
                       ? 'animated-tabs__button pill-tabs__button relative z-10 flex flex-1 min-w-0 flex-nowrap items-center justify-center rounded-[9px] [corner-shape:squircle] supports-[corner-shape:squircle]:rounded-[50px] text-sm font-medium transition-colors duration-150 !min-h-0'
-                      : 'flex h-full min-w-0 flex-nowrap items-center typography-micro',
+                      : equalWidthFileTabs
+                        ? 'flex h-full min-w-0 flex-1 flex-nowrap items-center typography-ui-label'
+                        : 'flex h-full min-w-0 flex-nowrap items-center typography-micro',
                     usesActivePillIndicator && activePillLowercase ? 'lowercase' : null,
                     usesActivePillIndicator && (showInactiveIconOnly ? 'gap-0' : 'gap-1.5'),
                     usesActivePillIndicator
@@ -565,7 +572,9 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                               ? 'shrink-0 whitespace-nowrap px-3 text-center'
                               : 'px-3 text-center')
                       : isScrollable
-                        ? 'max-w-56 justify-start truncate px-3 text-left'
+                        ? (equalWidthFileTabs
+                          ? 'justify-start px-[3px] text-left'
+                          : 'max-w-56 justify-start truncate px-3 text-left')
                         : 'w-full justify-center truncate px-3 text-center',
                     usesActivePillIndicator
                       ? (activePillButtonClassName ?? (isActivePillVariant ? (isMobile ? 'h-[38px]' : 'h-[31px]') : 'h-7'))
@@ -609,7 +618,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                       {shouldShowLabel ? <span className="animated-tabs__label truncate">{item.label}</span> : null}
                     </>
                   ) : (
-                    <span className={cn('flex min-w-0 flex-nowrap items-center gap-1.5', !isScrollable && 'justify-center')}>
+                    <span className={cn('flex min-w-0 flex-nowrap items-center gap-1.5', !isScrollable && 'justify-center', equalWidthFileTabs && 'flex-1')}>
                       {shouldShowIcon ? (
                         <span
                           className={cn(
@@ -638,7 +647,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                           ) : null}
                         </span>
                       ) : null}
-                      <span className="truncate leading-[1.2]">{item.label}</span>
+                      <span className={cn(equalWidthFileTabs ? 'tab-label-ombre flex-1 min-w-0' : 'truncate', 'leading-[1.2]')}>{item.label}</span>
                     </span>
                   )}
                 </button>
@@ -654,6 +663,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                     }}
                     className={cn(
                       'relative z-20 inline-flex !min-h-0 !min-w-0 items-center justify-center transition-opacity',
+                      equalWidthFileTabs && 'flex-none',
                       usesActivePillIndicator
                         ? '-ml-2.5 mr-1 h-[88%] w-5 self-center !aspect-auto rounded-md'
                         : 'aspect-square h-[65%] min-h-4 max-h-5 rounded-sm mr-1',

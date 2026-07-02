@@ -428,6 +428,16 @@ textarea[data-chat-input="true"]:focus-visible {
   will-change: transform;
 }
 
+/* Dedicated right-edge ombre for equal-width tab titles: clips overflow without
+   an ellipsis and fades the tail to transparent. Separate from
+   .file-mention-marquee-container (which couples marquee width vars + animation). */
+.tab-label-ombre {
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(to right, black calc(100% - 18px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 18px), transparent 100%);
+}
+
 /* Safari/WebKit fixes for buttons and SVG icons */
 /* Remixicon puts fill="currentColor" on root SVG which WebKit renders as background */
 button svg.remixicon,
