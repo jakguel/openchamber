@@ -45,6 +45,22 @@ type SortableTabsStripProps = {
   iconOnlyActiveTab?: boolean;
   animateActivePill?: boolean;
   activePillLowercase?: boolean;
+  /**
+   * Opt-in: pin the first tab (assumed to be the Chat tab) as a non-scrolling
+   * flex sibling before the scroll region. Defaults to false — byte-identical
+   * to today for every existing caller.
+   */
+  pinFirstTab?: boolean;
+  /**
+   * Opt-in scaffold: render overflow scroll-arrow controls. Typed now so the
+   * prop surface is stable; behavior is implemented in a follow-up work item.
+   */
+  showScrollButtons?: boolean;
+  /**
+   * Opt-in scaffold: give file tabs an equal fixed width with a right-edge
+   * ombre fade replacing truncation. Typed now; behavior implemented later.
+   */
+  equalTabWidth?: boolean;
   className?: string;
 };
 
@@ -98,6 +114,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   iconOnlyActiveTab = false,
   animateActivePill,
   activePillLowercase = true,
+  pinFirstTab = false,
   className,
 }) => {
   const { t } = useI18n();
@@ -121,6 +138,14 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const Wrapper = reorderEnabled ? SortableTabWrapper : StaticTabWrapper;
   const tabRefs = React.useRef<Map<string, HTMLElement>>(new Map());
   const [pillRect, setPillRect] = React.useState<{ left: number; top: number; width: number; height: number } | null>(null);
+
+  // Pin the first (Chat) tab as a non-scrolling flex sibling. Only the first
+  // tab pins — this is deliberately NOT a generalized pin framework.
+  const pinFirst = pinFirstTab && items.length > 0;
+  const pinnedItem = pinFirst ? items[0] : null;
+  const scrollItems = pinFirst ? items.slice(1) : items;
+  const pinnedTabRef = React.useRef<HTMLDivElement>(null);
+  const [pinnedWidth, setPinnedWidth] = React.useState(0);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -283,6 +308,31 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     };
   }, [activeId, isScrollable, items.length, updateOverflow]);
 
+  React.useEffect(() => {
+    if (!pinFirst) {
+      setPinnedWidth((prev) => (prev === 0 ? prev : 0));
+      return;
+    }
+
+    const element = pinnedTabRef.current;
+    if (!element) {
+      return;
+    }
+
+    const measure = () => {
+      const width = element.offsetWidth;
+      setPinnedWidth((prev) => (Math.abs(prev - width) < 0.5 ? prev : width));
+    };
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [pinFirst, pinnedItem?.label]);
+
   const handleDragEnd = React.useCallback((event: DragEndEvent) => {
     if (!onReorder) {
       return;
@@ -297,7 +347,50 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   }, [onReorder]);
 
   const list = (
-    <div className={cn('relative flex h-full min-w-0 flex-1', className)}>
+    <div
+      className={cn('relative flex h-full min-w-0 flex-1', className)}
+      role={pinFirst ? 'tablist' : undefined}
+      aria-label={pinFirst ? t('sortableTabsStrip.aria.tabs') : undefined}
+    >
+      {pinFirst && pinnedItem ? (
+        <div ref={pinnedTabRef} className="flex h-full shrink-0">
+          <div
+            className={cn(
+              'group relative z-10 flex h-full min-w-0 shrink-0 flex-nowrap items-center bg-sidebar',
+              pinnedItem.id === activeId ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={pinnedItem.id === activeId}
+              onClick={() => onSelect(pinnedItem.id)}
+              className="flex h-full min-w-0 flex-nowrap items-center typography-micro max-w-56 justify-start truncate px-3 text-left"
+              title={pinnedItem.title ?? pinnedItem.label}
+            >
+              <span className="flex min-w-0 flex-nowrap items-center gap-1.5">
+                {pinnedItem.icon ? (
+                  <span
+                    className={cn(
+                      'relative flex h-4 w-4 shrink-0 items-center justify-center transition-colors duration-200 ease-out',
+                      pinnedItem.id === activeId ? 'text-[var(--primary-base)]' : 'text-muted-foreground'
+                    )}
+                  >
+                    <span className="flex items-center justify-center">{pinnedItem.icon}</span>
+                  </span>
+                ) : null}
+                <span className="truncate leading-[1.2]">{pinnedItem.label}</span>
+              </span>
+            </button>
+            {useUnderlineIndicator && pinnedItem.id === activeId ? (
+              <div
+                className="pointer-events-none absolute inset-x-0 -bottom-px z-10 h-[3px] rounded-t-[2px] bg-[var(--primary-base)]"
+                aria-hidden
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       {isScrollable && overflow.left ? (
         <div
           className={cn(
@@ -306,6 +399,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               ? 'w-8 from-[var(--surface-background)]'
               : 'w-6 from-background'
           )}
+          style={pinFirst ? { left: pinnedWidth } : undefined}
         />
       ) : null}
       {isScrollable && overflow.right ? (
@@ -332,9 +426,15 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
             ? 'overflow-x-auto scrollbar-none'
             : 'overflow-x-hidden',
         )}
-        style={isScrollable ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
-        role="tablist"
-        aria-label={t('sortableTabsStrip.aria.tabs')}
+        style={
+          isScrollable
+            ? (pinFirst
+              ? { scrollbarWidth: 'none', msOverflowStyle: 'none', scrollPaddingInlineStart: pinnedWidth }
+              : { scrollbarWidth: 'none', msOverflowStyle: 'none' })
+            : undefined
+        }
+        role={pinFirst ? undefined : 'tablist'}
+        aria-label={pinFirst ? undefined : t('sortableTabsStrip.aria.tabs')}
       >
         {usesActivePillIndicator && pillRect ? (
           <div
@@ -362,7 +462,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
             aria-hidden
           />
         ) : null}
-        {items.map((item) => {
+        {scrollItems.map((item) => {
           const isActive = item.id === activeId;
           const showInactiveIconOnly = inactiveTabsIconOnly && usesActivePillIndicator && !isActive && Boolean(item.icon);
           const shouldShowLabel = !showInactiveIconOnly;
