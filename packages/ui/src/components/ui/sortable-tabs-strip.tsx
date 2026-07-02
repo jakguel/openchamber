@@ -75,6 +75,25 @@ const SCROLL_RAIL_WIDTH = 56;
 // Minimum per-click scroll distance (one file-tab width) so an ultra-narrow
 // strip still advances when clientWidth / 2 would be smaller.
 const MIN_SCROLL_STEP = 140;
+// Sub-pixel measurement epsilon; overflow must exceed this to count.
+const OVERFLOW_DEADBAND = 2;
+
+// Decide whether the tab content overflows the width available to it, measured
+// INDEPENDENTLY of whether the scroll rail is currently mounted. The rail is a
+// flex sibling after scrollRef, so mounting it shrinks scrollRef.clientWidth by
+// railWidth. Adding railWidth back when railMounted reconstructs the constant
+// full width, so the decision is identical in both rail states (no fit/overflow
+// oscillation at the mount boundary).
+function computeRailOverflow(params: {
+  scrollWidth: number;
+  clientWidth: number;
+  railMounted: boolean;
+  railWidth: number;
+}): boolean {
+  const { scrollWidth, clientWidth, railMounted, railWidth } = params;
+  const railIndependentWidth = clientWidth + (railMounted ? railWidth : 0);
+  return scrollWidth - railIndependentWidth > OVERFLOW_DEADBAND;
+}
 
 const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode; className?: string }> = ({ id, children, className }) => {
   const {
@@ -132,6 +151,9 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const alwaysShowCloseControls = isMobile || isTablet;
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const [overflow, setOverflow] = React.useState<{ left: boolean; right: boolean }>({ left: false, right: false });
+  // Rail-independent "does content overflow" flag that gates rail mounting.
+  const [hasOverflow, setHasOverflow] = React.useState(false);
+  const hasOverflowRef = React.useRef(false);
   const itemIDs = React.useMemo(() => items.map((item) => item.id), [items]);
   const isScrollable = layoutMode === 'scrollable';
   const isDefaultVariant = variant === 'default';
@@ -224,12 +246,16 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const updateOverflow = React.useCallback(() => {
     if (!isScrollable) {
       setOverflow({ left: false, right: false });
+      setHasOverflow((prev) => (prev === false ? prev : false));
+      hasOverflowRef.current = false;
       return;
     }
 
     const element = scrollRef.current;
     if (!element) {
       setOverflow({ left: false, right: false });
+      setHasOverflow((prev) => (prev === false ? prev : false));
+      hasOverflowRef.current = false;
       return;
     }
 
@@ -237,11 +263,22 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
       left: element.scrollLeft > 2,
       right: element.scrollLeft + element.clientWidth < element.scrollWidth - 2,
     });
-  }, [isScrollable]);
+
+    const next = computeRailOverflow({
+      scrollWidth: element.scrollWidth,
+      clientWidth: element.clientWidth,
+      railMounted: showScrollButtons && hasOverflowRef.current,
+      railWidth: SCROLL_RAIL_WIDTH,
+    });
+    hasOverflowRef.current = next;
+    setHasOverflow((prev) => (prev === next ? prev : next));
+  }, [isScrollable, showScrollButtons]);
 
   React.useEffect(() => {
     if (!isScrollable) {
       setOverflow({ left: false, right: false });
+      setHasOverflow((prev) => (prev === false ? prev : false));
+      hasOverflowRef.current = false;
       return;
     }
 
@@ -700,7 +737,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
       ) : (
         tabRegion
       )}
-      {showScrollButtons && isScrollable ? (
+      {showScrollButtons && isScrollable && hasOverflow ? (
         <div
           className="flex h-full shrink-0 items-center justify-end gap-0.5 pl-1"
           style={{ width: SCROLL_RAIL_WIDTH }}
