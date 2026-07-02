@@ -2552,6 +2552,8 @@ export const dict: Record<I18nKey, string> = {
   "sidebar.resize.rightPanelAria": "Змінити розмір правої панелі",
   "mainLayout.mobile.closeDrawerAria": "Закрити панель",
   "sortableTabsStrip.aria.tabs": "Вкладки",
+  "sortableTabsStrip.aria.scrollLeft": "Прокрутити вкладки вліво",
+  "sortableTabsStrip.aria.scrollRight": "Прокрутити вкладки вправо",
   "openChamberLogo.aria.logo": "Логотип OpenChamber",
   "markdownRenderer.table.actions.copyTitle": "Скопіювати таблицю",
   "markdownRenderer.table.actions.downloadTitle": "Завантажити таблицю",

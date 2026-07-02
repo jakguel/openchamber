@@ -2549,6 +2549,8 @@ export const dict: Record<I18nKey, string> = {
   'sidebar.resize.rightPanelAria': '調整右側面板大小',
   'mainLayout.mobile.closeDrawerAria': '關閉抽屜',
   'sortableTabsStrip.aria.tabs': '分頁',
+  'sortableTabsStrip.aria.scrollLeft': '向左捲動分頁',
+  'sortableTabsStrip.aria.scrollRight': '向右捲動分頁',
   'openChamberLogo.aria.logo': 'OpenChamber 標誌',
   'markdownRenderer.table.actions.copyTitle': '複製表格',
   'markdownRenderer.table.actions.downloadTitle': '下載表格',

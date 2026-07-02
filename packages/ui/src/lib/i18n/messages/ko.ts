@@ -2586,6 +2586,8 @@ export const dict: Record<I18nKey, string> = {
   'sidebar.resize.rightPanelAria': '오른쪽 패널 크기 조정',
   'mainLayout.mobile.closeDrawerAria': '드로어 닫기',
   'sortableTabsStrip.aria.tabs': '탭',
+  'sortableTabsStrip.aria.scrollLeft': '탭 왼쪽으로 스크롤',
+  'sortableTabsStrip.aria.scrollRight': '탭 오른쪽으로 스크롤',
   'openChamberLogo.aria.logo': 'OpenChamber 로고',
   'markdownRenderer.table.actions.copyTitle': '표 복사',
   'markdownRenderer.table.actions.downloadTitle': '표 다운로드',

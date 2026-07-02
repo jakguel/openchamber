@@ -2552,6 +2552,8 @@ export const dict: Record<I18nKey, string> = {
   "sidebar.resize.rightPanelAria": "Ajustar painel direito",
   "mainLayout.mobile.closeDrawerAria": "Fechar gaveta",
   "sortableTabsStrip.aria.tabs": "Abas",
+  "sortableTabsStrip.aria.scrollLeft": "Rolar abas para a esquerda",
+  "sortableTabsStrip.aria.scrollRight": "Rolar abas para a direita",
   "openChamberLogo.aria.logo": "Logo do OpenChamber",
   "markdownRenderer.table.actions.copyTitle": "Copiar tabela",
   "markdownRenderer.table.actions.downloadTitle": "Baixar tabela",

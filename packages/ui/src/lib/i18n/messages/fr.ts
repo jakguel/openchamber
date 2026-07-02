@@ -2396,6 +2396,8 @@ export const dict = {
   'sidebar.resize.rightPanelAria': 'Redimensionner le panneau de droite',
   'mainLayout.mobile.closeDrawerAria': 'Fermer le tiroir',
   'sortableTabsStrip.aria.tabs': 'Onglets',
+  'sortableTabsStrip.aria.scrollLeft': 'Faire défiler les onglets vers la gauche',
+  'sortableTabsStrip.aria.scrollRight': 'Faire défiler les onglets vers la droite',
   'openChamberLogo.aria.logo': 'Logo OpenChamber',
   'markdownRenderer.table.actions.copyTitle': 'Copier le tableau',
   'markdownRenderer.table.actions.downloadTitle': 'Télécharger le tableau',

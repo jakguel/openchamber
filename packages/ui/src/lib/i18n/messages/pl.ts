@@ -2448,6 +2448,8 @@ export const dict: Record<I18nKey, string> = {
   'sidebarFilesTree.toast.revealFailed': 'Nie udało się pokazać ścieżki',
   'sidebarFilesTree.toast.writeNotSupported': 'Zapis nie jest obsługiwany',
   'sortableTabsStrip.aria.tabs': 'Tabs',
+  'sortableTabsStrip.aria.scrollLeft': 'Przewiń karty w lewo',
+  'sortableTabsStrip.aria.scrollRight': 'Przewiń karty w prawo',
   'terminalView.actions.hardRestart': 'Hard Restart',
   'terminalView.actions.hardRestartTitle': 'Force kill and create fresh session',
   'terminalView.actions.retry': 'Ponów',

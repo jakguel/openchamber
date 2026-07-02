@@ -2586,6 +2586,8 @@ export const dict = {
   'sidebar.resize.rightPanelAria': 'Resize right panel',
   'mainLayout.mobile.closeDrawerAria': 'Close drawer',
   'sortableTabsStrip.aria.tabs': 'Tabs',
+  'sortableTabsStrip.aria.scrollLeft': 'Scroll tabs left',
+  'sortableTabsStrip.aria.scrollRight': 'Scroll tabs right',
   'openChamberLogo.aria.logo': 'OpenChamber logo',
   'markdownRenderer.table.actions.copyTitle': 'Copy table',
   'markdownRenderer.table.actions.downloadTitle': 'Download table',
