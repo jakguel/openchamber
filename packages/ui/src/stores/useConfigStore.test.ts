@@ -1,5 +1,16 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { Agent } from '@opencode-ai/sdk/v2';
+// Static namespace imports for the leaf spy targets. bun's spyOn intercepts a
+// consumer's live binding only on a STATICALLY imported namespace, and each of
+// these modules is a leaf w.r.t. useConfigStore (never transitively loads it), so
+// spying them here is safe and takes effect before the subject is dynamically
+// imported below.
+import * as configSync from '@/lib/configSync';
+import * as safeStorage from '@/stores/utils/safeStorage';
+import * as startupTrace from '@/lib/startupTrace';
+import * as runtimeFetchMod from '@/lib/runtime-fetch';
+import * as runtimeAPIRegistry from '@/contexts/runtimeAPIRegistry';
+import * as persistence from '@/lib/persistence';
 
 const DIRECTORY = '/workspace/project';
 const OTHER_DIRECTORY = '/workspace/other';
@@ -128,94 +139,87 @@ const deferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-mock.module('@/stores/utils/safeStorage', () => ({
-  getSafeStorage: () => makeStorage(),
-}));
+// De-mocked: no process-global mock.module. The leaf spy targets are statically
+// imported so bun's spyOn intercepts the subject's live bindings, and they are
+// spied here BEFORE useConfigStore is dynamically imported so the import-time
+// captures (subscribeToConfigChanges at module load; the persist getSafeStorage
+// factory) resolve to these stubs. opencodeClient/useProjectsStore are object
+// singletons whose methods bind by identity, loaded dynamically after the leaf
+// spies. Real @/sync/sync-refs is exercised; afterAll(mock.restore) restores every
+// spy so nothing leaks to other test files.
+spyOn(safeStorage, 'getSafeStorage').mockImplementation(() => makeStorage());
+spyOn(configSync, 'emitConfigChange').mockImplementation(() => undefined);
+spyOn(configSync, 'scopeMatches').mockImplementation((event: { scopes: string[] }, scope: string) => event.scopes.includes('all') || event.scopes.includes(scope));
+spyOn(configSync, 'subscribeToConfigChanges').mockImplementation(((listener: typeof configListener) => {
+  configListener = listener;
+  return () => {
+    if (configListener === listener) {
+      configListener = null;
+    }
+  };
+}) as typeof configSync.subscribeToConfigChanges);
+spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockImplementation(() => null);
+spyOn(runtimeFetchMod, 'runtimeFetch').mockImplementation((async () => new Response(JSON.stringify({}), {
+  headers: { 'Content-Type': 'application/json' },
+})) as typeof runtimeFetchMod.runtimeFetch);
+spyOn(persistence, 'updateDesktopSettings').mockImplementation((async () => undefined) as typeof persistence.updateDesktopSettings);
+spyOn(startupTrace, 'markStartupTrace').mockImplementation(() => undefined);
+spyOn(startupTrace, 'measureStartupTrace').mockImplementation((async (_name: string, callback: () => Promise<unknown>) => callback()) as typeof startupTrace.measureStartupTrace);
 
-mock.module('@/stores/useProjectsStore', () => ({
-  useProjectsStore: {
-    getState: () => ({
-      activeProjectId: 'project',
-      projects: [
-        { id: 'project', path: DIRECTORY, label: 'Project' },
-        { id: 'other', path: OTHER_DIRECTORY, label: 'Other' },
-      ],
-    }),
-  },
-}));
+const { useProjectsStore } = await import('@/stores/useProjectsStore');
+const { opencodeClient } = await import('@/lib/opencode/client');
 
-mock.module('@/lib/opencode/client', () => ({
-  opencodeClient: {
-    setDirectory: mock(() => undefined),
-    getDirectory: mock(() => DIRECTORY),
-    checkHealth: mock(async () => true),
-    withDirectory: mock(async (directory: string | null, callback: () => Promise<unknown>) => {
-      withDirectoryCalls.push(directory);
-      const previous = currentFetchDirectory;
-      currentFetchDirectory = directory;
-      try {
-        return await callback();
-      } finally {
-        currentFetchDirectory = previous;
-      }
-    }),
-    getProviders: mock(async () => {
-      getProvidersCalls += 1;
-      const id = liveProviderIdsByDirectory.get(currentFetchDirectory ?? '') ?? liveProviderId;
-      return { providers: [providerResponse(id, `${id}-model`, liveProviderVariants)], default: { default: id } };
-    }),
-    getProvidersForConfig: mock(async (directory?: string | null) => {
-      getProvidersCalls += 1;
-      const id = liveProviderIdsByDirectory.get(directory ?? '') ?? liveProviderId;
-      return { providers: [providerResponse(id, `${id}-model`, liveProviderVariants)], default: { default: id } };
-    }),
-    listAgents: mock(async (directory?: string | null) => {
-      listAgentsCalls += 1;
-      const impl = listAgentsImpl as ((directory?: string | null) => Promise<TestAgent[]>) | null;
-      return impl ? impl(directory) : liveAgents;
-    }),
-    getConfig: mock(async () => {
-      getConfigCalls += 1;
-      return {};
-    }),
-    clearConfigCache: mock(() => undefined),
-  },
-}));
+spyOn(useProjectsStore, 'getState').mockReturnValue({
+  activeProjectId: 'project',
+  projects: [
+    { id: 'project', path: DIRECTORY, label: 'Project' },
+    { id: 'other', path: OTHER_DIRECTORY, label: 'Other' },
+  ],
+} as unknown as ReturnType<typeof useProjectsStore.getState>);
+spyOn(opencodeClient, 'setDirectory').mockImplementation(() => undefined);
+spyOn(opencodeClient, 'getDirectory').mockImplementation(() => DIRECTORY);
+spyOn(opencodeClient, 'checkHealth').mockImplementation(async () => true);
+spyOn(opencodeClient, 'withDirectory').mockImplementation((async (directory: string | null, callback: () => Promise<unknown>) => {
+  withDirectoryCalls.push(directory);
+  const previous = currentFetchDirectory;
+  currentFetchDirectory = directory;
+  try {
+    return await callback();
+  } finally {
+    currentFetchDirectory = previous;
+  }
+}) as typeof opencodeClient.withDirectory);
+spyOn(opencodeClient, 'getProviders').mockImplementation((async () => {
+  getProvidersCalls += 1;
+  const id = liveProviderIdsByDirectory.get(currentFetchDirectory ?? '') ?? liveProviderId;
+  return { providers: [providerResponse(id, `${id}-model`, liveProviderVariants)], default: { default: id } };
+}) as unknown as typeof opencodeClient.getProviders);
+spyOn(opencodeClient, 'getProvidersForConfig').mockImplementation((async (directory?: string | null) => {
+  getProvidersCalls += 1;
+  const id = liveProviderIdsByDirectory.get(directory ?? '') ?? liveProviderId;
+  return { providers: [providerResponse(id, `${id}-model`, liveProviderVariants)], default: { default: id } };
+}) as unknown as typeof opencodeClient.getProvidersForConfig);
+spyOn(opencodeClient, 'listAgents').mockImplementation((async (directory?: string | null) => {
+  listAgentsCalls += 1;
+  const impl = listAgentsImpl as ((directory?: string | null) => Promise<TestAgent[]>) | null;
+  return impl ? impl(directory) : liveAgents;
+}) as unknown as typeof opencodeClient.listAgents);
+spyOn(opencodeClient, 'getConfig').mockImplementation((async () => {
+  getConfigCalls += 1;
+  return {};
+}) as unknown as typeof opencodeClient.getConfig);
+spyOn(opencodeClient, 'clearConfigCache').mockImplementation(() => undefined);
 
-mock.module('@/contexts/runtimeAPIRegistry', () => ({
-  getRegisteredRuntimeAPIs: mock(() => null),
-}));
-
-mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: mock(async () => new Response(JSON.stringify({}), {
-    headers: { 'Content-Type': 'application/json' },
-  })),
-}));
-
-mock.module('@/lib/persistence', () => ({
-  updateDesktopSettings: mock(async () => undefined),
-}));
-
-mock.module('@/lib/startupTrace', () => ({
-  markStartupTrace: mock(() => undefined),
-  measureStartupTrace: mock(async (_name: string, callback: () => Promise<unknown>) => callback()),
-}));
-
-mock.module('@/lib/configSync', () => ({
-  emitConfigChange: mock(() => undefined),
-  scopeMatches: mock((event: { scopes: string[] }, scope: string) => event.scopes.includes('all') || event.scopes.includes(scope)),
-  subscribeToConfigChanges: mock((listener: typeof configListener) => {
-    configListener = listener;
-    return () => {
-      if (configListener === listener) {
-        configListener = null;
-      }
-    };
-  }),
-}));
-
-const { useConfigStore } = await import('./useConfigStore');
+// Cache-busted so the subject loads FRESH here even when another suite already
+// imported the useConfigStore singleton earlier in the full run — guaranteeing its
+// import-time captures (subscribeToConfigChanges, the persist getSafeStorage factory)
+// bind to the spies above rather than the real deps a prior load would have wired.
+const { useConfigStore } = await import(`./useConfigStore?fresh=${Date.now()}`) as typeof import('./useConfigStore');
 const { emitSyncConfigChanged, setSyncRefs } = await import('@/sync/sync-refs');
+
+afterAll(() => {
+  mock.restore();
+});
 
 describe('useConfigStore provider persistence', () => {
   beforeEach(() => {

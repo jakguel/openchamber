@@ -1,4 +1,15 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { toast } from '@/components/ui';
+import * as i18n from '@/lib/i18n';
+import * as runtimeAPIRegistry from '@/contexts/runtimeAPIRegistry';
+import * as gitHttp from '@/lib/gitApiHttp';
+import {
+  clearWorktreeBootstrapState,
+  getWorktreeBootstrapState,
+  markWorktreeBootstrapPending,
+  startWorktreeBootstrapWatcher,
+  waitForWorktreeBootstrap,
+} from './worktreeBootstrap';
 
 const bootstrapStatusCalls: string[] = [];
 let bootstrapStatusResult: { status: 'pending' | 'ready' | 'failed'; error: string | null; updatedAt: number } = {
@@ -8,63 +19,32 @@ let bootstrapStatusResult: { status: 'pending' | 'ready' | 'failed'; error: stri
 };
 const toastErrors: Array<{ title: string; description?: string }> = [];
 
-mock.module('@/components/ui', () => ({
-  toast: {
-    error: (title: string, options?: { description?: string }) => {
-      toastErrors.push({ title, description: options?.description });
-    },
-  },
-}));
-
-// mock.module is process-global in Bun and persists across test files.
-// useI18nStore must be callable (it's a Zustand hook invoked as a function
-// in components) AND expose getState/setState so victim files don't crash.
-// Using a function stub prevents "useI18nStore is not a function" in later
-// files (i18n/store.test.ts, ReasoningTimelineBlock.test.tsx, etc.).
-const i18nDictionary: Record<string, string> = {};
-const i18nStoreStub = Object.assign(
-  (_selector: (state: { dictionary: Record<string, string>; locale: string }) => unknown) =>
-    _selector({ dictionary: i18nDictionary, locale: 'en' }),
-  {
-    getState: () => ({ dictionary: i18nDictionary, locale: 'en' }),
-    setState: (patch: Partial<{ dictionary: Record<string, string>; locale: string }>) => {
-      Object.assign(i18nDictionary, patch.dictionary ?? {});
-    },
-    subscribe: () => () => {},
-  },
-);
-mock.module('@/lib/i18n', () => ({
-  formatMessage: (_dictionary: Record<string, string>, key: string) => key,
-  useI18nStore: i18nStoreStub,
-}));
-
-mock.module('@/contexts/runtimeAPIRegistry', () => ({
-  getRegisteredRuntimeAPIs: () => ({
-    git: {
-      worktree: {
-        bootstrapStatus: (directory: string) => {
-          bootstrapStatusCalls.push(directory);
-          return Promise.resolve(bootstrapStatusResult);
-        },
+// De-mocked: worktreeBootstrap runs for real. The toast surface, i18n formatter,
+// runtime API registry, and git-http status boundary are spied on their real
+// modules; formatMessage returns the raw key so assertions read the message keys.
+// The real useI18nStore is used (no stub needed once the module registry is intact).
+spyOn(toast, 'error').mockImplementation(((title: string, options?: { description?: string }) => {
+  toastErrors.push({ title, description: options?.description });
+}) as unknown as typeof toast.error);
+spyOn(i18n, 'formatMessage').mockImplementation(((_dictionary: Record<string, string>, key: string) => key) as unknown as typeof i18n.formatMessage);
+spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockImplementation((() => ({
+  git: {
+    worktree: {
+      bootstrapStatus: (directory: string) => {
+        bootstrapStatusCalls.push(directory);
+        return Promise.resolve(bootstrapStatusResult);
       },
     },
-  }),
-}));
-
-mock.module('@/lib/gitApiHttp', () => ({
-  getGitWorktreeBootstrapStatus: (directory: string) => {
-    bootstrapStatusCalls.push(directory);
-    return Promise.resolve(bootstrapStatusResult);
   },
-}));
+})) as unknown as typeof runtimeAPIRegistry.getRegisteredRuntimeAPIs);
+spyOn(gitHttp, 'getGitWorktreeBootstrapStatus').mockImplementation(((directory: string) => {
+  bootstrapStatusCalls.push(directory);
+  return Promise.resolve(bootstrapStatusResult);
+}) as unknown as typeof gitHttp.getGitWorktreeBootstrapStatus);
 
-const {
-  clearWorktreeBootstrapState,
-  getWorktreeBootstrapState,
-  markWorktreeBootstrapPending,
-  startWorktreeBootstrapWatcher,
-  waitForWorktreeBootstrap,
-} = await import('./worktreeBootstrap');
+afterAll(() => {
+  mock.restore();
+});
 
 const waitFor = async (predicate: () => boolean): Promise<void> => {
   for (let attempt = 0; attempt < 20; attempt += 1) {

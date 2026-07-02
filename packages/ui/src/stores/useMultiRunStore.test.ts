@@ -1,5 +1,18 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { Session } from '@opencode-ai/sdk/v2';
+import * as sessionUiStore from '@/sync/session-ui-store';
+import { useSessionUIStore } from '@/sync/session-ui-store';
+import { opencodeClient } from '@/lib/opencode/client';
+import * as gitApi from '@/lib/gitApi';
+import * as worktreeCreate from '@/lib/worktrees/worktreeCreate';
+import * as worktreeStatus from '@/lib/worktrees/worktreeStatus';
+import * as openchamberConfig from '@/lib/openchamberConfig';
+import { useDirectoryStore } from './useDirectoryStore';
+import { useProjectsStore } from './useProjectsStore';
+import { useSnippetsStore } from './useSnippetsStore';
+import { useGlobalSessionsStore } from './useGlobalSessionsStore';
+import * as syncRefs from '@/sync/sync-refs';
+import { useMultiRunStore } from './useMultiRunStore';
 
 const upsertedSessions: Session[] = [];
 const registeredDirectories: Array<{ sessionID: string; directory: string }> = [];
@@ -7,21 +20,6 @@ const ensureChildCalls: Array<{ directory: string; bootstrap?: boolean }> = [];
 const worktreeMetadataCalls: Array<{ sessionId: string; path: string }> = [];
 const worktreeCreateCalls: Array<{ project: { id?: string; path: string }; args: Record<string, unknown>; options: unknown }> = [];
 let isGitRepository = false;
-const createWorktreeWithDefaultsMock = mock((project: { id?: string; path: string }, args: Record<string, unknown>, options: unknown) => {
-  worktreeCreateCalls.push({ project, args, options });
-  return Promise.resolve({
-    source: 'sdk',
-    name: 'fix-thing',
-    path: '/repo-worktrees/fix-thing',
-    projectDirectory: '/repo',
-    branch: 'fix-thing',
-    label: 'fix-thing',
-    worktreeRoot: '/repo-worktrees/fix-thing',
-    worktreeStatus: 'pending',
-    headState: 'branch',
-    worktreeSource: 'created-for-session',
-  });
-});
 const childState = {
   session: [] as Session[],
   sessionTotal: 0,
@@ -29,93 +27,77 @@ const childState = {
 };
 let currentDirectory = '/repo';
 
-mock.module('@/sync/session-ui-store', () => ({
-  routeMessage: mock(() => Promise.resolve()),
-  useSessionUIStore: {
-    getState: () => ({
-      markSessionAsOpenChamberCreated: mock(() => undefined),
-      setWorktreeMetadata: (sessionId: string, metadata: { path: string }) => {
-        worktreeMetadataCalls.push({ sessionId, path: metadata.path });
-      },
-    }),
-  },
-}));
-
-mock.module('@/lib/opencode/client', () => ({
-  opencodeClient: {
-    withDirectory: async (directory: string, fn: () => Promise<Session>) => {
-      const previous = currentDirectory;
-      currentDirectory = directory;
-      try {
-        return await fn();
-      } finally {
-        currentDirectory = previous;
-      }
+// De-mocked: no process-global mock.module. Every dependency is exercised through
+// the real module; only the external SDK/git/config I/O boundaries (and cross-store
+// getState accessors) are spied per-test via bun spyOn, restored by mock.restore().
+function installSpies() {
+  spyOn(sessionUiStore, 'routeMessage').mockResolvedValue(undefined);
+  spyOn(useSessionUIStore, 'getState').mockReturnValue({
+    markSessionAsOpenChamberCreated: () => undefined,
+    setWorktreeMetadata: (sessionId: string, metadata: { path: string }) => {
+      worktreeMetadataCalls.push({ sessionId, path: metadata.path });
     },
-    createSession: async (params?: { title?: string }): Promise<Session> => ({
-      id: 'ses_multirun',
-      title: params?.title ?? '',
-      directory: currentDirectory,
-      time: { created: 1, updated: 1 },
-    } as Session),
-  },
-}));
+  } as unknown as ReturnType<typeof useSessionUIStore.getState>);
 
-mock.module('@/lib/gitApi', () => ({
-  checkIsGitRepository: mock(() => Promise.resolve(isGitRepository)),
-}));
+  spyOn(opencodeClient, 'withDirectory').mockImplementation((async (directory: string, fn: () => Promise<Session>) => {
+    const previous = currentDirectory;
+    currentDirectory = directory;
+    try {
+      return await fn();
+    } finally {
+      currentDirectory = previous;
+    }
+  }) as typeof opencodeClient.withDirectory);
+  spyOn(opencodeClient, 'createSession').mockImplementation((async (params?: { title?: string }): Promise<Session> => ({
+    id: 'ses_multirun',
+    title: params?.title ?? '',
+    directory: currentDirectory,
+    time: { created: 1, updated: 1 },
+  } as Session)) as typeof opencodeClient.createSession);
 
-mock.module('@/lib/worktrees/worktreeCreate', () => ({
-  createWorktreeWithDefaults: createWorktreeWithDefaultsMock,
-  resolveRootTrackingRemote: mock(() => Promise.resolve(null)),
-}));
+  spyOn(gitApi, 'checkIsGitRepository').mockImplementation(() => Promise.resolve(isGitRepository));
 
-mock.module('@/lib/worktrees/worktreeStatus', () => ({
-  getRootBranch: mock(() => Promise.resolve('main')),
-}));
+  spyOn(worktreeCreate, 'createWorktreeWithDefaults').mockImplementation(((project: { id?: string; path: string }, args: Record<string, unknown>, options: unknown) => {
+    worktreeCreateCalls.push({ project, args, options });
+    return Promise.resolve({
+      source: 'sdk',
+      name: 'fix-thing',
+      path: '/repo-worktrees/fix-thing',
+      projectDirectory: '/repo',
+      branch: 'fix-thing',
+      label: 'fix-thing',
+      worktreeRoot: '/repo-worktrees/fix-thing',
+      worktreeStatus: 'pending',
+      headState: 'branch',
+      worktreeSource: 'created-for-session',
+    });
+  }) as unknown as typeof worktreeCreate.createWorktreeWithDefaults);
+  spyOn(worktreeCreate, 'resolveRootTrackingRemote').mockImplementation(() => Promise.resolve(null));
 
-mock.module('@/lib/openchamberConfig', () => ({
-  saveWorktreeSetupCommands: mock(() => Promise.resolve()),
-}));
+  spyOn(worktreeStatus, 'getRootBranch').mockImplementation((() => Promise.resolve('main')) as typeof worktreeStatus.getRootBranch);
 
-mock.module('./useDirectoryStore', () => ({
-  useDirectoryStore: {
-    getState: () => ({ currentDirectory: '/repo' }),
-  },
-}));
+  spyOn(openchamberConfig, 'saveWorktreeSetupCommands').mockImplementation(() => Promise.resolve(true));
 
-mock.module('./useProjectsStore', () => ({
-  useProjectsStore: {
-    getState: () => ({
-      activeProjectId: 'project-1',
-      projects: [{ id: 'project-1', path: '/repo' }],
-    }),
-  },
-}));
+  spyOn(useDirectoryStore, 'getState').mockReturnValue({
+    currentDirectory: '/repo',
+  } as unknown as ReturnType<typeof useDirectoryStore.getState>);
+  spyOn(useProjectsStore, 'getState').mockReturnValue({
+    activeProjectId: 'project-1',
+    projects: [{ id: 'project-1', path: '/repo' }],
+  } as unknown as ReturnType<typeof useProjectsStore.getState>);
+  spyOn(useSnippetsStore, 'getState').mockReturnValue({
+    expandText: (value: string) => Promise.resolve(value),
+  } as unknown as ReturnType<typeof useSnippetsStore.getState>);
+  spyOn(useGlobalSessionsStore, 'getState').mockReturnValue({
+    upsertSession: (session: Session) => {
+      upsertedSessions.push(session);
+    },
+  } as unknown as ReturnType<typeof useGlobalSessionsStore.getState>);
 
-mock.module('./useSnippetsStore', () => ({
-  useSnippetsStore: {
-    getState: () => ({
-      expandText: (value: string) => Promise.resolve(value),
-    }),
-  },
-}));
-
-mock.module('./useGlobalSessionsStore', () => ({
-  useGlobalSessionsStore: {
-    getState: () => ({
-      upsertSession: (session: Session) => {
-        upsertedSessions.push(session);
-      },
-    }),
-  },
-}));
-
-mock.module('@/sync/sync-refs', () => ({
-  registerSessionDirectory: (sessionID: string, directory: string) => {
+  spyOn(syncRefs, 'registerSessionDirectory').mockImplementation((sessionID: string, directory: string) => {
     registeredDirectories.push({ sessionID, directory });
-  },
-  getSyncChildStores: () => ({
+  });
+  spyOn(syncRefs, 'getSyncChildStores').mockImplementation((() => ({
     ensureChild: (directory: string, options?: { bootstrap?: boolean }) => {
       ensureChildCalls.push({ directory, bootstrap: options?.bootstrap });
       return {
@@ -127,10 +109,8 @@ mock.module('@/sync/sync-refs', () => ({
         },
       };
     },
-  }),
-}));
-
-const { useMultiRunStore } = await import('./useMultiRunStore');
+  })) as unknown as typeof syncRefs.getSyncChildStores);
+}
 
 describe('useMultiRunStore', () => {
   beforeEach(() => {
@@ -144,7 +124,12 @@ describe('useMultiRunStore', () => {
     childState.sessionTotal = 0;
     childState.limit = 5;
     currentDirectory = '/repo';
+    installSpies();
     useMultiRunStore.setState({ isLoading: false, error: null });
+  });
+
+  afterEach(() => {
+    mock.restore();
   });
 
   test('registers created sessions without waiting for a sidebar refresh', async () => {

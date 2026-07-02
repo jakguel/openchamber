@@ -1,5 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { WorktreeMetadata } from '@/types/worktree';
+import * as openchamberConfig from '@/lib/openchamberConfig';
+import * as worktreeBootstrap from '@/lib/worktrees/worktreeBootstrap';
+import * as worktreeStatus from '@/lib/worktrees/worktreeStatus';
+import { useSessionUIStore } from '@/sync/session-ui-store';
+import * as gitApi from '@/lib/gitApi';
+import { createWorktree, listProjectWorktrees } from './worktreeManager';
 
 type WorktreeListEntry = {
   path?: string;
@@ -23,51 +29,34 @@ const sessionState = {
   availableWorktrees: [] as WorktreeMetadata[],
 };
 
-mock.module('@/lib/openchamberConfig', () => ({
-  substituteCommandVariables: (command: string) => command,
-}));
+// De-mocked: worktreeManager runs for real; the git/config/bootstrap/status I/O
+// boundaries and the session store are spied on their real modules and restored
+// afterAll so nothing leaks to other files.
+spyOn(openchamberConfig, 'substituteCommandVariables').mockImplementation((command: string) => command);
+spyOn(worktreeBootstrap, 'clearWorktreeBootstrapState').mockImplementation(() => undefined);
+spyOn(worktreeBootstrap, 'markWorktreeBootstrapPending').mockImplementation(() => undefined);
+spyOn(worktreeBootstrap, 'setWorktreeBootstrapState').mockImplementation((() => undefined) as unknown as typeof worktreeBootstrap.setWorktreeBootstrapState);
+spyOn(worktreeBootstrap, 'startWorktreeBootstrapWatcher').mockImplementation((() => undefined) as unknown as typeof worktreeBootstrap.startWorktreeBootstrapWatcher);
+spyOn(worktreeStatus, 'invalidateResolvedProjectRootCache').mockImplementation(() => undefined);
+spyOn(worktreeStatus, 'resolveProjectRoot').mockImplementation(((directory: string) => Promise.resolve(directory)) as unknown as typeof worktreeStatus.resolveProjectRoot);
+spyOn(useSessionUIStore, 'getState').mockReturnValue(sessionState as unknown as ReturnType<typeof useSessionUIStore.getState>);
+spyOn(useSessionUIStore, 'setState').mockImplementation(((patch: Partial<typeof sessionState> | ((state: typeof sessionState) => Partial<typeof sessionState>)) => {
+  const next = typeof patch === 'function' ? patch(sessionState) : patch;
+  Object.assign(sessionState, next);
+}) as unknown as typeof useSessionUIStore.setState);
+spyOn(gitApi, 'deleteRemoteBranch').mockImplementation((() => Promise.resolve({ success: true })) as unknown as typeof gitApi.deleteRemoteBranch);
+spyOn(gitApi.git.worktree, 'list').mockImplementation(((directory: string) => {
+  listCalls.push(directory);
+  return new Promise<WorktreeListEntry[]>((resolve) => {
+    listResolvers.push(resolve);
+  });
+}) as unknown as typeof gitApi.git.worktree.list);
+spyOn(gitApi.git.worktree, 'create').mockImplementation((() => Promise.resolve(createdWorktree)) as unknown as typeof gitApi.git.worktree.create);
+spyOn(gitApi.git.worktree, 'remove').mockImplementation((() => Promise.resolve({ success: true })) as unknown as typeof gitApi.git.worktree.remove);
 
-mock.module('@/lib/worktrees/worktreeBootstrap', () => ({
-  clearWorktreeBootstrapState: mock(),
-  markWorktreeBootstrapPending: mock(),
-  setWorktreeBootstrapState: mock(),
-  startWorktreeBootstrapWatcher: mock(),
-}));
-
-mock.module('@/lib/worktrees/worktreeStatus', () => ({
-  invalidateResolvedProjectRootCache: mock(),
-  getRootBranch: mock(() => Promise.resolve('main')),
-  getWorktreeStatus: mock(() => Promise.resolve({ status: 'ok', branch: 'main' })),
-  resolveProjectRoot: (directory: string) => Promise.resolve(directory),
-}));
-
-mock.module('@/sync/session-ui-store', () => ({
-  useSessionUIStore: {
-    getState: () => sessionState,
-    setState: (patch: Partial<typeof sessionState> | ((state: typeof sessionState) => Partial<typeof sessionState>)) => {
-      const next = typeof patch === 'function' ? patch(sessionState) : patch;
-      Object.assign(sessionState, next);
-    },
-  },
-}));
-
-mock.module('@/lib/gitApi', () => ({
-  deleteRemoteBranch: mock(),
-  git: {
-    worktree: {
-      list: (directory: string) => {
-        listCalls.push(directory);
-        return new Promise<WorktreeListEntry[]>((resolve) => {
-          listResolvers.push(resolve);
-        });
-      },
-      create: mock(() => Promise.resolve(createdWorktree)),
-      remove: mock(() => Promise.resolve({ success: true })),
-    },
-  },
-}));
-
-const { createWorktree, listProjectWorktrees } = await import('./worktreeManager');
+afterAll(() => {
+  mock.restore();
+});
 
 const waitForListCallCount = async (count: number): Promise<void> => {
   for (let attempt = 0; attempt < 10; attempt += 1) {

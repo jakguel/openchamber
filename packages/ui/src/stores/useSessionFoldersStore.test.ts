@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import * as safeStorageMod from './utils/safeStorage';
+import * as desktop from '@/lib/desktop';
+import * as runtimeFetchMod from '@/lib/runtime-fetch';
 
 const storage = new Map<string, string>();
 let storageSetCount = 0;
@@ -21,19 +24,17 @@ const safeStorage = {
   },
 } as Storage;
 
-mock.module('./utils/safeStorage', () => ({
-  getSafeStorage: () => safeStorage,
-}));
-
-mock.module('@/lib/desktop', () => ({
-  isVSCodeRuntime: () => false,
-}));
-
-mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: mock(async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } })),
-}));
+// De-mocked: leaf I/O modules are spied before the subject is dynamically imported
+// so the persist getSafeStorage factory (captured at store creation) resolves here.
+spyOn(safeStorageMod, 'getSafeStorage').mockImplementation(() => safeStorage);
+spyOn(desktop, 'isVSCodeRuntime').mockImplementation(() => false);
+spyOn(runtimeFetchMod, 'runtimeFetch').mockImplementation((async () => new Response('{}', { headers: { 'Content-Type': 'application/json' } })) as typeof runtimeFetchMod.runtimeFetch);
 
 const { useSessionFoldersStore } = await import('./useSessionFoldersStore');
+
+afterAll(() => {
+  mock.restore();
+});
 
 const waitForPersist = () => new Promise((resolve) => setTimeout(resolve, 350));
 

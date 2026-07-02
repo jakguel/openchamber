@@ -115,7 +115,7 @@ describe('resolveFallbackTaskSessionId', () => {
     expect(result).toBeUndefined();
   });
 
-  it('returns most recently created child when multiple idle candidates match', () => {
+  it('returns undefined when multiple idle candidates match and no status map is provided', () => {
     const child1 = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
@@ -133,8 +133,10 @@ describe('resolveFallbackTaskSessionId', () => {
       taskStartTime,
       sessions: [child1, child2],
     });
-    // Multiple idle candidates: picks most recently created (child-2 created later)
-    expect(result).toBe('child-2');
+    // Multiple idle candidates with no live status is ambiguous; the resolver
+    // deliberately refuses to guess and returns undefined (see sibling test with
+    // an empty sessionStatusMap).
+    expect(result).toBeUndefined();
   });
 
   it('returns the busy child when multiple children match but only one is busy', () => {
@@ -241,7 +243,7 @@ describe('resolveFallbackTaskSessionId', () => {
     expect(result).toBe('child-1');
   });
 
-  it('returns child session when taskStartTime is undefined (time filter skipped)', () => {
+  it('returns undefined when taskStartTime is unknown (cannot apply match window)', () => {
     const child = makeSession({
       id: 'child-1',
       parentID: parentSessionId,
@@ -254,7 +256,8 @@ describe('resolveFallbackTaskSessionId', () => {
       taskStartTime: undefined,
       sessions: [child],
     });
-    // taskStartTime unknown → time filter skipped → child still matches
-    expect(result).toBe('child-1');
+    // Without a numeric task start time the resolver cannot apply its match
+    // window, so it refuses to bind to a child rather than guess.
+    expect(result).toBeUndefined();
   });
 });

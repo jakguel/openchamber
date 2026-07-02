@@ -1,6 +1,10 @@
-import { describe, expect, test, beforeEach, mock } from "bun:test"
+import { describe, expect, test, beforeEach, afterAll, mock, spyOn } from "bun:test"
 import type { PermissionRequest } from "@/types/permission"
 import type { QuestionRequest } from "@/types/question"
+import { opencodeClient } from "@/lib/opencode/client"
+import { useConfigStore } from "@/stores/useConfigStore"
+import { useInputStore } from "./input-store"
+import * as globalSessionsStore from "@/stores/useGlobalSessionsStore"
 
 // Mock SDK client that records permission.reply / question.reply calls
 const replyCalls: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -76,60 +80,49 @@ const mockSdk = {
   },
 }
 
-// Mock opencodeClient singleton. Includes setDirectory/getDirectory/forkSession
-// so the real session-ui-store + useDirectoryStore (no longer mocked below) run
-// against a complete client surface.
-mock.module("@/lib/opencode/client", () => {
-  let clientDirectory: string | undefined = "/test/project"
-  return {
-    opencodeClient: {
-      getScopedSdkClient: (directory: string) => {
-        scopedClientDirectories.push(directory)
-        return mockScopedClient
-      },
-      getDirectory: () => clientDirectory,
-      setDirectory: (directory: string | undefined) => {
-        clientDirectory = directory
-      },
-      forkSession: async (sessionId: string) => ({ id: `${sessionId}-fork`, time: { created: 1, updated: 1 } }),
-      replyToPermission: mock((requestId: string, reply: string, options?: { directory?: string | null }) => {
-        replyCalls.push({ method: "permission.reply", params: { requestID: requestId, reply, directory: options?.directory } })
-        return Promise.resolve(true)
-      }),
-      replyToQuestion: mock((requestId: string, answers: string[] | string[][], directory?: string | null) => {
-        replyCalls.push({ method: "question.reply", params: { requestID: requestId, answers, directory } })
-        return Promise.resolve(true)
-      }),
-      revertSession: mock((sessionId: string, messageId: string, partId?: string, directory?: string | null) => {
-        replyCalls.push({
-          method: "session.revert",
-          params: { sessionID: sessionId, messageID: messageId, partID: partId, directory },
-        })
-        if (sessionRevertResult.error) {
-          const status = sessionRevertResult.response?.status
-          throw new Error(`session.revert failed${status ? ` (${status})` : ""}: rejected`)
-        }
-        return Promise.resolve(sessionRevertResult.data)
-      }),
-    },
+// De-mocked: the opencodeClient singleton, config/input store accessors, and the
+// global-sessions upsert are spied on their real modules. The SDK is injected per
+// test via setActionRefs(mockSdk); real session-actions, useSessionUIStore,
+// useDirectoryStore, and mergeSessionDirectoryMetadata run for real.
+let clientDirectory: string | undefined = "/test/project"
+spyOn(opencodeClient, "getScopedSdkClient").mockImplementation(((directory: string) => {
+  scopedClientDirectories.push(directory)
+  return mockScopedClient
+}) as unknown as typeof opencodeClient.getScopedSdkClient)
+spyOn(opencodeClient, "getDirectory").mockImplementation(() => clientDirectory)
+spyOn(opencodeClient, "setDirectory").mockImplementation(((directory: string | undefined) => {
+  clientDirectory = directory
+}) as unknown as typeof opencodeClient.setDirectory)
+spyOn(opencodeClient, "forkSession").mockImplementation((async (sessionId: string) => ({ id: `${sessionId}-fork`, time: { created: 1, updated: 1 } })) as unknown as typeof opencodeClient.forkSession)
+spyOn(opencodeClient, "replyToPermission").mockImplementation(((requestId: string, reply: string, options?: { directory?: string | null }) => {
+  replyCalls.push({ method: "permission.reply", params: { requestID: requestId, reply, directory: options?.directory } })
+  return Promise.resolve(true)
+}) as unknown as typeof opencodeClient.replyToPermission)
+spyOn(opencodeClient, "replyToQuestion").mockImplementation(((requestId: string, answers: string[] | string[][], directory?: string | null) => {
+  replyCalls.push({ method: "question.reply", params: { requestID: requestId, answers, directory } })
+  return Promise.resolve(true)
+}) as unknown as typeof opencodeClient.replyToQuestion)
+spyOn(opencodeClient, "revertSession").mockImplementation(((sessionId: string, messageId: string, partId?: string, directory?: string | null) => {
+  replyCalls.push({
+    method: "session.revert",
+    params: { sessionID: sessionId, messageID: messageId, partID: partId, directory },
+  })
+  if (sessionRevertResult.error) {
+    const status = sessionRevertResult.response?.status
+    throw new Error(`session.revert failed${status ? ` (${status})` : ""}: rejected`)
   }
-})
+  return Promise.resolve(sessionRevertResult.data)
+}) as unknown as typeof opencodeClient.revertSession)
 
-// Mock useConfigStore
-mock.module("@/stores/useConfigStore", () => ({
-  useConfigStore: {
-    getState: () => ({
-      isConnected: true,
-      hasEverConnected: true,
-    }),
-  },
-}))
+spyOn(useConfigStore, "getState").mockReturnValue({
+  isConnected: true,
+  hasEverConnected: true,
+} as unknown as ReturnType<typeof useConfigStore.getState>)
 
-// Mock useInputStore
 const inputState = {
   pendingInputText: "",
   pendingInputMode: "normal" as const,
-  attachedFiles: [],
+  attachedFiles: [] as never[],
   clearAttachedFiles: () => {
     inputState.attachedFiles = []
   },
@@ -137,35 +130,20 @@ const inputState = {
     inputState.attachedFiles = [...inputState.attachedFiles, attachment]
   },
 }
+spyOn(useInputStore, "getState").mockReturnValue(inputState as unknown as ReturnType<typeof useInputStore.getState>)
+spyOn(useInputStore, "setState").mockImplementation(((patch: Partial<typeof inputState>) => Object.assign(inputState, patch)) as unknown as typeof useInputStore.setState)
 
-mock.module("./input-store", () => ({
-  useInputStore: {
-    getState: () => inputState,
-    setState: (patch: Partial<typeof inputState>) => Object.assign(inputState, patch),
+spyOn(globalSessionsStore.useGlobalSessionsStore, "getState").mockReturnValue({
+  upsertSession: (session: unknown) => {
+    globalUpsertedSessions.push(session)
   },
-}))
+  activeSessions: [],
+  archivedSessions: [],
+} as unknown as ReturnType<typeof globalSessionsStore.useGlobalSessionsStore.getState>)
 
-mock.module("@/stores/useGlobalSessionsStore", () => ({
-  mergeSessionDirectoryMetadata: (incoming: Session, existing?: SessionWithDirectory | null): SessionWithDirectory => {
-    if (!existing) return incoming as SessionWithDirectory
-    const next = { ...(incoming as SessionWithDirectory) }
-    if (!next.directory && existing.directory) next.directory = existing.directory
-    if (!next.project && existing.project) next.project = existing.project
-    if (next.project && !next.project.worktree && existing.project?.worktree) {
-      next.project = { ...next.project, worktree: existing.project.worktree }
-    }
-    return next
-  },
-  useGlobalSessionsStore: {
-    getState: () => ({
-      upsertSession: (session: unknown) => {
-        globalUpsertedSessions.push(session)
-      },
-      activeSessions: [],
-      archivedSessions: [],
-    }),
-  },
-}))
+afterAll(() => {
+  mock.restore()
+})
 
 import { create, type StoreApi } from "zustand"
 import { INITIAL_STATE } from "./types"

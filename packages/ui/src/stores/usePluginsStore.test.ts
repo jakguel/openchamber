@@ -1,49 +1,27 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import type { PluginEntry, PluginFile, RegistryResult } from './usePluginsStore';
+import { usePluginsStore } from './usePluginsStore';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { opencodeClient } from '@/lib/opencode/client';
+import * as useAgentsStore from '@/stores/useAgentsStore';
+import * as configUpdate from '@/lib/configUpdate';
+import * as runtimeFetchMod from '@/lib/runtime-fetch';
 
 const originalFetch = globalThis.fetch;
 
-import type { PluginEntry, PluginFile, RegistryResult } from './usePluginsStore';
-
 const activeProjectPath = '/workspace/project';
 
-const refreshAfterOpenCodeRestartMock = mock(async () => undefined);
-const startConfigUpdateMock = mock(() => undefined);
-const finishConfigUpdateMock = mock(() => undefined);
-
-mock.module('@/stores/useProjectsStore', () => ({
-  useProjectsStore: {
-    getState: () => ({
-      getActiveProject: () => ({ path: activeProjectPath }),
-    }),
-  },
-}));
-
-mock.module('@/lib/opencode/client', () => ({
-  opencodeClient: {
-    getDirectory: () => '/fallback/project',
-  },
-}));
-
-mock.module('@/stores/useAgentsStore', () => ({
-  refreshAfterOpenCodeRestart: refreshAfterOpenCodeRestartMock,
-}));
-
-mock.module('@/lib/configUpdate', () => ({
-  startConfigUpdate: startConfigUpdateMock,
-  finishConfigUpdate: finishConfigUpdateMock,
-}));
-
-// mock.module is process-global in bun: another test file (e.g.
-// useCommandsStore.test.ts) may have replaced '@/lib/runtime-fetch' with its
-// own stub before this file runs. Register our own mock so this suite always
-// reaches its fetch double regardless of test file ordering. Delegating to
-// globalThis.fetch (instead of this file's double directly) keeps later test
-// files that stub global fetch working if this registration outlives us.
-mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
-}));
-
-const { usePluginsStore } = await import('./usePluginsStore');
+// De-mocked: every dependency is exercised through its real module; only the
+// external boundaries are spied. runtimeFetch delegates to globalThis.fetch (which
+// each test swaps for its recording double) so the store's real request code runs.
+spyOn(useProjectsStore, 'getState').mockReturnValue({
+  getActiveProject: () => ({ path: activeProjectPath }),
+} as unknown as ReturnType<typeof useProjectsStore.getState>);
+spyOn(opencodeClient, 'getDirectory').mockImplementation(() => '/fallback/project');
+spyOn(useAgentsStore, 'refreshAfterOpenCodeRestart').mockImplementation((async () => undefined) as typeof useAgentsStore.refreshAfterOpenCodeRestart);
+spyOn(configUpdate, 'startConfigUpdate').mockImplementation(() => undefined);
+spyOn(configUpdate, 'finishConfigUpdate').mockImplementation(() => undefined);
+spyOn(runtimeFetchMod, 'runtimeFetch').mockImplementation(((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init)) as unknown as typeof runtimeFetchMod.runtimeFetch);
 
 const entry: PluginEntry = {
   id: 'config:user:plugin-a',
@@ -140,6 +118,7 @@ describe('usePluginsStore', () => {
 
   afterAll(() => {
     globalThis.fetch = originalFetch;
+    mock.restore();
   });
 
   test('loadPlugins calls config plugins endpoint once and populates entries/files', async () => {

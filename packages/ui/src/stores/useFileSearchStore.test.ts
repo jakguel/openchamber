@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { opencodeClient } from '@/lib/opencode/client';
+import { useFileSearchStore } from './useFileSearchStore';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -18,19 +20,17 @@ const createDeferred = <T>(): Deferred<T> => {
   return { promise, resolve, reject };
 };
 
-const searchFilesMock = mock(() => {
+// De-mocked: opencodeClient is a real object singleton, so its searchFiles method
+// is spied by identity — the store exercises its real code path against the spy.
+spyOn(opencodeClient, 'searchFiles').mockImplementation((() => {
   const request = createDeferred<Array<{ path: string }>>();
   searchRequests.push(request);
   return request.promise;
+}) as unknown as typeof opencodeClient.searchFiles);
+
+afterAll(() => {
+  mock.restore();
 });
-
-mock.module('@/lib/opencode/client', () => ({
-  opencodeClient: {
-    searchFiles: searchFilesMock,
-  },
-}));
-
-const { useFileSearchStore } = await import('./useFileSearchStore');
 
 describe('useFileSearchStore', () => {
   beforeEach(() => {

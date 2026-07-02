@@ -1,30 +1,31 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import * as execCommands from '@/lib/execCommands';
+import * as gitApi from '@/lib/gitApi';
+import { getRootBranch, invalidateResolvedProjectRootCache } from './worktreeStatus';
 
-// Per-test controllable behaviour plus manual call tracking (the project's
-// tsconfig does not load bun-test's mock matcher types, so existing tests track
-// calls via plain arrays rather than `toHaveBeenCalled*`).
+// Per-test controllable behaviour plus manual call tracking (existing tests track
+// calls via plain arrays rather than mock matchers).
 let resolveRootImpl: (directory: string) => string | Promise<string> = (directory) => directory;
 let statusImpl: (directory: string) => { current: string } = () => ({ current: 'HEAD' });
 
 const resolveRootCalls: string[] = [];
 const statusCalls: string[] = [];
 
-mock.module('@/lib/execCommands', () => ({
-  execCommands: () => Promise.resolve({ success: false, results: [] }),
-}));
+// De-mocked: the git/exec I/O boundary is spied on the real modules (named exports
+// resolved through their live bindings); worktreeStatus runs for real against them.
+spyOn(execCommands, 'execCommands').mockImplementation((() => Promise.resolve({ success: false, results: [] })) as unknown as typeof execCommands.execCommands);
+spyOn(gitApi, 'getGitStatus').mockImplementation(((directory: string) => {
+  statusCalls.push(directory);
+  return Promise.resolve(statusImpl(directory));
+}) as unknown as typeof gitApi.getGitStatus);
+spyOn(gitApi, 'resolveGitPrimaryRoot').mockImplementation(((directory: string) => {
+  resolveRootCalls.push(directory);
+  return Promise.resolve(resolveRootImpl(directory));
+}) as unknown as typeof gitApi.resolveGitPrimaryRoot);
 
-mock.module('@/lib/gitApi', () => ({
-  getGitStatus: (directory: string) => {
-    statusCalls.push(directory);
-    return Promise.resolve(statusImpl(directory));
-  },
-  resolveGitPrimaryRoot: (directory: string) => {
-    resolveRootCalls.push(directory);
-    return Promise.resolve(resolveRootImpl(directory));
-  },
-}));
-
-const { getRootBranch, invalidateResolvedProjectRootCache } = await import('./worktreeStatus');
+afterAll(() => {
+  mock.restore();
+});
 
 describe('worktreeStatus.getRootBranch', () => {
   beforeEach(() => {

@@ -1,49 +1,43 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterAll, describe, expect, mock, spyOn, test } from 'bun:test';
+import * as sdk from '@opencode-ai/sdk/v2';
+import * as runtimeAPIRegistry from '@/contexts/runtimeAPIRegistry';
+import * as runtimeUrl from '@/lib/runtime-url';
+import * as runtimeSwitch from '@/lib/runtime-switch';
+import * as runtimeFetchMod from '@/lib/runtime-fetch';
+import * as startupTrace from '@/lib/startupTrace';
 
 type ConfigResponse = { data: Record<string, unknown> };
-
-(mock as unknown as { restore?: () => void }).restore?.();
 
 const configResolvers: Array<(response: ConfigResponse) => void> = [];
 let configCalls = 0;
 
-mock.module('@opencode-ai/sdk/v2', () => ({
-  createOpencodeClient: mock(() => ({
-    config: {
-      get: mock(() => {
-        configCalls += 1;
-        return new Promise<ConfigResponse>((resolve) => {
-          configResolvers.push(resolve);
-        });
-      }),
+// De-mocked: the external SDK factory and the runtime transport boundaries are
+// spied on their real modules before ./client is dynamically imported (cache-busted
+// for a fresh internal cache), so the client's real getConfig caching logic runs.
+spyOn(sdk, 'createOpencodeClient').mockImplementation((() => ({
+  config: {
+    get: () => {
+      configCalls += 1;
+      return new Promise<ConfigResponse>((resolve) => {
+        configResolvers.push(resolve);
+      });
     },
-  })),
-}));
+  },
+})) as unknown as typeof sdk.createOpencodeClient);
+spyOn(runtimeAPIRegistry, 'getRegisteredRuntimeAPIs').mockImplementation(() => null);
+spyOn(runtimeUrl, 'getRuntimeUrlResolver').mockImplementation((() => ({
+  api: (path: string) => path,
+})) as unknown as typeof runtimeUrl.getRuntimeUrlResolver);
+spyOn(runtimeSwitch, 'getRuntimeApiBaseUrl').mockImplementation(() => '');
+spyOn(runtimeSwitch, 'getRuntimeKey').mockImplementation(() => 'test-runtime');
+spyOn(runtimeFetchMod, 'runtimeFetch').mockImplementation((async () => new Response(JSON.stringify([]), {
+  headers: { 'Content-Type': 'application/json' },
+})) as typeof runtimeFetchMod.runtimeFetch);
+spyOn(startupTrace, 'markStartupTrace').mockImplementation(() => undefined);
 
-mock.module('@/contexts/runtimeAPIRegistry', () => ({
-  getRegisteredRuntimeAPIs: mock(() => null),
-}));
-
-mock.module('@/lib/runtime-url', () => ({
-  getRuntimeUrlResolver: mock(() => ({
-    api: (path: string) => path,
-  })),
-}));
-
-mock.module('@/lib/runtime-switch', () => ({
-  getRuntimeApiBaseUrl: mock(() => ''),
-  getRuntimeKey: mock(() => 'test-runtime'),
-}));
-
-mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: mock(async () => new Response(JSON.stringify([]), {
-    headers: { 'Content-Type': 'application/json' },
-  })),
-}));
-
-mock.module('@/lib/startupTrace', () => ({
-  markStartupTrace: mock(() => undefined),
-}));
+afterAll(() => {
+  mock.restore();
+});
 
 const { opencodeClient } = await import(`./client?cache-test=${Date.now()}`);
 

@@ -5,27 +5,35 @@ import { importWithChunkRecovery } from './chunkLoadRecovery';
 describe('importWithChunkRecovery', () => {
   test('schedules recovery reload when stored reload marker is corrupt', async () => {
     const globalWithWindow = globalThis as unknown as { window?: unknown };
-    const previousWindow = globalWithWindow.window;
+    // Other suites install a global `window` via Object.defineProperty with
+    // `writable` defaulting to false, which makes a plain `globalThis.window = ...`
+    // assignment silently no-op. Define the property explicitly so this test is
+    // robust to that leaked non-writable descriptor.
+    const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
     let storedMarker: string | null = null;
     let reloadCount = 0;
 
-    globalWithWindow.window = {
-      sessionStorage: {
-        getItem: () => '{not json',
-        setItem: (_key: string, value: string) => {
-          storedMarker = value;
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      writable: true,
+      value: {
+        sessionStorage: {
+          getItem: () => '{not json',
+          setItem: (_key: string, value: string) => {
+            storedMarker = value;
+          },
+        },
+        setTimeout: (callback: () => void) => {
+          callback();
+          return 0;
+        },
+        location: {
+          reload: () => {
+            reloadCount += 1;
+          },
         },
       },
-      setTimeout: (callback: () => void) => {
-        callback();
-        return 0;
-      },
-      location: {
-        reload: () => {
-          reloadCount += 1;
-        },
-      },
-    };
+    });
 
     try {
       let caught: unknown;
@@ -41,10 +49,10 @@ describe('importWithChunkRecovery', () => {
       expect(storedMarker).not.toBeNull();
       expect(reloadCount).toBe(1);
     } finally {
-      if (previousWindow === undefined) {
-        delete globalWithWindow.window;
+      if (previousDescriptor) {
+        Object.defineProperty(globalThis, 'window', previousDescriptor);
       } else {
-        globalWithWindow.window = previousWindow;
+        delete globalWithWindow.window;
       }
     }
   });

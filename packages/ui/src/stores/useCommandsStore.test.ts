@@ -1,4 +1,9 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { opencodeClient } from '@/lib/opencode/client';
+import * as runtimeFetchMod from '@/lib/runtime-fetch';
+import * as configUpdate from '@/lib/configUpdate';
+import * as configSync from '@/lib/configSync';
 
 const activeProjectPath = '/workspace/project';
 
@@ -10,48 +15,32 @@ let runtimeFetchImpl: () => Promise<Response> = async () => new Response(JSON.st
   headers: { 'Content-Type': 'application/json' },
 });
 
-const listCommandsWithDetailsMock = async () => {
+// De-mocked: the SDK client, runtime fetch, and config bus are spied on their real
+// modules before useCommandsStore is dynamically imported, so the config-change
+// subscription it registers at module load resolves to the no-op stub instead of
+// leaking a real listener. The store logic runs for real against these boundaries.
+spyOn(useProjectsStore, 'getState').mockReturnValue({
+  getActiveProject: () => ({ path: activeProjectPath }),
+} as unknown as ReturnType<typeof useProjectsStore.getState>);
+spyOn(opencodeClient, 'getDirectory').mockImplementation(() => getDirectoryImpl());
+spyOn(opencodeClient, 'listCommandsWithDetails').mockImplementation((async () => {
   listCommandsWithDetailsCalls += 1;
   return listCommandsWithDetailsImpl();
-};
-
-const withDirectoryMock = async (directory: string | null, callback: () => Promise<unknown>) => withDirectoryImpl(directory, callback);
-const getDirectoryMock = () => getDirectoryImpl();
-const runtimeFetchMock = async () => runtimeFetchImpl();
-
-mock.module('@/lib/opencode/client', () => ({
-  opencodeClient: {
-    getDirectory: getDirectoryMock,
-    listCommandsWithDetails: listCommandsWithDetailsMock,
-    withDirectory: withDirectoryMock,
-  },
-}));
-
-mock.module('@/stores/useProjectsStore', () => ({
-  useProjectsStore: {
-    getState: () => ({
-      getActiveProject: () => ({ path: activeProjectPath }),
-    }),
-  },
-}));
-
-mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: runtimeFetchMock,
-}));
-
-mock.module('@/lib/configUpdate', () => ({
-  startConfigUpdate: mock(() => undefined),
-  finishConfigUpdate: mock(() => undefined),
-  updateConfigUpdateMessage: mock(() => undefined),
-}));
-
-mock.module('@/lib/configSync', () => ({
-  emitConfigChange: mock(() => undefined),
-  scopeMatches: mock(() => false),
-  subscribeToConfigChanges: mock(() => () => undefined),
-}));
+}) as unknown as typeof opencodeClient.listCommandsWithDetails);
+spyOn(opencodeClient, 'withDirectory').mockImplementation((async (directory: string | null, callback: () => Promise<unknown>) => withDirectoryImpl(directory, callback)) as typeof opencodeClient.withDirectory);
+spyOn(runtimeFetchMod, 'runtimeFetch').mockImplementation((async () => runtimeFetchImpl()) as unknown as typeof runtimeFetchMod.runtimeFetch);
+spyOn(configUpdate, 'startConfigUpdate').mockImplementation(() => undefined);
+spyOn(configUpdate, 'finishConfigUpdate').mockImplementation(() => undefined);
+spyOn(configUpdate, 'updateConfigUpdateMessage').mockImplementation(() => undefined);
+spyOn(configSync, 'emitConfigChange').mockImplementation(() => undefined);
+spyOn(configSync, 'scopeMatches').mockImplementation(() => false);
+spyOn(configSync, 'subscribeToConfigChanges').mockImplementation((() => () => undefined) as typeof configSync.subscribeToConfigChanges);
 
 const { useCommandsStore } = await import('./useCommandsStore');
+
+afterAll(() => {
+  mock.restore();
+});
 
 describe('useCommandsStore', () => {
   beforeEach(() => {

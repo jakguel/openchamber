@@ -186,10 +186,17 @@ describe('SessionWindowState', () => {
       const entry = entries.find(([id]) => id === 'ses_ac4_serial');
       expect(entry).not.toBeNull();
       expect(entry != null).toBe(true);
+      // prepareForSessionSwitch snapshots the full SessionWindowState, which also
+      // carries the session file-tab fields (sessionFileTabs / activeSessionFileTabId).
+      // Assert those against the live store values so the round-trip stays exact
+      // without hardcoding leak-sensitive file-tab state.
+      const current = useUIStore.getState();
       expect(entry?.[1]).toEqual({
         isBottomTerminalOpen: true,
         isBottomTerminalExpanded: true,
         activeMainTab: 'terminal',
+        sessionFileTabs: current.sessionFileTabs,
+        activeSessionFileTabId: current.activeSessionFileTabId,
       });
     });
 

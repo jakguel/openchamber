@@ -1,6 +1,11 @@
-import { describe, expect, test, beforeEach, mock } from "bun:test"
+import { describe, expect, test, beforeEach, afterAll, mock, spyOn } from "bun:test"
 import { create, type StoreApi } from "zustand"
 import type { PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2/client"
+import { opencodeClient } from "@/lib/opencode/client"
+import { usePermissionStore } from "@/stores/permissionStore"
+import { useConfigStore } from "@/stores/useConfigStore"
+import { useTodosPersistStore } from "@/stores/useTodosPersistStore"
+import { toast } from "@/components/ui"
 
 const listPendingQuestionsCalls: Array<{ directories?: Array<string | null | undefined> }> = []
 const listPendingPermissionsCalls: Array<{ directories?: Array<string | null | undefined> }> = []
@@ -9,44 +14,34 @@ let pendingPermissionsResponse: PermissionRequest[] = []
 let pendingQuestionsShouldThrow = false
 let pendingPermissionsShouldThrow = false
 
-mock.module("@/lib/opencode/client", () => ({
-  opencodeClient: {
-    listPendingQuestions: mock(async (opts?: { directories?: Array<string | null | undefined> }) => {
-      listPendingQuestionsCalls.push(opts ?? {})
-      if (pendingQuestionsShouldThrow) throw new Error("question.list failed: simulated")
-      return pendingQuestionsResponse
-    }),
-    listPendingPermissions: mock(async (opts?: { directories?: Array<string | null | undefined> }) => {
-      listPendingPermissionsCalls.push(opts ?? {})
-      if (pendingPermissionsShouldThrow) throw new Error("permission.list failed: simulated")
-      return pendingPermissionsResponse
-    }),
-    getDirectory: () => "/repo",
-    getScopedSdkClient: () => ({}),
-    setDirectory: () => undefined,
-  },
-}))
+// De-mocked: the SDK client, cross-store getState accessors, and toast surface are
+// spied on their real modules; resyncBlockingRequestsForDirectory and session-actions
+// run for real. afterAll(mock.restore) restores every spy so nothing leaks.
+spyOn(opencodeClient, "listPendingQuestions").mockImplementation((async (opts?: { directories?: Array<string | null | undefined> }) => {
+  listPendingQuestionsCalls.push(opts ?? {})
+  if (pendingQuestionsShouldThrow) throw new Error("question.list failed: simulated")
+  return pendingQuestionsResponse
+}) as unknown as typeof opencodeClient.listPendingQuestions)
+spyOn(opencodeClient, "listPendingPermissions").mockImplementation((async (opts?: { directories?: Array<string | null | undefined> }) => {
+  listPendingPermissionsCalls.push(opts ?? {})
+  if (pendingPermissionsShouldThrow) throw new Error("permission.list failed: simulated")
+  return pendingPermissionsResponse
+}) as unknown as typeof opencodeClient.listPendingPermissions)
+spyOn(opencodeClient, "getDirectory").mockImplementation(() => "/repo")
+spyOn(opencodeClient, "getScopedSdkClient").mockImplementation((() => ({})) as unknown as typeof opencodeClient.getScopedSdkClient)
+spyOn(opencodeClient, "setDirectory").mockImplementation(() => undefined)
+spyOn(usePermissionStore, "getState").mockReturnValue({ isSessionAutoAccepting: () => false } as unknown as ReturnType<typeof usePermissionStore.getState>)
+spyOn(useConfigStore, "getState").mockReturnValue({ isConnected: true, hasEverConnected: true } as unknown as ReturnType<typeof useConfigStore.getState>)
+spyOn(useConfigStore, "setState").mockImplementation((() => undefined) as unknown as typeof useConfigStore.setState)
+spyOn(useTodosPersistStore, "getState").mockReturnValue({} as unknown as ReturnType<typeof useTodosPersistStore.getState>)
+spyOn(toast, "info").mockImplementation((() => undefined) as unknown as typeof toast.info)
+spyOn(toast, "error").mockImplementation((() => undefined) as unknown as typeof toast.error)
+spyOn(toast, "success").mockImplementation((() => undefined) as unknown as typeof toast.success)
+spyOn(toast, "dismiss").mockImplementation((() => undefined) as unknown as typeof toast.dismiss)
 
-mock.module("@/stores/permissionStore", () => ({
-  usePermissionStore: {
-    getState: () => ({ isSessionAutoAccepting: () => false }),
-  },
-}))
-
-mock.module("@/stores/useConfigStore", () => ({
-  useConfigStore: {
-    getState: () => ({ isConnected: true, hasEverConnected: true }),
-    setState: () => undefined,
-  },
-}))
-
-mock.module("@/stores/useTodosPersistStore", () => ({
-  useTodosPersistStore: { getState: () => ({}) },
-}))
-
-mock.module("@/components/ui", () => ({
-  toast: { info: () => undefined, error: () => undefined, success: () => undefined, dismiss: () => undefined },
-}))
+afterAll(() => {
+  mock.restore()
+})
 
 import { INITIAL_STATE, type State } from "../types"
 import type { DirectoryStore } from "../child-store"
