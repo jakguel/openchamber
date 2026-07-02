@@ -3,15 +3,13 @@ import React from 'react';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { ChatView } from '@/components/views/ChatView';
-import { FilesView } from '@/components/views/FilesView';
+import { FilesView, type FilesViewRef } from '@/components/views/FilesView';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
-import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 
 const CHAT_TAB_ID = 'chat';
-const EMPTY_PATHS: string[] = [];
 
 const MemoizedChatView = React.memo(ChatView);
 
@@ -35,32 +33,15 @@ export const SessionViewWrapper: React.FC = () => {
   const root = useEffectiveDirectory();
   const rootKey = root ?? '';
 
-  const openPaths = useFilesViewTabsStore((s) =>
-    rootKey ? (s.byRoot[rootKey]?.openPaths ?? EMPTY_PATHS) : EMPTY_PATHS,
-  );
-  const selectedPath = useFilesViewTabsStore((s) =>
-    rootKey ? (s.byRoot[rootKey]?.selectedPath ?? null) : null,
-  );
+  const sessionFileTabs = useUIStore((s) => s.sessionFileTabs);
+  const activeSessionFileTabId = useUIStore((s) => s.activeSessionFileTabId);
   const closeSessionFileTab = useUIStore((s) => s.closeSessionFileTab);
   const setActiveSessionFileTabId = useUIStore((s) => s.setActiveSessionFileTabId);
 
-  const [activeTabId, setActiveTabId] = React.useState<string>(CHAT_TAB_ID);
-
-  React.useEffect(() => {
-    if (selectedPath) {
-      setActiveTabId((prev) => (selectedPath !== prev ? selectedPath : prev));
-    }
-  }, [selectedPath]);
-
-  React.useEffect(() => {
-    if (activeTabId !== CHAT_TAB_ID && !openPaths.includes(activeTabId)) {
-      setActiveTabId(CHAT_TAB_ID);
-    }
-  }, [openPaths, activeTabId]);
+  const filesViewRef = React.useRef<FilesViewRef>(null);
 
   const handleSelect = React.useCallback(
     (id: string) => {
-      setActiveTabId(id);
       setActiveSessionFileTabId(rootKey, id);
     },
     [rootKey, setActiveSessionFileTabId],
@@ -68,13 +49,16 @@ export const SessionViewWrapper: React.FC = () => {
 
   const handleClose = React.useCallback(
     (id: string) => {
-      closeSessionFileTab(rootKey, id);
+      // Route through FilesView so the unsaved-changes guard can fire.
+      // FilesView calls onFileClose after the close is confirmed, which
+      // removes the session-scoped tab.
+      filesViewRef.current?.closeFile(id);
     },
-    [rootKey, closeSessionFileTab],
+    [],
   );
 
   const items = React.useMemo<SortableTabsStripItem[]>(() => {
-    const fileTabs: SortableTabsStripItem[] = openPaths.map((path) => ({
+    const fileTabs: SortableTabsStripItem[] = sessionFileTabs.map((path) => ({
       id: path,
       label: toFileName(path),
       title: toRelativePath(path, rootKey),
@@ -86,20 +70,20 @@ export const SessionViewWrapper: React.FC = () => {
       { id: CHAT_TAB_ID, label: t('sessionTabs.chat'), closable: false },
       ...fileTabs,
     ];
-  }, [openPaths, rootKey, t]);
+  }, [sessionFileTabs, rootKey, t]);
 
-  if (openPaths.length === 0) {
+  if (sessionFileTabs.length === 0) {
     return <MemoizedChatView />;
   }
 
-  const isChatActive = activeTabId === CHAT_TAB_ID;
+  const isChatActive = activeSessionFileTabId === CHAT_TAB_ID;
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <div className="flex h-10 shrink-0 items-stretch border-b border-border px-2">
         <SortableTabsStrip
           items={items}
-          activeId={activeTabId}
+          activeId={activeSessionFileTabId}
           onSelect={handleSelect}
           onClose={handleClose}
           layoutMode="scrollable"
@@ -111,7 +95,11 @@ export const SessionViewWrapper: React.FC = () => {
           <MemoizedChatView />
         </div>
         <div className={cn('absolute inset-0', isChatActive && 'invisible pointer-events-none')}>
-          <FilesView mode="editor-only" />
+          <FilesView
+            ref={filesViewRef}
+            mode="editor-only"
+            onFileClose={(path) => closeSessionFileTab(rootKey, path)}
+          />
         </div>
       </div>
     </div>
