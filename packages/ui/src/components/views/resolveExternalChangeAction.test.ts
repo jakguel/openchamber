@@ -110,6 +110,8 @@ type WiringSpies = {
   writeCalls: number;
   refuseCalls: number;
   statReads: number;
+  // Asserts the read-before-decide sequence, not just final call counts.
+  order: Array<'stat' | 'refuse' | 'write'>;
 };
 
 const makeWiring = (overrides: {
@@ -117,7 +119,7 @@ const makeWiring = (overrides: {
   isDirty: boolean;
   currentStat: ExternalChangeStat;
 }) => {
-  const spies: WiringSpies = { writeCalls: 0, refuseCalls: 0, statReads: 0 };
+  const spies: WiringSpies = { writeCalls: 0, refuseCalls: 0, statReads: 0, order: [] };
   const run = () =>
     runGuardedWrite({
       forceOverwrite: overrides.forceOverwrite,
@@ -125,13 +127,16 @@ const makeWiring = (overrides: {
       loadedStat: loaded,
       readCurrentStat: async () => {
         spies.statReads += 1;
+        spies.order.push('stat');
         return overrides.currentStat;
       },
       onRefuse: () => {
         spies.refuseCalls += 1;
+        spies.order.push('refuse');
       },
       write: async () => {
         spies.writeCalls += 1;
+        spies.order.push('write');
         return true;
       },
     });
@@ -151,6 +156,8 @@ describe('runGuardedWrite (saveDraft write-refusal wiring)', () => {
     expect(result).toBe(false);
     expect(spies.writeCalls).toBe(0);
     expect(spies.refuseCalls).toBe(1);
+    expect(spies.statReads).toBe(1);
+    expect(spies.order).toEqual(['stat', 'refuse']);
   });
 
   test('proceeds with the write when the on-disk stat is unchanged', async () => {
@@ -165,6 +172,8 @@ describe('runGuardedWrite (saveDraft write-refusal wiring)', () => {
     expect(result).toBe(true);
     expect(spies.writeCalls).toBe(1);
     expect(spies.refuseCalls).toBe(0);
+    expect(spies.statReads).toBe(1);
+    expect(spies.order).toEqual(['stat', 'write']);
   });
 
   test('forceOverwrite writes without a stat check (explicit overwrite from the dialog)', async () => {
@@ -180,5 +189,6 @@ describe('runGuardedWrite (saveDraft write-refusal wiring)', () => {
     expect(spies.statReads).toBe(0);
     expect(spies.writeCalls).toBe(1);
     expect(spies.refuseCalls).toBe(0);
+    expect(spies.order).toEqual(['write']);
   });
 });
