@@ -376,3 +376,224 @@ describe("AC3 clean-cancel: a superseding generation cancels the prior one", () 
     cancelPriorLiveDiffClearTimers(Number.NaN)
   })
 })
+
+// -------------------------------------------------------------------------
+// AC1 — computeLineDiff: exact op-list assertions (replace-classification,
+// multi-line block, simultaneous independent edits).
+// -------------------------------------------------------------------------
+
+describe("computeLineDiff — replace-classification at and around the 0.5 threshold (AC1)", () => {
+  // Threshold = EXTERNAL_UPDATE_REPLACE_SIMILARITY = 0.5 (condition: >= 0.5).
+  // sim(a,b) = (2 * LCS_char(a,b)) / (|a| + |b|).
+
+  test("similarity clearly above 0.5 → a single replace op (hello world → hello there)", () => {
+    // LCS("hello world","hello there") ≈ 7, denom=22, sim≈0.636 >= 0.5
+    const ops = computeLineDiff("hello world", "hello there")
+    expect(ops).toHaveLength(1)
+    expect(ops[0].type).toBe("replace")
+  })
+
+  test("similarity exactly 0.5 → replace op (boundary case: >= threshold)", () => {
+    // LCS("abcd","abef") = "ab" (2), denom = 8, sim = 4/8 = 0.5 >= 0.5 → replace
+    const ops = computeLineDiff("abcd", "abef")
+    expect(ops).toHaveLength(1)
+    expect(ops[0].type).toBe("replace")
+    if (ops[0].type === "replace") {
+      expect(ops[0].oldStart).toBe(0)
+      expect(ops[0].newStart).toBe(0)
+      expect(ops[0].oldLines).toEqual(["abcd"])
+      expect(ops[0].newLines).toEqual(["abef"])
+    }
+  })
+
+  test("similarity clearly below 0.5 → separate remove + add (abc → xyz, no common chars)", () => {
+    // LCS("abc","xyz") = 0, sim = 0 < 0.5 → remove + add
+    const ops = computeLineDiff("abc", "xyz")
+    expect(ops).toHaveLength(2)
+    expect(ops[0].type).toBe("remove")
+    if (ops[0].type === "remove") {
+      expect(ops[0].oldStart).toBe(0)
+      expect(ops[0].oldLines).toEqual(["abc"])
+    }
+    expect(ops[1].type).toBe("add")
+    if (ops[1].type === "add") {
+      expect(ops[1].newStart).toBe(0)
+      expect(ops[1].newLines).toEqual(["xyz"])
+    }
+  })
+})
+
+describe("computeLineDiff — multi-line block + simultaneous independent edits (AC1)", () => {
+  test("multi-line block: two consecutive similar-enough lines → a SINGLE replace op covering both", () => {
+    // Each pair shares common suffix: sim("foo one","bar one") = sim("foo two","bar two") ≈ 0.57 >= 0.5
+    const ops = computeLineDiff("a\nfoo one\nfoo two\nb", "a\nbar one\nbar two\nb")
+    expect(ops).toHaveLength(1)
+    expect(ops[0].type).toBe("replace")
+    if (ops[0].type === "replace") {
+      expect(ops[0].oldStart).toBe(1)
+      expect(ops[0].newStart).toBe(1)
+      expect(ops[0].oldLines).toEqual(["foo one", "foo two"])
+      expect(ops[0].newLines).toEqual(["bar one", "bar two"])
+    }
+  })
+
+  test("simultaneous edits at two independent locations → two SEPARATE replace ops", () => {
+    // Line 0 and line 2 each have high-similarity changes; line 1 ("keep") is unchanged.
+    // sim("hello world","hello there") ≈ 0.636; sim("foo baz","foo qux") ≈ 0.57; both >= 0.5
+    const ops = computeLineDiff("hello world\nkeep\nfoo baz", "hello there\nkeep\nfoo qux")
+    expect(ops).toHaveLength(2)
+    expect(ops[0].type).toBe("replace")
+    if (ops[0].type === "replace") {
+      expect(ops[0].oldStart).toBe(0)
+      expect(ops[0].newStart).toBe(0)
+      expect(ops[0].oldLines).toEqual(["hello world"])
+      expect(ops[0].newLines).toEqual(["hello there"])
+    }
+    expect(ops[1].type).toBe("replace")
+    if (ops[1].type === "replace") {
+      expect(ops[1].oldStart).toBe(2)
+      expect(ops[1].newStart).toBe(2)
+      expect(ops[1].oldLines).toEqual(["foo baz"])
+      expect(ops[1].newLines).toEqual(["foo qux"])
+    }
+  })
+})
+
+// -------------------------------------------------------------------------
+// AC1 — computeLiveDiffPlan: multi-line + simultaneous plan-level assertions
+// -------------------------------------------------------------------------
+
+describe("computeLiveDiffPlan — multi-line + simultaneous (AC1)", () => {
+  test("multi-line add: two inserted lines produce a single addedLines entry spanning both", () => {
+    const plan = computeLiveDiffPlan(computeLineDiff("a\nb", "a\nX\nY\nb"))
+    expect(plan.addedLines).toEqual([{ startLine: 1, endLine: 3 }])
+    expect(plan.removals).toEqual([])
+    expect(plan.replacedLines).toEqual([])
+  })
+
+  test("multi-line block replace: two consecutive changed lines → one replacedLines entry with both lines", () => {
+    const plan = computeLiveDiffPlan(computeLineDiff("a\nfoo one\nfoo two\nb", "a\nbar one\nbar two\nb"))
+    expect(plan.replacedLines).toHaveLength(1)
+    expect(plan.replacedLines[0]).toEqual({
+      startLine: 1,
+      endLine: 3,
+      oldLines: ["foo one", "foo two"],
+      newLines: ["bar one", "bar two"],
+    })
+    expect(plan.addedLines).toEqual([])
+    expect(plan.removals).toEqual([])
+  })
+
+  test("simultaneous independent replacements → TWO replacedLines entries at their respective positions", () => {
+    const plan = computeLiveDiffPlan(computeLineDiff("hello world\nkeep\nfoo baz", "hello there\nkeep\nfoo qux"))
+    expect(plan.replacedLines).toHaveLength(2)
+    expect(plan.replacedLines[0]).toEqual({
+      startLine: 0,
+      endLine: 1,
+      oldLines: ["hello world"],
+      newLines: ["hello there"],
+    })
+    expect(plan.replacedLines[1]).toEqual({
+      startLine: 2,
+      endLine: 3,
+      oldLines: ["foo baz"],
+      newLines: ["foo qux"],
+    })
+    expect(plan.addedLines).toEqual([])
+    expect(plan.removals).toEqual([])
+  })
+})
+
+// -------------------------------------------------------------------------
+// AC1+AC2 — decoration coverage for multi-line + simultaneous cases
+// -------------------------------------------------------------------------
+
+describe("buildLiveDiffDecorations — multi-line + simultaneous flash coverage (AC1+AC2)", () => {
+  test("multi-line add: flash decoration on EACH added line, unchanged lines untouched", () => {
+    const newContent = "a\nX\nY\nb"
+    const state = stateWith(newContent)
+    const plan = computeLiveDiffPlan(computeLineDiff("a\nb", newContent))
+    const { ranges } = buildLiveDiffDecorations(state, plan, { gen: 1, activeCollapses: 0 })
+    const present = state.update({ effects: addLiveDiffEffect.of(ranges) }).state
+    expect(hasDecoClassAt(present, present.doc.line(2).from, "cm-line-added")).toBe(true)  // "X"
+    expect(hasDecoClassAt(present, present.doc.line(3).from, "cm-line-added")).toBe(true)  // "Y"
+    expect(hasDecoClassAt(present, present.doc.line(1).from, "cm-line-added")).toBe(false) // "a" unchanged
+    expect(hasDecoClassAt(present, present.doc.line(4).from, "cm-line-added")).toBe(false) // "b" unchanged
+  })
+
+  test("simultaneous replacements: both sites get flash AND underline; unchanged line is clean", () => {
+    const oldContent = "hello world\nkeep\nfoo baz"
+    const newContent = "hello there\nkeep\nfoo qux"
+    const state = stateWith(newContent)
+    const plan = computeLiveDiffPlan(computeLineDiff(oldContent, newContent))
+    const { ranges } = buildLiveDiffDecorations(state, plan, { gen: 1, activeCollapses: 0 })
+    const present = state.update({ effects: addLiveDiffEffect.of(ranges) }).state
+    // Line 1 ("hello there") and line 3 ("foo qux") are replaced; line 2 ("keep") is unchanged.
+    expect(hasDecoClassAt(present, present.doc.line(1).from, "cm-line-added")).toBe(true)
+    expect(hasDecoClassAt(present, present.doc.line(3).from, "cm-line-added")).toBe(true)
+    expect(hasDecoClassAt(present, present.doc.line(2).from, "cm-line-added")).toBe(false)
+    // Both replacement sites contribute an underline span.
+    const classes = specClasses(present)
+    expect(classes.filter((c) => c === "cm-live-diff-replaced-span")).toHaveLength(2)
+  })
+})
+
+// -------------------------------------------------------------------------
+// AC2 — timer-advance + class-assertion: decorations clear via fired timers
+// (uses real setTimeout with short durations; same callback shape as
+// applyLiveDiffDecorations; reuses the makeStubView + liveDiffField path).
+// -------------------------------------------------------------------------
+
+describe("AC2: timer-advance + class-assertion — classes appear then clear via scheduled timer", () => {
+  test("cm-line-added appears after add, is gone after the flash timer fires", async () => {
+    const { view, getState } = makeStubView("a\nNEW\nb")
+    const plan: LiveDiffPlan = { addedLines: [{ startLine: 1, endLine: 2 }], replacedLines: [], removals: [] }
+    const gen = 77
+    const { ranges } = buildLiveDiffDecorations(getState(), plan, { gen, activeCollapses: 0 })
+    view.dispatch({ effects: addLiveDiffEffect.of(ranges) })
+
+    const addedLinePos = getState().doc.line(2).from
+    expect(hasDecoClassAt(getState(), addedLinePos, "cm-line-added")).toBe(true)
+
+    // Arm timers with short durations — same callback shape as applyLiveDiffDecorations.
+    const timers = scheduleLiveDiffClears(
+      gen,
+      (payload) => {
+        if (view.dom.isConnected) view.dispatch({ effects: clearLiveDiffEffect.of(payload) })
+      },
+      { collapseMs: 5, flashMs: 15 },
+    )
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 30))
+    expect(hasDecoClassAt(getState(), addedLinePos, "cm-line-added")).toBe(false)
+    for (const t of timers) clearTimeout(t)
+  })
+
+  test("cm-live-diff-replaced-span (underline) clears together with the flash timer", async () => {
+    const { view, getState } = makeStubView("hello there")
+    const plan: LiveDiffPlan = {
+      addedLines: [],
+      replacedLines: [{ startLine: 0, endLine: 1, oldLines: ["hello world"], newLines: ["hello there"] }],
+      removals: [],
+    }
+    const gen = 78
+    const { ranges } = buildLiveDiffDecorations(getState(), plan, { gen, activeCollapses: 0 })
+    view.dispatch({ effects: addLiveDiffEffect.of(ranges) })
+
+    expect(specClasses(getState())).toContain("cm-live-diff-replaced-span")
+    expect(specClasses(getState())).toContain("cm-line-added")
+
+    const timers = scheduleLiveDiffClears(
+      gen,
+      (payload) => {
+        if (view.dom.isConnected) view.dispatch({ effects: clearLiveDiffEffect.of(payload) })
+      },
+      { collapseMs: 5, flashMs: 15 },
+    )
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 30))
+    expect(specClasses(getState())).not.toContain("cm-live-diff-replaced-span")
+    expect(specClasses(getState())).not.toContain("cm-line-added")
+    for (const t of timers) clearTimeout(t)
+  })
+})
