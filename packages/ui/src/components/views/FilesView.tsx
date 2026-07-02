@@ -25,7 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { GoToLineDialog } from './GoToLineDialog';
 import { PreviewToggleButton } from './PreviewToggleButton';
-import { resolveExternalChangeAction } from './resolveExternalChangeAction';
+import { resolveExternalChangeAction, runGuardedWrite, shouldSurfaceConflict } from './resolveExternalChangeAction';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
@@ -930,6 +930,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const activeFileLoadIdRef = React.useRef(0);
   const externalReconcileInFlightRef = React.useRef(false);
   const externalUpdateVersionRef = React.useRef(0);
+  const lastSurfacedConflictStatRef = React.useRef<FileStatSnapshot | null>(null);
   const [pendingExternalUpdate, setPendingExternalUpdate] = React.useState<{ content: string; version: number } | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = React.useState<'idle' | 'saved'>('idle');
   const [diagramSaved, setDiagramSaved] = React.useState(false);
@@ -1658,43 +1659,42 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     setIsSaving(true);
 
     try {
-      if (!options?.forceOverwrite) {
-        const currentStat = await readFileStat(selectedFile.path, selectedFileReadOptions);
-        const action = resolveExternalChangeAction({
-          currentStat,
-          loadedStat: lastLoadedFileStatRef.current,
-          isDirty,
-        });
-        if (action === 'refuse-safe-path') {
+      return await runGuardedWrite({
+        forceOverwrite: Boolean(options?.forceOverwrite),
+        isDirty,
+        loadedStat: lastLoadedFileStatRef.current,
+        readCurrentStat: () => readFileStat(selectedFile.path, selectedFileReadOptions),
+        onRefuse: () => {
           console.warn(
             `[saveDraft] refusing to overwrite "${selectedFile.path}": the file changed on disk since it was loaded. ` +
             'Routing to the discard/overwrite dialog to prevent a lost update.',
           );
           setConfirmDiscardOpen(true);
-          return false;
-        }
-      }
-
-      const contentToWrite = serializeEditorContent(draftContent, loadedFileLineEnding);
-      const result = await files.writeFile(selectedFile.path, contentToWrite);
-      if (!result?.success) {
-        toast.error(t('filesView.toast.writeFileFailed'));
-        return false;
-      }
-      setFileContent(draftContent);
-      if (selectedFile?.path && isDrawioFile(selectedFile.path)) {
-        diagramXmlRef.current = draftContent;
-        diagramSavedXmlRef.current = draftContent;
-      }
-      // Refresh stat after write so polling doesn't see a stale metadata change.
-      void readFileStat(selectedFile.path)
-        .then((stat) => {
-          if (stat) {
-            lastLoadedFileStatRef.current = stat;
+        },
+        write: async () => {
+          const contentToWrite = serializeEditorContent(draftContent, loadedFileLineEnding);
+          const result = await files.writeFile!(selectedFile.path, contentToWrite);
+          if (!result?.success) {
+            toast.error(t('filesView.toast.writeFileFailed'));
+            return false;
           }
-        })
-        .catch(() => {});
-      return true;
+          setFileContent(draftContent);
+          if (selectedFile?.path && isDrawioFile(selectedFile.path)) {
+            diagramXmlRef.current = draftContent;
+            diagramSavedXmlRef.current = draftContent;
+          }
+          // Refresh stat after write so polling doesn't see a stale metadata change.
+          void readFileStat(selectedFile.path)
+            .then((stat) => {
+              if (stat) {
+                lastLoadedFileStatRef.current = stat;
+                lastSurfacedConflictStatRef.current = null;
+              }
+            })
+            .catch(() => {});
+          return true;
+        },
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('filesView.toast.saveFailed'));
       return false;
@@ -1882,6 +1882,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
         diagramSavedXmlRef.current = editorContent;
         setDraftContent(viewContent);
         setLoadedFilePath(node.path);
+        lastSurfacedConflictStatRef.current = null;
         if (externalReconcileInFlightRef.current) {
           externalUpdateVersionRef.current += 1;
           setPendingExternalUpdate({ content: viewContent, version: externalUpdateVersionRef.current });
@@ -2084,6 +2085,16 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
             loadedStat: previousStat,
             isDirty: isDirtyRef.current,
           });
+
+          if (action === 'refuse-safe-path') {
+            // Surface once per new on-disk stat so the 2s poll cannot re-open the dialog every tick.
+            if (shouldSurfaceConflict(latestStat, lastSurfacedConflictStatRef.current)) {
+              lastSurfacedConflictStatRef.current = latestStat;
+              setConfirmDiscardOpen(true);
+            }
+            return;
+          }
+
           if (action !== 'live-apply') {
             return;
           }

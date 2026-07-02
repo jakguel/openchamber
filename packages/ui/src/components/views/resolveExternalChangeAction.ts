@@ -45,3 +45,36 @@ export function resolveExternalChangeAction(input: {
   }
   return input.isDirty ? 'refuse-safe-path' : 'live-apply';
 }
+
+export function shouldSurfaceConflict(
+  latestStat: ExternalChangeStat | null | undefined,
+  lastSurfacedStat: ExternalChangeStat | null | undefined,
+): boolean {
+  if (!lastSurfacedStat) {
+    return true;
+  }
+  return hasExternalStatChange(latestStat, lastSurfacedStat);
+}
+
+export async function runGuardedWrite(params: {
+  forceOverwrite: boolean;
+  isDirty: boolean;
+  loadedStat: ExternalChangeStat | null | undefined;
+  readCurrentStat: () => Promise<ExternalChangeStat | null | undefined>;
+  onRefuse: () => void;
+  write: () => Promise<boolean>;
+}): Promise<boolean> {
+  if (!params.forceOverwrite) {
+    const currentStat = await params.readCurrentStat();
+    const action = resolveExternalChangeAction({
+      currentStat,
+      loadedStat: params.loadedStat,
+      isDirty: params.isDirty,
+    });
+    if (action === 'refuse-safe-path') {
+      params.onRefuse();
+      return false;
+    }
+  }
+  return params.write();
+}

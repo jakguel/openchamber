@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   hasExternalStatChange,
   resolveExternalChangeAction,
+  runGuardedWrite,
+  shouldSurfaceConflict,
   type ExternalChangeStat,
 } from './resolveExternalChangeAction';
 
@@ -85,5 +87,98 @@ describe('hasExternalStatChange', () => {
     expect(
       hasExternalStatChange({ path: '/a.txt', size: 100, mtimeMs: 1000 }, loaded),
     ).toBe(false);
+  });
+});
+
+describe('shouldSurfaceConflict (poll anti-spam)', () => {
+  test('surfaces when nothing has been surfaced yet', () => {
+    expect(shouldSurfaceConflict({ path: '/a.txt', size: 200, mtimeMs: 2000 }, null)).toBe(true);
+  });
+
+  test('does NOT re-surface the same already-surfaced stat', () => {
+    const surfaced: ExternalChangeStat = { path: '/a.txt', size: 200, mtimeMs: 2000 };
+    expect(shouldSurfaceConflict({ path: '/a.txt', size: 200, mtimeMs: 2000 }, surfaced)).toBe(false);
+  });
+
+  test('re-surfaces when the on-disk stat changes again', () => {
+    const surfaced: ExternalChangeStat = { path: '/a.txt', size: 200, mtimeMs: 2000 };
+    expect(shouldSurfaceConflict({ path: '/a.txt', size: 300, mtimeMs: 3000 }, surfaced)).toBe(true);
+  });
+});
+
+type WiringSpies = {
+  writeCalls: number;
+  refuseCalls: number;
+  statReads: number;
+};
+
+const makeWiring = (overrides: {
+  forceOverwrite: boolean;
+  isDirty: boolean;
+  currentStat: ExternalChangeStat;
+}) => {
+  const spies: WiringSpies = { writeCalls: 0, refuseCalls: 0, statReads: 0 };
+  const run = () =>
+    runGuardedWrite({
+      forceOverwrite: overrides.forceOverwrite,
+      isDirty: overrides.isDirty,
+      loadedStat: loaded,
+      readCurrentStat: async () => {
+        spies.statReads += 1;
+        return overrides.currentStat;
+      },
+      onRefuse: () => {
+        spies.refuseCalls += 1;
+      },
+      write: async () => {
+        spies.writeCalls += 1;
+        return true;
+      },
+    });
+  return { spies, run };
+};
+
+describe('runGuardedWrite (saveDraft write-refusal wiring)', () => {
+  test('refuses the write and opens the dialog on a dirty external conflict', async () => {
+    const { spies, run } = makeWiring({
+      forceOverwrite: false,
+      isDirty: true,
+      currentStat: { path: '/a.txt', size: 250, mtimeMs: 5000 },
+    });
+
+    const result = await run();
+
+    expect(result).toBe(false);
+    expect(spies.writeCalls).toBe(0);
+    expect(spies.refuseCalls).toBe(1);
+  });
+
+  test('proceeds with the write when the on-disk stat is unchanged', async () => {
+    const { spies, run } = makeWiring({
+      forceOverwrite: false,
+      isDirty: true,
+      currentStat: { path: '/a.txt', size: 100, mtimeMs: 1000 },
+    });
+
+    const result = await run();
+
+    expect(result).toBe(true);
+    expect(spies.writeCalls).toBe(1);
+    expect(spies.refuseCalls).toBe(0);
+  });
+
+  test('forceOverwrite writes without a stat check (explicit overwrite from the dialog)', async () => {
+    const { spies, run } = makeWiring({
+      forceOverwrite: true,
+      isDirty: true,
+      currentStat: { path: '/a.txt', size: 999, mtimeMs: 9000 },
+    });
+
+    const result = await run();
+
+    expect(result).toBe(true);
+    expect(spies.statReads).toBe(0);
+    expect(spies.writeCalls).toBe(1);
+    expect(spies.refuseCalls).toBe(0);
   });
 });
