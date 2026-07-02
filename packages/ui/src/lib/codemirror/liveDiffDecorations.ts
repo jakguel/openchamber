@@ -155,6 +155,8 @@ const decoMeta = (value: Decoration): DecoMeta => {
 export const addLiveDiffEffect = StateEffect.define<readonly Range<Decoration>[]>();
 /** Effect removing every decoration of `gen` whose kind is in `kinds`. */
 export const clearLiveDiffEffect = StateEffect.define<{ gen: number; kinds: readonly LiveDiffKind[] }>();
+/** Effect dropping every prior-generation live-diff decoration, keeping only `keepGen`. */
+export const clearPriorLiveDiffEffect = StateEffect.define<number>();
 
 /**
  * Additive decoration field for live-diff feedback. It maps its decorations
@@ -177,6 +179,14 @@ export const liveDiffField = StateField.define<DecorationSet>({
             const meta = decoMeta(value);
             if (meta.gen !== gen || meta.kind == null) return true;
             return !kinds.includes(meta.kind);
+          },
+        });
+      } else if (effect.is(clearPriorLiveDiffEffect)) {
+        const keepGen = effect.value;
+        next = next.update({
+          filter: (_from, _to, value) => {
+            const meta = decoMeta(value);
+            return meta.gen == null || meta.gen === keepGen;
           },
         });
       }
@@ -369,23 +379,52 @@ const planHasWork = (plan: LiveDiffPlan): boolean =>
 let liveDiffGeneration = 0;
 
 /**
+ * Active clear-timer handles keyed by generation. A superseding generation
+ * cancels the prior generations' pending timers so a stale timeout cannot fire a
+ * clear against the current field (the AC3 clean-cancel requirement).
+ */
+const activeLiveDiffClearTimers = new Map<number, Set<ReturnType<typeof setTimeout>>>();
+
+export function registerLiveDiffClearTimers(
+  gen: number,
+  timers: Set<ReturnType<typeof setTimeout>>,
+): void {
+  activeLiveDiffClearTimers.set(gen, timers);
+}
+
+export function cancelPriorLiveDiffClearTimers(keepGen: number): void {
+  for (const [gen, timers] of activeLiveDiffClearTimers) {
+    if (gen === keepGen) continue;
+    for (const timer of timers) clearTimeout(timer);
+    activeLiveDiffClearTimers.delete(gen);
+  }
+}
+
+/**
  * Applies one batch of live-diff decorations for a just-dispatched external
  * update: builds the ranges against the current (new-doc) state honoring the
  * concurrent-collapse cap, adds them in one effect, then arms the removal timers.
  */
 export function applyLiveDiffDecorations(view: EditorView, plan: LiveDiffPlan): void {
   if (!planHasWork(plan)) return;
-  const gen = (liveDiffGeneration += 1);
-  const current = view.state.field(liveDiffField, false) ?? Decoration.none;
-  const { ranges } = buildLiveDiffDecorations(view.state, plan, {
-    gen,
-    activeCollapses: countActiveCollapses(current),
-  });
-  if (ranges.length === 0) return;
-  view.dispatch({ effects: addLiveDiffEffect.of(ranges) });
-  scheduleLiveDiffClears(gen, (payload) => {
+  liveDiffGeneration += 1;
+  const gen = liveDiffGeneration;
+  // Clean-cancel any in-flight prior generation: cancel its pending clear timers,
+  // then drop its decorations atomically with painting the new generation so no
+  // stale flash/collapse/underline can overlap the latest external update (AC3).
+  // The prior generation is fully removed, so the new batch starts from a zero
+  // concurrent-collapse baseline.
+  cancelPriorLiveDiffClearTimers(gen);
+  const { ranges } = buildLiveDiffDecorations(view.state, plan, { gen, activeCollapses: 0 });
+  if (ranges.length === 0) {
+    view.dispatch({ effects: clearPriorLiveDiffEffect.of(gen) });
+    return;
+  }
+  view.dispatch({ effects: [clearPriorLiveDiffEffect.of(gen), addLiveDiffEffect.of(ranges)] });
+  const timers = scheduleLiveDiffClears(gen, (payload) => {
     if (view.dom.isConnected) view.dispatch({ effects: clearLiveDiffEffect.of(payload) });
   });
+  registerLiveDiffClearTimers(gen, timers);
 }
 
 /**

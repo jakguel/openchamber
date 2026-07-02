@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import type { EditorState } from "@codemirror/state"
 import { EditorState as State } from "@codemirror/state"
+import type { EditorView } from "@codemirror/view"
 
 import { buildExternalUpdateTransaction, computeLineDiff } from "@/components/ui/codeMirrorExternalUpdate"
 
@@ -11,14 +12,18 @@ import {
   LIVE_DIFF_FLASH_HOLD_MS,
   LIVE_DIFF_MAX_ANIMATED_CHANGES,
   addLiveDiffEffect,
+  applyLiveDiffDecorations,
   buildLiveDiffDecorations,
+  cancelPriorLiveDiffClearTimers,
   clearLiveDiffEffect,
+  clearPriorLiveDiffEffect,
   computeLiveDiffPlan,
   countActiveCollapses,
   liveDiffDecorationsExtension,
   liveDiffField,
   planLiveDiffAnimation,
   prefersReducedMotion,
+  registerLiveDiffClearTimers,
   scheduleLiveDiffClears,
   type LiveDiffPlan,
 } from "./liveDiffDecorations"
@@ -281,5 +286,93 @@ describe("flash timing", () => {
     await sleep(20)
     expect(calls.some((c) => c.kinds.includes("flash") && c.kinds.includes("underline"))).toBe(true)
     expect(calls).toHaveLength(2)
+  })
+})
+
+// AC3 clean-cancel: when a second external change lands before the first
+// animation's timers fire, the superseding generation must remove gen-1's
+// decorations AND cancel gen-1's pending clear timers — latest-wins with no
+// stale overlap. Drives the REAL liveDiffField / applyLiveDiffDecorations /
+// scheduleLiveDiffClears + timer-registry path (no DOM, no internal mocks); the
+// EditorView shell is doubled at the CM I/O boundary only.
+const makeStubView = (doc: string): { view: EditorView; getState: () => EditorState } => {
+  let state = State.create({ doc, extensions: [liveDiffDecorationsExtension()] })
+  const view = {
+    get state() {
+      return state
+    },
+    dom: { isConnected: true },
+    dispatch: (tr: Parameters<EditorState["update"]>[0]) => {
+      state = state.update(tr).state
+    },
+  } as unknown as EditorView
+  return { view, getState: () => state }
+}
+
+describe("AC3 clean-cancel: a superseding generation cancels the prior one", () => {
+  test("applyLiveDiffDecorations: a second apply drops gen-1 decorations and keeps only gen-2 (real field)", () => {
+    const { view, getState } = makeStubView("a\nX\nb\nY\nc")
+
+    applyLiveDiffDecorations(view, { addedLines: [{ startLine: 1, endLine: 2 }], replacedLines: [], removals: [] })
+    expect(hasDecoClassAt(getState(), getState().doc.line(2).from, "cm-line-added")).toBe(true)
+
+    applyLiveDiffDecorations(view, { addedLines: [{ startLine: 3, endLine: 4 }], replacedLines: [], removals: [] })
+    expect(hasDecoClassAt(getState(), getState().doc.line(2).from, "cm-line-added")).toBe(false)
+    expect(hasDecoClassAt(getState(), getState().doc.line(4).from, "cm-line-added")).toBe(true)
+    expect(specClasses(getState())).toEqual(["cm-line-added"])
+
+    cancelPriorLiveDiffClearTimers(Number.NaN) // drop the real default-duration timers this test armed
+  })
+
+  test("clearPriorLiveDiffEffect drops a stale replace(flash+underline)+collapse batch, keeping the new gen", () => {
+    let state = State.create({ doc: "hello there\nkeep\ntail", extensions: [liveDiffDecorationsExtension()] })
+    const g1 = buildLiveDiffDecorations(
+      state,
+      {
+        addedLines: [],
+        replacedLines: [{ startLine: 0, endLine: 1, oldLines: ["hello world"], newLines: ["hello there"] }],
+        removals: [{ atLine: 2, lines: ["gone"] }],
+      },
+      { gen: 1, activeCollapses: 0 },
+    )
+    state = state.update({ effects: addLiveDiffEffect.of(g1.ranges) }).state
+    expect(specClasses(state)).toContain("cm-live-diff-replaced-span")
+    expect(countActiveCollapses(state.field(liveDiffField))).toBe(1)
+
+    const g2 = buildLiveDiffDecorations(
+      state,
+      { addedLines: [{ startLine: 1, endLine: 2 }], replacedLines: [], removals: [] },
+      { gen: 2, activeCollapses: 0 },
+    )
+    state = state.update({ effects: [clearPriorLiveDiffEffect.of(2), addLiveDiffEffect.of(g2.ranges)] }).state
+    expect(specClasses(state)).not.toContain("cm-live-diff-replaced-span")
+    expect(countActiveCollapses(state.field(liveDiffField))).toBe(0)
+    expect(hasDecoClassAt(state, state.doc.line(2).from, "cm-line-added")).toBe(true)
+  })
+
+  test("regression control: a plain additive add WITHOUT clear-prior retains BOTH generations", () => {
+    let state = State.create({ doc: "a\nX\nb\nY\nc", extensions: [liveDiffDecorationsExtension()] })
+    const g1 = buildLiveDiffDecorations(state, { addedLines: [{ startLine: 1, endLine: 2 }], replacedLines: [], removals: [] }, { gen: 1, activeCollapses: 0 })
+    const g2 = buildLiveDiffDecorations(state, { addedLines: [{ startLine: 3, endLine: 4 }], replacedLines: [], removals: [] }, { gen: 2, activeCollapses: 0 })
+    state = state.update({ effects: addLiveDiffEffect.of(g1.ranges) }).state
+    state = state.update({ effects: addLiveDiffEffect.of(g2.ranges) }).state
+    expect(hasDecoClassAt(state, state.doc.line(2).from, "cm-line-added")).toBe(true)
+    expect(hasDecoClassAt(state, state.doc.line(4).from, "cm-line-added")).toBe(true)
+  })
+
+  test("timer-level: a superseding generation cancels the prior generation's pending clear timers", async () => {
+    const fired: number[] = []
+    const t1 = scheduleLiveDiffClears(1, (p) => fired.push(p.gen), { collapseMs: 5, flashMs: 15 })
+    registerLiveDiffClearTimers(1, t1)
+
+    cancelPriorLiveDiffClearTimers(2)
+    const t2 = scheduleLiveDiffClears(2, (p) => fired.push(p.gen), { collapseMs: 5, flashMs: 15 })
+    registerLiveDiffClearTimers(2, t2)
+
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    expect(fired).not.toContain(1)
+    expect(fired).toContain(2)
+
+    cancelPriorLiveDiffClearTimers(Number.NaN)
   })
 })
