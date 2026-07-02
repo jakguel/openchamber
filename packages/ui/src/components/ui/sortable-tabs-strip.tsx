@@ -426,6 +426,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               : 'w-6 from-background'
           )}
           style={pinFirst ? { left: pinnedWidth } : undefined}
+          aria-hidden
         />
       ) : null}
       {isScrollable && overflow.right ? (
@@ -437,6 +438,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               : 'w-6 from-background'
           )}
           style={pinFirst ? undefined : (showScrollButtons ? { right: SCROLL_RAIL_WIDTH } : undefined)}
+          aria-hidden
         />
       ) : null}
       <div
