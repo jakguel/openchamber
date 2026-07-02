@@ -133,11 +133,11 @@ export function setActionRefs(
 export function setOptimisticRefs(
   add: (input: OptimisticAddInput) => void,
   remove: (input: OptimisticRemoveInput) => void,
-  token: symbol | string,
+  token?: symbol | string,
 ) {
   _optimisticAdd = add
   _optimisticRemove = remove
-  _optimisticOwner = token
+  _optimisticOwner = token ?? null
 }
 
 // Clear the optimistic refs. Owned exclusively by SyncOptimisticBridge, which
