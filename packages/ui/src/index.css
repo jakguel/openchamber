@@ -1387,14 +1387,30 @@ html:not(.dark) .chat-scroll {
   padding: 0.5rem;
 }
 
+/* Inline SVG diagrams fit to container width — the whole diagram is scaled down to fit,
+   with NO inner horizontal scroll (zoom/pan lives in the fullscreen viewer). overflow is
+   hidden so the diagram is clipped to the box rather than scrolled, and so the Story A
+   font-balance transform (diagramScale.ts applyDiagramBodyScale) cannot spill into an
+   ancestor scroll area or resurrect an inner scrollbar. */
 [data-markdown="mermaid-block"] [data-markdown="mermaid-scroll"] {
+  overflow: hidden;
+}
+
+/* ASCII fallback keeps horizontal scroll: monospace art cannot reflow to fit width. */
+[data-markdown="mermaid-block"] [data-markdown="mermaid-scroll"]:has([data-markdown="mermaid-ascii"]) {
   overflow: auto;
 }
 
 [data-markdown="mermaid-block"] [data-markdown="mermaid"] {
-  width: max-content;
-  min-width: 100%;
   display: block;
+  width: fit-content;
+  /* Reserve headroom for the Story A font-balance transform (diagramScale.ts applies a
+     transform:scale on this host, up to DIAGRAM_SCALE_MAX = 1.4). Capping the host layout
+     width at container/1.4 means host * scale stays within the container for any scale up to
+     1.4 — so an upscaled wide diagram fits with no clip and no inner scroll. This only binds
+     for diagrams wider than 1/1.4 of the container; narrower diagrams shrink-wrap at their
+     natural size and the font-balance scale applies freely. */
+  max-width: calc(100% / 1.4);
 }
 
 [data-markdown="mermaid-block"] [data-markdown="mermaid-ascii"] {
@@ -1407,11 +1423,14 @@ html:not(.dark) .chat-scroll {
   background: transparent;
 }
 
+/* Fit the rendered diagram to the container width, preserving aspect ratio. A diagram
+   narrower than the container keeps its natural size (max-width caps it, width:auto never
+   upscales); a wider one scales down. height:auto derives from the intrinsic aspect. */
 [data-markdown="mermaid-block"] [data-markdown="mermaid"] svg {
-  width: auto !important;
-  min-width: 100%;
-  max-width: none !important;
-  height: auto !important;
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
 }
 
 [data-markdown="mermaid-block"] svg {
