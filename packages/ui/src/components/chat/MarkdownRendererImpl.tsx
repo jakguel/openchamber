@@ -141,6 +141,7 @@ interface MarkdownRendererProps {
   variant?: MarkdownVariant;
   onShowPopup?: (content: ToolPopupContent) => void;
   enableFileReferences?: boolean;
+  onContentGrown?: () => void;
 }
 
 const MERMAID_BLOCK_SELECTOR = '[data-markdown="mermaid-block"]';
@@ -1013,6 +1014,7 @@ const useMorphdomMarkdown = ({
   cacheKey,
   syntaxVars,
   ctx,
+  onContentGrown,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   text: string;
@@ -1020,6 +1022,11 @@ const useMorphdomMarkdown = ({
   cacheKey: string;
   syntaxVars: Record<string, string>;
   ctx: DecorateContext;
+  // Fired synchronously at the end of the async morphdom write (streaming only),
+  // in the SAME task that mutated the trailing block — before the browser paints
+  // that growth — so the auto-follow snap corrects scrollTop pre-paint (kills the
+  // paint-at-stale-scrollTop flicker). Post-paint ResizeObserver stays as fallback.
+  onContentGrown?: () => void;
 }) => {
   React.useEffect(() => {
     ensureMarkdownShikiTheme();
@@ -1091,12 +1098,16 @@ const useMorphdomMarkdown = ({
       }
 
       applyDiagramBodyScale(target);
+
+      if (streaming) {
+        onContentGrown?.();
+      }
     });
 
     return () => {
       active = false;
     };
-  }, [containerRef, text, streaming, cacheKey, ctx]);
+  }, [containerRef, text, streaming, cacheKey, ctx, onContentGrown]);
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -1134,6 +1145,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   variant = 'assistant',
   onShowPopup,
   enableFileReferences = true,
+  onContentGrown,
 }) => {
   const currentTheme = useCurrentMermaidTheme();
   const { editor, runtime } = useRuntimeAPIs();
@@ -1164,7 +1176,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   const ctx = useDecorateContext(currentTheme, effectiveDirectory ? handlePreviewLoopback : undefined);
   const cacheKey = `markdown-${part?.id ? `part-${part.id}` : `message-${messageId}`}`;
 
-  useMorphdomMarkdown({ containerRef, text: pacedText, streaming: live, cacheKey, syntaxVars, ctx });
+  useMorphdomMarkdown({ containerRef, text: pacedText, streaming: live, cacheKey, syntaxVars, ctx, onContentGrown });
 
   const markdownContent = (
     <div className={cn('break-words w-full min-w-0', className)} ref={containerRef}>
@@ -1194,6 +1206,7 @@ export const MarkdownRenderer = React.memo(MarkdownRendererImpl, (prev, next) =>
     && prev.messageId === next.messageId
     && prev.onShowPopup === next.onShowPopup
     && prev.enableFileReferences === next.enableFileReferences
+    && prev.onContentGrown === next.onContentGrown
     && prev.part?.id === next.part?.id;
 });
 

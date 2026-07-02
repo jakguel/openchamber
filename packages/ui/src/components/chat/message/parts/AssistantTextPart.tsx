@@ -26,8 +26,16 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
     messageId,
     streamPhase,
     chatRenderMode = 'live',
+    onContentChange,
     onShowPopup,
 }) => {
+    // Pre-paint snap seam: the markdown renderer invokes this synchronously right
+    // after the morphdom trailing-block write grows during streaming, so auto-follow
+    // corrects scrollTop before the browser paints the taller content (no flicker).
+    const handleContentGrown = React.useCallback(() => {
+        onContentChange?.('text', messageId);
+    }, [onContentChange, messageId]);
+
     // Use part directly from props — parent provides the latest version from the store.
     // No store subscription here to avoid re-render cascade from unrelated delta events.
     const partWithText = part as PartWithText;
@@ -102,6 +110,7 @@ const AssistantTextPart: React.FC<AssistantTextPartProps> = ({
                 variant={part.type === 'reasoning' ? 'reasoning' : 'assistant'}
                 enableFileReferences={isFinalized}
                 onShowPopup={onShowPopup}
+                onContentGrown={handleContentGrown}
             />
         </div>
     );
