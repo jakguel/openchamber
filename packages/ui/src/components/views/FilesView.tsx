@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { GoToLineDialog } from './GoToLineDialog';
 import { PreviewToggleButton } from './PreviewToggleButton';
+import { resolveExternalChangeAction } from './resolveExternalChangeAction';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
@@ -927,6 +928,9 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const diagramEditorRef = React.useRef<React.ComponentRef<typeof DiagramEditor>>(null);
   const lastLoadedFileStatRef = React.useRef<FileStatSnapshot | null>(null);
   const activeFileLoadIdRef = React.useRef(0);
+  const externalReconcileInFlightRef = React.useRef(false);
+  const externalUpdateVersionRef = React.useRef(0);
+  const [pendingExternalUpdate, setPendingExternalUpdate] = React.useState<{ content: string; version: number } | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = React.useState<'idle' | 'saved'>('idle');
   const [diagramSaved, setDiagramSaved] = React.useState(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = React.useState(getInitialAutoSaveEnabled);
@@ -1632,7 +1636,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     },
   }), [isDirty, onFileClose, root, selectedFile?.path]);
 
-  const saveDraft = React.useCallback(async () => {
+  const saveDraft = React.useCallback(async (options?: { forceOverwrite?: boolean }) => {
     if (!selectedFile || !files.writeFile) {
       toast.error(t('filesView.toast.savingNotSupported'));
       return false;
@@ -1654,6 +1658,23 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     setIsSaving(true);
 
     try {
+      if (!options?.forceOverwrite) {
+        const currentStat = await readFileStat(selectedFile.path, selectedFileReadOptions);
+        const action = resolveExternalChangeAction({
+          currentStat,
+          loadedStat: lastLoadedFileStatRef.current,
+          isDirty,
+        });
+        if (action === 'refuse-safe-path') {
+          console.warn(
+            `[saveDraft] refusing to overwrite "${selectedFile.path}": the file changed on disk since it was loaded. ` +
+            'Routing to the discard/overwrite dialog to prevent a lost update.',
+          );
+          setConfirmDiscardOpen(true);
+          return false;
+        }
+      }
+
       const contentToWrite = serializeEditorContent(draftContent, loadedFileLineEnding);
       const result = await files.writeFile(selectedFile.path, contentToWrite);
       if (!result?.success) {
@@ -1680,7 +1701,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     } finally {
       setIsSaving(false);
     }
-  }, [draftContent, fileContent, files, isDirty, loadedFileLineEnding, loadedFilePath, readFileStat, selectedFile, t]);
+  }, [draftContent, fileContent, files, isDirty, loadedFileLineEnding, loadedFilePath, readFileStat, selectedFile, selectedFileReadOptions, t]);
 
   React.useEffect(() => {
     if (!isDirty) {
@@ -1733,11 +1754,14 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
 
   React.useEffect(() => {
     const canWrite = Boolean(selectedFile && files.writeFile);
-    if (!autoSaveEnabled || !isDirty || !canWrite || isSaving) {
+    if (!autoSaveEnabled || !isDirty || !canWrite || isSaving || externalReconcileInFlightRef.current) {
       return;
     }
 
     autoSaveTimerRef.current = setTimeout(() => {
+      if (externalReconcileInFlightRef.current) {
+        return;
+      }
       void saveDraft().then((saved) => {
         if (!saved) return;
         setAutoSaveStatus('saved');
@@ -1849,14 +1873,19 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           return;
         }
         const editorContent = normalizeEditorLineEndings(content);
+        const viewContent = editorContent.length > MAX_VIEW_CHARS
+          ? `${editorContent.slice(0, MAX_VIEW_CHARS)}\n\n… truncated …`
+          : editorContent;
         setLoadedFileLineEnding(detectFileLineEnding(content));
         setFileContent(editorContent);
         diagramXmlRef.current = editorContent;
         diagramSavedXmlRef.current = editorContent;
-        setDraftContent(editorContent.length > MAX_VIEW_CHARS
-          ? `${editorContent.slice(0, MAX_VIEW_CHARS)}\n\n… truncated …`
-          : editorContent);
+        setDraftContent(viewContent);
         setLoadedFilePath(node.path);
+        if (externalReconcileInFlightRef.current) {
+          externalUpdateVersionRef.current += 1;
+          setPendingExternalUpdate({ content: viewContent, version: externalUpdateVersionRef.current });
+        }
         void readFileStat(node.path, readOptions)
           .then((stat) => {
             if (stat && isCurrentLoad()) {
@@ -2008,6 +2037,13 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const isDirtyRef = React.useRef(isDirty);
   isDirtyRef.current = isDirty;
 
+  React.useEffect(() => {
+    if (!pendingExternalUpdate) {
+      return;
+    }
+    externalReconcileInFlightRef.current = false;
+  }, [pendingExternalUpdate]);
+
   // Poll open file for external changes.
   // When a change is detected, reset loadedFilePath so the effect above
   // triggers a single reload — no double-load.
@@ -2043,10 +2079,16 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
             return;
           }
 
-          if (isDirtyRef.current) {
+          const action = resolveExternalChangeAction({
+            currentStat: latestStat,
+            loadedStat: previousStat,
+            isDirty: isDirtyRef.current,
+          });
+          if (action !== 'live-apply') {
             return;
           }
 
+          externalReconcileInFlightRef.current = true;
           lastLoadedFileStatRef.current = latestStat;
           // Reset loadedFilePath so the effect above triggers a single reload.
           setLoadedFilePath(null);
@@ -2121,7 +2163,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     const nextTab = pendingTabRef.current;
     const closePath = pendingClosePathRef.current;
 
-    const saved = await saveDraft();
+    const saved = await saveDraft({ forceOverwrite: true });
     if (!saved) {
       skipDirtyOnceRef.current = false;
       return;
