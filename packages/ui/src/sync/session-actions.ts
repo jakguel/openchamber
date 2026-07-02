@@ -144,8 +144,8 @@ export function resetOptimisticRefs() {
 // Return the action refs to their pristine (unmounted) defaults. Used by
 // SyncProvider teardown and by tests to avoid leaking injected stubs into
 // subsequent code that expects the unmounted state. The optimistic refs are
-// intentionally NOT cleared here — they are owned and reset by
-// SyncOptimisticBridge via resetOptimisticRefs.
+// intentionally NOT cleared here — they are owned and set (on mount) by
+// SyncOptimisticBridge; resetOptimisticRefs clears them only for test isolation.
 export function resetActionRefs() {
   _sdk = null
   _childStores = null

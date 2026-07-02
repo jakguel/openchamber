@@ -2295,7 +2295,7 @@ export function SyncProvider(props: {
     )
     // This effect owns ONLY the sdk/childStores/getDirectory action refs (and the
     // sync refs). It re-runs on props.directory changes, so setActionRefs restores
-    // exactly those. The optimistic refs are owned, set, and reset by
+    // exactly those. The optimistic refs are owned and set by
     // SyncOptimisticBridge (AppEffects.tsx) — NOT by setActionRefs/resetActionRefs —
     // so a directory switch here cannot null them.
     return () => {
