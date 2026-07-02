@@ -239,6 +239,59 @@ export const decideRestoreGate = ({
     return 'restore';
 };
 
+// ─── Two-threshold hysteresis pin/unpin predicates ───────────────────────────
+// Release fires when the user has scrolled far enough up that the bottom zone is
+// no longer visible (distanceFromBottom > releaseThreshold, supplied from
+// computeBottomZoneThreshold by the call site). Re-pin fires only when truly back
+// at the bottom (distanceFromBottom <= repinEpsilon). The zone between the two
+// thresholds is sticky — neither predicate fires — which is the hysteresis that
+// replaces REPIN_GRACE_AFTER_RELEASE_MS.
+//
+// Content-clamp guard: a maxScroll SHRINK (placeholder collapse, tool-response
+// reflow) clamps scrollTop downward and changes distanceFromBottom without any
+// user gesture. isMaxScrollClamp lets the call site (WI-B engine) skip
+// shouldReleaseAutoFollow when the content drove the distance change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Small pixel epsilon for "truly back at the bottom". Remains below every
+// practical releaseThreshold (≥ 40 px mobile, ≥ 48 px desktop).
+export const REPIN_EPSILON_PX = 2;
+
+// Release predicate: fires only when distanceFromBottom STRICTLY EXCEEDS the
+// bottom-zone threshold. Supply computeBottomZoneThreshold(...) for
+// releaseThreshold. The call site MUST gate with isMaxScrollClamp (skip when
+// true) so a content collapse that clamps distanceFromBottom upward is never
+// misread as a user scroll.
+export const shouldReleaseAutoFollow = ({
+    distanceFromBottom,
+    releaseThreshold,
+}: {
+    distanceFromBottom: number;
+    releaseThreshold: number;
+}): boolean => distanceFromBottom > releaseThreshold;
+
+// Re-pin predicate: fires only when truly back at the bottom (within epsilon).
+// Use REPIN_EPSILON_PX as repinEpsilon. Invariant: repinEpsilon < releaseThreshold.
+export const shouldRepinAutoFollow = ({
+    distanceFromBottom,
+    repinEpsilon,
+}: {
+    distanceFromBottom: number;
+    repinEpsilon: number;
+}): boolean => distanceFromBottom <= repinEpsilon;
+
+// Content-clamp guard: true when a maxScroll DECREASE (content collapsed,
+// browser clamped scrollTop) caused the distanceFromBottom change — not a user
+// gesture. The WI-B call site checks this BEFORE calling shouldReleaseAutoFollow
+// to avoid false releases during placeholder / tool-response height churn.
+export const isMaxScrollClamp = ({
+    maxScrollNow,
+    maxScrollPrev,
+}: {
+    maxScrollNow: number;
+    maxScrollPrev: number;
+}): boolean => maxScrollNow < maxScrollPrev;
+
 // The bottom of the chat has an empty spacer (10vh on desktop, 40px on mobile)
 // — its height is exactly how far above scrollHeight the user can be while still
 // looking at "empty" space. We use that same value as the threshold for both

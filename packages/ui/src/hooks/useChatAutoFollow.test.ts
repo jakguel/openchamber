@@ -3,15 +3,19 @@ import { describe, expect, test } from 'bun:test';
 import {
     MAX_RESTORE_RECORRECTIONS,
     RELEASE_MIN_DELTA,
+    REPIN_EPSILON_PX,
     decideReCorrection,
     decideRestoreGate,
     isAtBottomSnapshot,
     isHealthyScrollSnapshot,
+    isMaxScrollClamp,
     isRealMessageAnchor,
     isReleasedSinceWindowOpen,
     nextFollowTop,
     resolveRestoreTarget,
+    shouldReleaseAutoFollow,
     shouldReleaseAutoFollowOnScroll,
+    shouldRepinAutoFollow,
     shouldRekickFollowOnResize,
 } from './useChatAutoFollow';
 
@@ -731,5 +735,130 @@ describe('shouldReleaseAutoFollowOnScroll — RELEASE_MIN_DELTA micro-correction
     // and forces a reviewer to re-evaluate all delta thresholds above.
     test('RELEASE_MIN_DELTA is exported as 8', () => {
         expect(RELEASE_MIN_DELTA).toBe(8);
+    });
+});
+
+// ─── Two-threshold hysteresis pin/unpin predicates (WI-A) ────────────────────
+// shouldReleaseAutoFollow + shouldRepinAutoFollow + isMaxScrollClamp are the pure
+// positional predicates consumed by the WI-B engine.  Each assertion would produce
+// the WRONG result if the specific threshold logic it guards is broken:
+//   - changing > to >= in shouldReleaseAutoFollow would fire at the boundary
+//   - changing <= to < in shouldRepinAutoFollow would miss the epsilon boundary
+//   - removing isMaxScrollClamp gate would false-release on content collapse
+//   - setting repinEpsilon == releaseThreshold eliminates the gap and causes thrash
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('shouldReleaseAutoFollow', () => {
+    const RELEASE_T = 80; // representative bottom-zone threshold
+
+    test('distanceFromBottom strictly above releaseThreshold -> releases', () => {
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: RELEASE_T + 1, releaseThreshold: RELEASE_T })).toBe(true);
+    });
+
+    test('large overshoot -> releases', () => {
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: 500, releaseThreshold: RELEASE_T })).toBe(true);
+    });
+
+    test('at exactly releaseThreshold -> does NOT release (exclusive boundary)', () => {
+        // Bug: changing > to >= would make this return true (off-by-one thrash at boundary)
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: RELEASE_T, releaseThreshold: RELEASE_T })).toBe(false);
+    });
+
+    test('one px below releaseThreshold -> does NOT release', () => {
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: RELEASE_T - 1, releaseThreshold: RELEASE_T })).toBe(false);
+    });
+
+    test('distanceFromBottom === 0 (pinned at true bottom) -> does NOT release', () => {
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: 0, releaseThreshold: RELEASE_T })).toBe(false);
+    });
+});
+
+describe('shouldRepinAutoFollow', () => {
+    const REPIN_E = 2; // REPIN_EPSILON_PX
+
+    test('distanceFromBottom === 0 (true bottom) -> re-pins', () => {
+        expect(shouldRepinAutoFollow({ distanceFromBottom: 0, repinEpsilon: REPIN_E })).toBe(true);
+    });
+
+    test('distanceFromBottom at exactly repinEpsilon -> re-pins (inclusive boundary)', () => {
+        // Bug: changing <= to < would miss the epsilon boundary case
+        expect(shouldRepinAutoFollow({ distanceFromBottom: REPIN_E, repinEpsilon: REPIN_E })).toBe(true);
+    });
+
+    test('distanceFromBottom one px above repinEpsilon (in the gap) -> does NOT re-pin', () => {
+        expect(shouldRepinAutoFollow({ distanceFromBottom: REPIN_E + 1, repinEpsilon: REPIN_E })).toBe(false);
+    });
+
+    test('distanceFromBottom well above repinEpsilon -> does NOT re-pin', () => {
+        expect(shouldRepinAutoFollow({ distanceFromBottom: 80, repinEpsilon: REPIN_E })).toBe(false);
+    });
+});
+
+describe('hysteresis gap — state is sticky between the two thresholds', () => {
+    const RELEASE_T = 80;
+    const REPIN_E = REPIN_EPSILON_PX; // 2
+
+    test('in the gap (repinEpsilon < d < releaseThreshold) -> neither releases nor re-pins', () => {
+        // A distance squarely in the gap must leave state unchanged
+        const dInGap = Math.floor((REPIN_E + RELEASE_T) / 2); // 41 px
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: dInGap, releaseThreshold: RELEASE_T })).toBe(false);
+        expect(shouldRepinAutoFollow({ distanceFromBottom: dInGap, repinEpsilon: REPIN_E })).toBe(false);
+    });
+
+    test('at the lower gap boundary (repinEpsilon + 1) -> neither fires', () => {
+        const d = REPIN_E + 1;
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: d, releaseThreshold: RELEASE_T })).toBe(false);
+        expect(shouldRepinAutoFollow({ distanceFromBottom: d, repinEpsilon: REPIN_E })).toBe(false);
+    });
+
+    test('at the upper gap boundary (releaseThreshold) -> neither fires (inclusive re-pin excluded)', () => {
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: RELEASE_T, releaseThreshold: RELEASE_T })).toBe(false);
+        expect(shouldRepinAutoFollow({ distanceFromBottom: RELEASE_T, repinEpsilon: REPIN_E })).toBe(false);
+    });
+
+    test('INVARIANT: REPIN_EPSILON_PX < mobile bottom-zone threshold (no single-threshold thrash)', () => {
+        // 40 px is BOTTOM_SPACER_MOBILE_PX — the smallest possible releaseThreshold.
+        // If repinEpsilon >= releaseThreshold the gap disappears and state thrashes.
+        expect(REPIN_EPSILON_PX).toBeLessThan(40);
+        expect(REPIN_EPSILON_PX).toBeGreaterThan(0);
+    });
+});
+
+describe('isMaxScrollClamp — content-collapse clamp guard', () => {
+    test('maxScroll decreased -> content-driven clamp (must NOT release)', () => {
+        expect(isMaxScrollClamp({ maxScrollNow: 1500, maxScrollPrev: 2000 })).toBe(true);
+    });
+
+    test('minimal shrink (1 px) is still a clamp', () => {
+        // Bug: using <= instead of < would miss the equality case
+        expect(isMaxScrollClamp({ maxScrollNow: 1999, maxScrollPrev: 2000 })).toBe(true);
+    });
+
+    test('maxScroll unchanged -> NOT a clamp (potential user scroll)', () => {
+        expect(isMaxScrollClamp({ maxScrollNow: 2000, maxScrollPrev: 2000 })).toBe(false);
+    });
+
+    test('maxScroll increased (content grew) -> NOT a clamp', () => {
+        expect(isMaxScrollClamp({ maxScrollNow: 2100, maxScrollPrev: 2000 })).toBe(false);
+    });
+
+    test('combining guard + shouldReleaseAutoFollow: clamp-shrink must NOT release', () => {
+        // Scenario: placeholder collapsed, maxScroll dropped 500 px; distanceFromBottom
+        // is now large — but it is clamp-driven, not a user scroll.
+        const maxScrollNow = 1500;
+        const maxScrollPrev = 2000;
+        const dfb = 200; // far above a typical releaseThreshold
+        const releaseThreshold = 80;
+
+        // Step 1: guard fires -> call site must skip the release check
+        expect(isMaxScrollClamp({ maxScrollNow, maxScrollPrev })).toBe(true);
+
+        // Step 2: without the guard the release predicate would incorrectly fire
+        expect(shouldReleaseAutoFollow({ distanceFromBottom: dfb, releaseThreshold })).toBe(true);
+
+        // Step 3: correct gated usage -> no release
+        const isClamp = isMaxScrollClamp({ maxScrollNow, maxScrollPrev });
+        const willRelease = !isClamp && shouldReleaseAutoFollow({ distanceFromBottom: dfb, releaseThreshold });
+        expect(willRelease).toBe(false);
     });
 });
