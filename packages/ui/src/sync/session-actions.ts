@@ -42,6 +42,10 @@ type OptimisticRemoveInput = { sessionID: string; directory?: string | null; mes
 
 let _optimisticAdd: ((input: OptimisticAddInput) => void) | null = null
 let _optimisticRemove: ((input: OptimisticRemoveInput) => void) | null = null
+// Identifies the current owner of the optimistic refs (the mounted
+// SyncOptimisticBridge). resetOptimisticRefs only clears the refs for the
+// matching owner, so a stale bridge unmount cannot null a newer bridge's refs.
+let _optimisticOwner: symbol | string | null = null
 
 /**
  * Tracks requestIds the user has already answered, keyed by directory, so a
@@ -129,20 +133,33 @@ export function setActionRefs(
 export function setOptimisticRefs(
   add: (input: OptimisticAddInput) => void,
   remove: (input: OptimisticRemoveInput) => void,
+  token: symbol | string,
 ) {
   _optimisticAdd = add
   _optimisticRemove = remove
+  _optimisticOwner = token
 }
 
-// Return the module refs to their pristine (unmounted) defaults. Used by
+// Clear the optimistic refs. Owned exclusively by SyncOptimisticBridge, which
+// passes its per-mount token so a stale bridge unmount cannot null a newer
+// bridge's refs (guarded reset). Idempotent. A missing token forces the reset
+// unconditionally (test teardown / hard reset).
+export function resetOptimisticRefs(token?: symbol | string) {
+  if (token !== undefined && token !== _optimisticOwner) return
+  _optimisticAdd = null
+  _optimisticRemove = null
+  _optimisticOwner = null
+}
+
+// Return the action refs to their pristine (unmounted) defaults. Used by
 // SyncProvider teardown and by tests to avoid leaking injected stubs into
-// subsequent code that expects the unmounted state.
+// subsequent code that expects the unmounted state. The optimistic refs are
+// intentionally NOT cleared here — they are owned and reset by
+// SyncOptimisticBridge via resetOptimisticRefs.
 export function resetActionRefs() {
   _sdk = null
   _childStores = null
   _getDirectory = () => ""
-  _optimisticAdd = null
-  _optimisticRemove = null
 }
 
 function sdk() {

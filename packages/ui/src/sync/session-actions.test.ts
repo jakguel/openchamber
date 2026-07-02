@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach, mock } from "bun:test"
+import { describe, expect, test, beforeEach, afterAll, mock } from "bun:test"
 import type { PermissionRequest } from "@/types/permission"
 import type { QuestionRequest } from "@/types/question"
 
@@ -309,10 +309,18 @@ describe("shareSession live state", () => {
   })
 })
 
+const TARGET_DIR_OWNER = Symbol("target-dir-owner")
+
 describe("optimisticSend target directory", () => {
   beforeEach(() => {
     replyCalls.length = 0
     scopedClientDirectories.length = 0
+  })
+
+  afterAll(async () => {
+    const { resetOptimisticRefs, resetActionRefs } = await import("./session-actions")
+    resetOptimisticRefs(TARGET_DIR_OWNER)
+    resetActionRefs()
   })
 
   test("passes the prompt directory to optimistic state during session switch races", async () => {
@@ -335,6 +343,7 @@ describe("optimisticSend target directory", () => {
       (input) => {
         optimisticRemove = input
       },
+      TARGET_DIR_OWNER,
     )
 
     await optimisticSend({
@@ -356,6 +365,150 @@ describe("optimisticSend target directory", () => {
     expect(optimisticRemove).toBe(null)
     expect(targetStore.getState().session_status["session-new"]?.type).toBe("busy")
     expect(currentStore.getState().session_status["session-new"]).toBe(undefined)
+  })
+})
+
+const OWNERSHIP_OWNER = Symbol("ownership-owner")
+
+describe("optimistic-ref ownership survives a directory switch", () => {
+  beforeEach(() => {
+    replyCalls.length = 0
+    scopedClientDirectories.length = 0
+  })
+
+  afterAll(async () => {
+    const { resetOptimisticRefs, resetActionRefs } = await import("./session-actions")
+    resetOptimisticRefs(OWNERSHIP_OWNER)
+    resetActionRefs()
+  })
+
+  // Regression: SyncProvider re-runs its ref effect on a directory switch
+  // (resetActionRefs then setActionRefs), but the optimistic pair is owned by
+  // SyncOptimisticBridge (mount-once, no remount). resetActionRefs must NOT null
+  // the optimistic pair, or the next send throws "Optimistic refs not set".
+  test("optimisticSend still routes to optimisticAdd after resetActionRefs + setActionRefs (no optimistic re-set)", async () => {
+    const targetStore = createStore({})
+    const childStores = createChildStores([["/target/project", targetStore]])
+    let optimisticAdd: OptimisticAddCall | null = null
+
+    const { optimisticSend, setActionRefs, setOptimisticRefs, resetActionRefs } = await import("./session-actions")
+
+    setOptimisticRefs(
+      (input) => {
+        optimisticAdd = input
+      },
+      () => {},
+      OWNERSHIP_OWNER,
+    )
+    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/target/project")
+
+    resetActionRefs()
+    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/target/project")
+
+    await optimisticSend({
+      sessionId: "session-switch",
+      directory: "/target/project",
+      content: "still works",
+      providerID: "provider",
+      modelID: "model",
+      send: async () => {},
+    })
+
+    expect(optimisticAdd).not.toBeNull()
+    const add = optimisticAdd as unknown as OptimisticAddCall
+    expect(add.sessionID).toBe("session-switch")
+    expect(add.directory).toBe("/target/project")
+    expect(targetStore.getState().session_status["session-switch"]?.type).toBe("busy")
+  })
+
+  test("resetActionRefs alone leaves the optimistic refs set (fails past the guard, not on it)", async () => {
+    const { optimisticSend, setActionRefs, setOptimisticRefs, resetActionRefs } = await import("./session-actions")
+
+    setOptimisticRefs(() => {}, () => {}, OWNERSHIP_OWNER)
+    setActionRefs(mockSdk as unknown as OpencodeClient, createChildStores([]), () => "/x")
+    resetActionRefs()
+
+    let thrown: unknown
+    try {
+      await optimisticSend({
+        sessionId: "s",
+        directory: "/x",
+        content: "hi",
+        providerID: "p",
+        modelID: "m",
+        send: async () => {},
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain("Child stores not initialized")
+  })
+})
+
+describe("resetOptimisticRefs owner-token guard", () => {
+  const GUARD_OWNER = Symbol("guard-owner")
+
+  beforeEach(() => {
+    replyCalls.length = 0
+    scopedClientDirectories.length = 0
+  })
+
+  afterAll(async () => {
+    const { resetOptimisticRefs, resetActionRefs } = await import("./session-actions")
+    resetOptimisticRefs()
+    resetActionRefs()
+  })
+
+  test("wrong-token reset is a no-op; correct-token reset nulls the refs; second reset is safe", async () => {
+    const targetStore = createStore({})
+    const childStores = createChildStores([["/guard/project", targetStore]])
+    let addCount = 0
+
+    const { optimisticSend, setActionRefs, setOptimisticRefs, resetOptimisticRefs } =
+      await import("./session-actions")
+
+    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/guard/project")
+    setOptimisticRefs(
+      () => {
+        addCount += 1
+      },
+      () => {},
+      GUARD_OWNER,
+    )
+
+    resetOptimisticRefs(Symbol("not-the-owner"))
+    await optimisticSend({
+      sessionId: "guard-1",
+      directory: "/guard/project",
+      content: "still set",
+      providerID: "p",
+      modelID: "m",
+      send: async () => {},
+    })
+    expect(addCount).toBe(1)
+
+    resetOptimisticRefs(GUARD_OWNER)
+    resetOptimisticRefs(GUARD_OWNER)
+
+    let thrown: unknown
+    try {
+      await optimisticSend({
+        sessionId: "guard-2",
+        directory: "/guard/project",
+        content: "now null",
+        providerID: "p",
+        modelID: "m",
+        send: async () => {},
+      })
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain("Optimistic refs not set")
+    expect(addCount).toBe(1)
   })
 })
 

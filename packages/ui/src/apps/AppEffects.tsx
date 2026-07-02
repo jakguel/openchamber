@@ -4,7 +4,7 @@ import { usePwaManifestSync } from '@/hooks/usePwaManifestSync';
 import { useQueuedMessageAutoSend } from '@/hooks/useQueuedMessageAutoSend';
 import { useSessionAutoCleanup } from '@/hooks/useSessionAutoCleanup';
 import { useWindowControlsOverlayLayout } from '@/hooks/useWindowControlsOverlayLayout';
-import { setOptimisticRefs } from '@/sync/session-actions';
+import { setOptimisticRefs, resetOptimisticRefs } from '@/sync/session-actions';
 import { markSessionViewed } from '@/sync/notification-store';
 import { setExternallyViewedSession } from '@/sync/sync-context';
 import { useSync } from '@/sync/use-sync';
@@ -22,14 +22,18 @@ const SyncOptimisticBridge: React.FC = () => {
   const sync = useSync();
   const addRef = React.useRef(sync.optimistic.add);
   const removeRef = React.useRef(sync.optimistic.remove);
+  const tokenRef = React.useRef<symbol>(Symbol('optimistic-owner'));
   addRef.current = sync.optimistic.add;
   removeRef.current = sync.optimistic.remove;
 
   React.useEffect(() => {
+    const token = tokenRef.current;
     setOptimisticRefs(
       (input) => addRef.current(input),
       (input) => removeRef.current(input),
+      token,
     );
+    return () => resetOptimisticRefs(token);
   }, []);
 
   return null;

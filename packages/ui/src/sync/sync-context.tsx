@@ -2293,8 +2293,11 @@ export function SyncProvider(props: {
       childStores,
       () => opencodeClient.getDirectory() || props.directory,
     )
-    // StrictMode-safe: mount→cleanup→remount runs synchronously, and the remount
-    // re-invokes the setters above, so refs are never left null for a mounted tree.
+    // This effect owns ONLY the sdk/childStores/getDirectory action refs (and the
+    // sync refs). It re-runs on props.directory changes, so setActionRefs restores
+    // exactly those. The optimistic refs are owned, set, and reset by
+    // SyncOptimisticBridge (AppEffects.tsx) — NOT by setActionRefs/resetActionRefs —
+    // so a directory switch here cannot null them.
     return () => {
       resetSyncRefs()
       resetActionRefs()
