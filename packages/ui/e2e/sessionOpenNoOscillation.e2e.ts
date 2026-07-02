@@ -78,6 +78,21 @@ const MAX_IDLE_BAND_PX = 1;
 /** A session must overflow by at least this much to exercise scrollback. */
 const MIN_SCROLLABLE_PX = 50;
 
+/** Settle window (ms) in which an auto-load-earlier prepend may fire on open. */
+const SETTLE_WAIT_MS = 4000;
+
+/** Distance-from-bottom (px) at/under which the viewport counts as pinned. */
+const PINNED_DISTANCE_TOLERANCE_PX = 8;
+
+/**
+ * Max distance-from-bottom (px) permitted on ANY frame across a pinned prepend.
+ * The two-writer defect drove a transient jump-up of hundreds of px before the
+ * competing writer snapped back down; a correct single-writer + agreeing
+ * compensation keeps every frame glued (distance ~0). 24px absorbs one-frame
+ * sub-pixel/layout settle only.
+ */
+const PREPEND_GLUE_TOLERANCE_PX = 24;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -165,6 +180,54 @@ async function discoverSessionIds(page: Page): Promise<string[]> {
     );
 }
 
+interface ScrollSample {
+    scrollTop: number;
+    scrollHeight: number;
+    clientHeight: number;
+    firstId: string | null;
+    count: number;
+}
+
+/**
+ * Install a continuous per-animation-frame scroll sampler BEFORE app code runs.
+ * Each frame it records the live chat container geometry plus the first rendered
+ * message id and message count, so a history prepend (older message inserted above
+ * -> first id changes + count grows + scrollHeight grows) can be located after the
+ * fact and the scrollTop trajectory across that commit inspected frame-by-frame.
+ */
+async function installScrollSampler(page: Page): Promise<void> {
+    await page.addInitScript((): void => {
+        const win = window as Window & typeof globalThis & { __scrollSamples: ScrollSample[] };
+        win.__scrollSamples = [];
+        const SEL = '[data-scrollbar="chat"]';
+        const loop = (): void => {
+            const el = document.querySelector(SEL) as HTMLElement | null;
+            if (el) {
+                const first = document.querySelector('[data-message-id]');
+                win.__scrollSamples.push({
+                    scrollTop: el.scrollTop,
+                    scrollHeight: el.scrollHeight,
+                    clientHeight: el.clientHeight,
+                    firstId: first ? first.getAttribute('data-message-id') : null,
+                    count: document.querySelectorAll('[data-message-id]').length,
+                });
+                if (win.__scrollSamples.length > 6000) win.__scrollSamples.shift();
+            }
+            requestAnimationFrame(loop);
+        };
+        requestAnimationFrame(loop);
+    });
+}
+
+async function readScrollSamples(page: Page): Promise<ScrollSample[]> {
+    return page.evaluate((): ScrollSample[] => {
+        const win = window as Window & typeof globalThis & { __scrollSamples?: ScrollSample[] };
+        return win.__scrollSamples ?? [];
+    });
+}
+
+const distanceFromBottom = (s: ScrollSample): number => s.scrollHeight - s.clientHeight - s.scrollTop;
+
 // ---------------------------------------------------------------------------
 // Test
 // ---------------------------------------------------------------------------
@@ -236,5 +299,108 @@ test.describe('Chat session-open scroll: instant bottom + no oscillation (WI-C)'
 
         // Sanity: we actually sampled the intended number of frames.
         expect(samples.length).toBe(FRAME_SAMPLE_COUNT);
+    });
+
+    test('AC2 — a PINNED session that auto-loads earlier history stays glued to the bottom (no oscillation)', async ({ page }) => {
+        // Drives the REAL production interaction end-to-end: while the viewport is
+        // pinned at the bottom, useChatTimelineController's prepend compensation
+        // (scrollTop += delta) and useChatAutoFollow's snapToBottomIfPinned both act
+        // on the SAME real DOM container across the prepend commit. The single-writer
+        // + agreeing-target design keeps every frame at the bottom; the removed
+        // two-writer defect (idle LERP vs 280ms settle-burst) produced a transient
+        // jump-up then snap-back. This test locates a real pinned prepend and asserts
+        // the frame trajectory never left the bottom — it FAILS if a second writer is
+        // reintroduced OR the compensation stops agreeing with the snap target.
+        await installScrollSampler(page);
+
+        const ids = await discoverSessionIds(page);
+        test.skip(
+            ids.length === 0,
+            'No sessions in the sidebar — cannot exercise a pinned prepend. NOT a pass: skipped to ' +
+            'avoid a vacuous green. Re-run against an instance with sessions.',
+        );
+
+        // Open each candidate fresh (the app pins to the bottom on open) and let the
+        // settle window elapse so an auto-load-earlier prepend can fire while pinned.
+        let prepend: { before: ScrollSample; window: ScrollSample[]; sessionId: string } | null = null;
+        for (const id of ids) {
+            await page.goto(`${BASE_URL}/?session=${id}`, { waitUntil: 'domcontentloaded' });
+            const appeared = await page
+                .locator(SCROLL_CONTAINER)
+                .first()
+                .waitFor({ state: 'visible', timeout: 12000 })
+                .then(() => true)
+                .catch(() => false);
+            if (!appeared) continue;
+
+            await page.waitForTimeout(SETTLE_WAIT_MS);
+            const samples = await readScrollSamples(page);
+
+            // A prepend commit: older message inserted above -> first id changes AND
+            // message count grows AND content height grows, between adjacent frames.
+            for (let i = 1; i < samples.length; i += 1) {
+                const a = samples[i - 1]!;
+                const b = samples[i]!;
+                const isPrepend =
+                    a.firstId !== null &&
+                    b.firstId !== null &&
+                    b.firstId !== a.firstId &&
+                    b.count > a.count &&
+                    b.scrollHeight > a.scrollHeight;
+                // Only the PINNED case exercises snapToBottomIfPinned during the
+                // commit — the frame just before the prepend must be at the bottom.
+                if (isPrepend && distanceFromBottom(a) <= PINNED_DISTANCE_TOLERANCE_PX) {
+                    prepend = { before: a, window: samples.slice(i - 1, i + 12), sessionId: id };
+                    break;
+                }
+            }
+            if (prepend) break;
+
+            await page.evaluate((): void => {
+                const win = window as Window & typeof globalThis & { __scrollSamples?: ScrollSample[] };
+                if (win.__scrollSamples) win.__scrollSamples.length = 0;
+            });
+        }
+
+        test.skip(
+            prepend === null,
+            'No PINNED history prepend occurred on open across the available sessions (none was ' +
+            'both bottom-pinned and auto-loaded earlier within the settle window) — the pinned ' +
+            'prepend no-oscillation path could not be exercised. NOT a pass: skipped to avoid a ' +
+            'vacuous green. Re-run against a session that auto-loads earlier history while pinned ' +
+            '(e.g. a session whose initial window underfills the viewport).',
+        );
+
+        const { before, window: frames, sessionId } = prepend!;
+
+        // Across the prepend commit the viewport must never leave the bottom on ANY
+        // frame — no transient jump-up (the two-writer signature).
+        const worst = frames.reduce(
+            (acc, s) => (distanceFromBottom(s) > acc.dist ? { dist: distanceFromBottom(s), s } : acc),
+            { dist: -Infinity, s: frames[0]! },
+        );
+        expect(
+            worst.dist,
+            [
+                `REGRESSION: pinned history prepend broke the bottom glue (oscillation).`,
+                `session=${sessionId} worst distance-from-bottom across the prepend window=${worst.dist}px`,
+                `(tolerance ${PREPEND_GLUE_TOLERANCE_PX}px).`,
+                `before-prepend: scrollTop=${before.scrollTop} scrollHeight=${before.scrollHeight}.`,
+                `window scrollTops=[${frames.map((f) => f.scrollTop).join(', ')}].`,
+                `A jump-up on any frame means the prepend compensation and snap disagreed on the`,
+                `bottom target, or a second scrollTop writer was reintroduced.`,
+            ].join(' '),
+        ).toBeLessThanOrEqual(PREPEND_GLUE_TOLERANCE_PX);
+
+        // The LAST frame of the window must be settled at the bottom (the snap won).
+        const settled = distanceFromBottom(frames[frames.length - 1]!);
+        expect(
+            settled,
+            [
+                `REGRESSION: after the pinned prepend the viewport did not settle at the bottom.`,
+                `session=${sessionId} final distance-from-bottom=${settled}px (tolerance`,
+                `${PREPEND_GLUE_TOLERANCE_PX}px). snapToBottomIfPinned did not re-glue after the prepend.`,
+            ].join(' '),
+        ).toBeLessThanOrEqual(PREPEND_GLUE_TOLERANCE_PX);
     });
 });
