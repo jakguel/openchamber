@@ -1,14 +1,15 @@
-import { describe, expect, test } from "bun:test"
+import { afterAll, describe, expect, test } from "bun:test"
 import type { EditorState } from "@codemirror/state"
 import { EditorState as State } from "@codemirror/state"
 
-import { computeLineDiff } from "@/components/ui/codeMirrorExternalUpdate"
+import { buildExternalUpdateTransaction, computeLineDiff } from "@/components/ui/codeMirrorExternalUpdate"
 
 import {
   LIVE_DIFF_CONCURRENT_COLLAPSE_CAP,
   LIVE_DIFF_FLASH_DURATION_MS,
   LIVE_DIFF_FLASH_FADE_MS,
   LIVE_DIFF_FLASH_HOLD_MS,
+  LIVE_DIFF_MAX_ANIMATED_CHANGES,
   addLiveDiffEffect,
   buildLiveDiffDecorations,
   clearLiveDiffEffect,
@@ -16,6 +17,8 @@ import {
   countActiveCollapses,
   liveDiffDecorationsExtension,
   liveDiffField,
+  planLiveDiffAnimation,
+  prefersReducedMotion,
   scheduleLiveDiffClears,
   type LiveDiffPlan,
 } from "./liveDiffDecorations"
@@ -179,6 +182,81 @@ describe("concurrent-collapse cap (R1 scroll-oscillation mitigation)", () => {
 
     const cleared = present.update({ effects: clearLiveDiffEffect.of({ gen: 5, kinds: ["collapse"] }) }).state
     expect(countActiveCollapses(cleared.field(liveDiffField))).toBe(0)
+  })
+})
+
+describe("WI4 reduced-motion + large-diff instant-apply gate", () => {
+  const originalWindow = globalThis.window
+
+  const installMatchMedia = (reduced: boolean) => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { matchMedia: (q: string) => ({ matches: q.includes("reduce") ? reduced : false }) },
+    })
+  }
+
+  afterAll(() => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow })
+  })
+
+  // Mirror EXACTLY what CodeMirrorEditor's external-update effect does at the seam:
+  //   const animate = !prefersReducedMotion();
+  //   const plan = animate ? planLiveDiffAnimation(old, next) : null;
+  // then WI3 paints decorations only when plan != null.
+  const decorationClassesForExternalUpdate = (oldText: string, newText: string): string[] => {
+    const animate = !prefersReducedMotion()
+    const plan = animate ? planLiveDiffAnimation(oldText, newText) : null
+    if (!plan) return []
+    const state = State.create({ doc: newText, extensions: [liveDiffDecorationsExtension()] })
+    const { ranges } = buildLiveDiffDecorations(state, plan, { gen: 1, activeCollapses: 0 })
+    const present = state.update({ effects: addLiveDiffEffect.of(ranges) }).state
+    return specClasses(present)
+  }
+
+  const largeOld = "start"
+  const largeNew = Array.from({ length: LIVE_DIFF_MAX_ANIMATED_CHANGES + 50 }, (_, i) => `line ${i}`).join("\n")
+
+  test("the change ceiling is a conservative positive constant", () => {
+    expect(LIVE_DIFF_MAX_ANIMATED_CHANGES).toBeGreaterThan(0)
+    expect(Number.isInteger(LIVE_DIFF_MAX_ANIMATED_CHANGES)).toBe(true)
+  })
+
+  test("prefersReducedMotion reflects the matchMedia(prefers-reduced-motion: reduce) result", () => {
+    installMatchMedia(true)
+    expect(prefersReducedMotion()).toBe(true)
+    installMatchMedia(false)
+    expect(prefersReducedMotion()).toBe(false)
+  })
+
+  test("AC1: reduced-motion routes a small diff to the instant path (zero animation decorations)", () => {
+    installMatchMedia(true)
+    expect(decorationClassesForExternalUpdate("a\nb", "a\nX\nb")).not.toContain("cm-line-added")
+  })
+
+  test("AC2: a change count above the ceiling routes to the instant path even with motion allowed", () => {
+    installMatchMedia(false)
+    expect(planLiveDiffAnimation(largeOld, largeNew)).toBeNull()
+    expect(decorationClassesForExternalUpdate(largeOld, largeNew)).not.toContain("cm-line-added")
+  })
+
+  test("AC3: below the ceiling with motion allowed still animates (WI3 decorations present)", () => {
+    installMatchMedia(false)
+    const plan = planLiveDiffAnimation("a\nb", "a\nX\nb")
+    expect(plan).not.toBeNull()
+    expect(decorationClassesForExternalUpdate("a\nb", "a\nX\nb")).toContain("cm-line-added")
+  })
+
+  test("AC4: the instant path still applies the correct final content via the mapped transaction", () => {
+    for (const [oldText, newText] of [
+      ["a\nb", "a\nX\nb"],
+      [largeOld, largeNew],
+    ] as const) {
+      const base = State.create({ doc: oldText })
+      const result = buildExternalUpdateTransaction(base.doc, newText, base.selection)
+      expect(result).not.toBeNull()
+      const applied = base.update({ changes: result!.changes }).state
+      expect(applied.doc.toString()).toBe(newText)
+    }
   })
 })
 

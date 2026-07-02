@@ -40,6 +40,48 @@ export const LIVE_DIFF_COLLAPSE_MS = 800;
  */
 export const LIVE_DIFF_CONCURRENT_COLLAPSE_CAP = 8;
 
+/**
+ * Conservative ceiling on the total changed lines (added + replaced + removed)
+ * an external update may animate. Above it, the whole diff routes to the same
+ * instant-apply path as the concurrent-collapse fallback — mass-widget jank on
+ * big diffs is the same scroll-oscillation class. Keep this conservative.
+ */
+export const LIVE_DIFF_MAX_ANIMATED_CHANGES = 200;
+
+/**
+ * Reduced-motion read via the repo's guarded matchMedia pattern
+ * (FadeInOnReveal.tsx). Server/no-DOM contexts report no preference.
+ */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+function countLiveDiffChanges(ops: readonly LineDiffOp[]): number {
+  let total = 0;
+  for (const op of ops) {
+    if (op.type === 'add') total += op.newLines.length;
+    else if (op.type === 'replace') total += op.newLines.length;
+    else total += op.oldLines.length;
+  }
+  return total;
+}
+
+/**
+ * WI4 large-diff entry gate: build the animation plan for an external update, or
+ * return null to route to the instant-apply path when the change count exceeds
+ * LIVE_DIFF_MAX_ANIMATED_CHANGES. Reduced-motion is gated by the caller (the
+ * `animate` flag on applyExternalUpdate); the mapped transaction is unaffected.
+ */
+export function planLiveDiffAnimation(oldText: string, newText: string): LiveDiffPlan | null {
+  const ops = computeLineDiff(oldText, newText);
+  if (countLiveDiffChanges(ops) > LIVE_DIFF_MAX_ANIMATED_CHANGES) return null;
+  return computeLiveDiffPlan(ops);
+}
+
 type LiveDiffKind = 'flash' | 'underline' | 'collapse';
 
 const GEN_ATTR = 'data-livediff-gen';
@@ -361,10 +403,10 @@ export function applyExternalUpdate(
   const oldDoc = view.state.doc;
   const result = buildExternalUpdateTransaction(oldDoc, newContent, view.state.selection);
   if (!result) return false;
-  const ops = options.animate ? computeLineDiff(oldDoc.toString(), newContent) : null;
+  const plan = options.animate ? planLiveDiffAnimation(oldDoc.toString(), newContent) : null;
   view.dispatch(
     result.selection ? { changes: result.changes, selection: result.selection } : { changes: result.changes },
   );
-  if (ops) applyLiveDiffDecorations(view, computeLiveDiffPlan(ops));
+  if (plan) applyLiveDiffDecorations(view, plan);
   return true;
 }

@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { createVimModeExtensions } from '@/lib/codemirror/vimModeExtension';
 import { cn } from '@/lib/utils';
 
-import { applyExternalUpdate, liveDiffDecorationsExtension } from '@/lib/codemirror/liveDiffDecorations';
+import { applyExternalUpdate, liveDiffDecorationsExtension, prefersReducedMotion } from '@/lib/codemirror/liveDiffDecorations';
 
 /** Patches `title` attributes onto CodeMirror search-panel controls for icon-only tooltips. */
 const buttonTooltips: Record<string, string> = {
@@ -506,8 +506,11 @@ export function CodeMirrorEditor({
     }
     appliedExternalVersionRef.current = externalUpdate.version;
 
-    // WI4 will compute `animate` from reduced-motion / large-file; WI3 always animates.
-    const applied = applyExternalUpdate(view, externalUpdate.content, { animate: true });
+    // WI4: reduced-motion routes to instant apply here; the large-change ceiling is
+    // gated inside applyExternalUpdate (planLiveDiffAnimation). Content still applies.
+    const applied = applyExternalUpdate(view, externalUpdate.content, {
+      animate: !prefersReducedMotion(),
+    });
     if (!applied) {
       return;
     }
