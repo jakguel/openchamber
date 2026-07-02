@@ -4,9 +4,6 @@ import { ChangeSet, EditorSelection } from '@codemirror/state';
 /** Adjacent delete+insert lines this similar (0..1) are classified as an in-place replace. */
 export const EXTERNAL_UPDATE_REPLACE_SIMILARITY = 0.5;
 
-/** Above this old*new line-count product the diff bails to a single whole-doc replace (perf guard). */
-const EXTERNAL_UPDATE_DIFF_CELL_CAP = 4_000_000;
-
 /** Mirrors the op shape of the `editor-diff` module so the local diff can be swapped for the shared one. */
 export type LineDiffOp =
   | { type: 'add'; newStart: number; newLines: string[] }
@@ -51,19 +48,6 @@ function lineSimilarity(a: string, b: string): number {
 export function computeLineDiff(oldText: string, newText: string): LineDiffOp[] {
   const oldLines = oldText.split('\n');
   const newLines = newText.split('\n');
-
-  if (oldLines.length * newLines.length > EXTERNAL_UPDATE_DIFF_CELL_CAP) {
-    return [
-      {
-        type: 'replace',
-        oldStart: 0,
-        newStart: 0,
-        oldLines,
-        newLines,
-        withinLine: [],
-      },
-    ];
-  }
 
   // Line-level LCS DP.
   const m = oldLines.length;
@@ -153,54 +137,68 @@ export function computeLineDiff(oldText: string, newText: string): LineDiffOp[] 
   return ops;
 }
 
-/** Turns an ordered op list into old-doc-coordinate CM change specs (per-change, not full replace). */
-function opsToChangeList(ops: LineDiffOp[], oldDoc: Text): Array<{ from: number; to: number; insert: string }> {
+type Change = { from: number; to: number; insert: string };
+
+/**
+ * Turns an ordered op list into old-doc-coordinate CM change specs. Every op is
+ * mapped to a scoped change over exactly the lines it touches (never a whole-doc
+ * replace shortcut); newline boundaries at the end of the document are handled
+ * by consuming the terminator of the preceding line. An adjacent remove+add over
+ * the same gap is emitted as one replace region so trailing-empty-line content
+ * (e.g. "a" -> "") reconstructs exactly.
+ */
+function opsToChangeList(ops: LineDiffOp[], oldDoc: Text): Change[] {
   const lineCount = oldDoc.lines;
   const docLen = oldDoc.length;
   const lineStart = (index0: number): number => oldDoc.line(index0 + 1).from;
-  // Range covering old lines [s, e) as a deletion, handling the end-of-doc newline.
-  const delRange = (s: number, e: number): { from: number; to: number } => {
-    if (e < lineCount) return { from: lineStart(s), to: lineStart(e) };
-    if (s > 0) return { from: oldDoc.line(s).to, to: docLen }; // consume the newline before line s
-    return { from: 0, to: docLen };
+
+  const emitDelete = (s: number, e: number): Change => {
+    if (e < lineCount) return { from: lineStart(s), to: lineStart(e), insert: '' };
+    return { from: s > 0 ? oldDoc.line(s).to : 0, to: docLen, insert: '' };
+  };
+  const emitReplace = (s: number, e: number, newLines: string[]): Change => {
+    const text = newLines.join('\n');
+    if (e < lineCount) return { from: lineStart(s), to: lineStart(e), insert: `${text}\n` };
+    return { from: s > 0 ? oldDoc.line(s).to : 0, to: docLen, insert: s > 0 ? `\n${text}` : text };
+  };
+  const emitInsert = (anchorOld: number, newLines: string[]): Change => {
+    const text = newLines.join('\n');
+    if (anchorOld < lineCount) return { from: lineStart(anchorOld), to: lineStart(anchorOld), insert: `${text}\n` };
+    if (docLen === 0) return { from: 0, to: 0, insert: text };
+    return { from: docLen, to: docLen, insert: `\n${text}` };
   };
 
-  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const changes: Change[] = [];
   let oldPos = 0;
   let newPos = 0;
-  for (const op of ops) {
+  for (let idx = 0; idx < ops.length; idx += 1) {
+    const op = ops[idx];
     if (op.type === 'remove') {
       const s = op.oldStart;
-      const e = op.oldStart + op.oldLines.length;
+      const e = s + op.oldLines.length;
       newPos += s - oldPos;
       oldPos = s;
-      const r = delRange(s, e);
-      changes.push({ from: r.from, to: r.to, insert: '' });
-      oldPos = e;
-    } else if (op.type === 'add') {
-      const anchorNew = op.newStart;
-      oldPos += anchorNew - newPos;
-      newPos = anchorNew;
-      const anchorOld = oldPos;
-      if (anchorOld < lineCount) {
-        const from = lineStart(anchorOld);
-        changes.push({ from, to: from, insert: `${op.newLines.join('\n')}\n` });
+      const next = ops[idx + 1];
+      if (next && next.type === 'add' && next.newStart === newPos) {
+        changes.push(emitReplace(s, e, next.newLines));
+        oldPos = e;
+        newPos = next.newStart + next.newLines.length;
+        idx += 1;
       } else {
-        const insert = docLen === 0 ? op.newLines.join('\n') : `\n${op.newLines.join('\n')}`;
-        changes.push({ from: docLen, to: docLen, insert });
+        changes.push(emitDelete(s, e));
+        oldPos = e;
       }
-      newPos = anchorNew + op.newLines.length;
+    } else if (op.type === 'add') {
+      oldPos += op.newStart - newPos;
+      newPos = op.newStart;
+      changes.push(emitInsert(oldPos, op.newLines));
+      newPos = op.newStart + op.newLines.length;
     } else {
       const s = op.oldStart;
-      const e = op.oldStart + op.oldLines.length;
+      const e = s + op.oldLines.length;
       oldPos = s;
       newPos = op.newStart;
-      const r = delRange(s, e);
-      let insert: string;
-      if (e < lineCount) insert = `${op.newLines.join('\n')}\n`;
-      else if (s > 0) insert = `\n${op.newLines.join('\n')}`;
-      else insert = op.newLines.join('\n');
-      changes.push({ from: r.from, to: r.to, insert });
+      changes.push(emitReplace(s, e, op.newLines));
       oldPos = e;
       newPos = op.newStart + op.newLines.length;
     }
@@ -219,29 +217,27 @@ function positionWasRemoved(changes: ChangeSet, pos: number): boolean {
 
 /**
  * Builds the mapped-transaction payload for an external update: a per-change
- * ChangeSet plus a remapped selection. A cursor that sat inside a removed or
- * replaced region snaps to the nearest surviving line start; cursors elsewhere
- * map by CM's default position mapping (preserving caret/scroll through edits
- * above them). Returns `null` when the content is byte-identical (no dispatch).
- *
- * If the derived per-change set does not reproduce `newContent` exactly (a
- * malformed op list), it falls back to a single whole-doc replace so the
- * document is always correct.
+ * ChangeSet plus a remapped selection, derived purely from the line diff. There
+ * is deliberately NO whole-doc-replace path — the version-bump handler must
+ * always dispatch mapped per-change edits so CodeMirror maps selection/scroll.
+ * A cursor that sat inside a removed/replaced region snaps to the nearest
+ * surviving line start; cursors elsewhere map by CM's default position mapping.
+ * Returns `null` when the content is byte-identical or the diff is degenerate
+ * (no dispatch — never a full replace).
  */
 export function buildExternalUpdateTransaction(
   oldDoc: Text,
   newContent: string,
   selection?: EditorSelection,
-): { changes: ChangeSet; selection?: EditorSelection; usedFullReplace: boolean } | null {
+): { changes: ChangeSet; selection?: EditorSelection } | null {
   if (oldDoc.toString() === newContent) return null;
 
+  // WI4: large-diff instant-apply gate belongs upstream (skips animation, not mapping).
   const ops = computeLineDiff(oldDoc.toString(), newContent);
-  let usedFullReplace = false;
-  let changes = ChangeSet.of(opsToChangeList(ops, oldDoc), oldDoc.length);
-  if (changes.apply(oldDoc).toString() !== newContent) {
-    changes = ChangeSet.of([{ from: 0, to: oldDoc.length, insert: newContent }], oldDoc.length);
-    usedFullReplace = true;
-  }
+  const changeList = opsToChangeList(ops, oldDoc);
+  if (changeList.length === 0) return null;
+
+  const changes = ChangeSet.of(changeList, oldDoc.length);
 
   let mappedSelection: EditorSelection | undefined;
   if (selection) {
@@ -254,5 +250,5 @@ export function buildExternalUpdateTransaction(
     mappedSelection = EditorSelection.create(ranges, selection.mainIndex);
   }
 
-  return { changes, selection: mappedSelection, usedFullReplace };
+  return { changes, selection: mappedSelection };
 }

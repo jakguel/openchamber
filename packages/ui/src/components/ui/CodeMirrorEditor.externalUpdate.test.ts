@@ -20,6 +20,11 @@ const changedSpan = (changes: ChangeSet) => {
   return { minFrom, maxTo }
 }
 
+const spansWholeDoc = (changes: ChangeSet, oldLength: number) => {
+  const { minFrom, maxTo } = changedSpan(changes)
+  return minFrom === 0 && maxTo === oldLength
+}
+
 describe("computeLineDiff", () => {
   test("pure insertion emits a single add op anchored at the new line", () => {
     const ops = computeLineDiff("a\nb", "a\nX\nb")
@@ -66,15 +71,15 @@ describe("buildExternalUpdateTransaction", () => {
     expect(result).not.toBeNull()
     if (!result) return
 
-    expect(result.usedFullReplace).toBe(false)
     expect(result.changes.apply(oldDoc).toString()).toBe(next)
+    expect(spansWholeDoc(result.changes, oldDoc.length)).toBe(false)
 
     const { minFrom, maxTo } = changedSpan(result.changes)
     expect(minFrom).toBeGreaterThan(0)
     expect(maxTo).toBeLessThan(oldDoc.length)
   })
 
-  test("caret below a removed line is preserved on its original logical line", () => {
+  test("caret below a removed line is preserved (a from:0,to:len replace would destroy this)", () => {
     const oldDoc = docOf("l0\nl1\nl2\nl3\nl4")
     const headInL3 = 10
     expect(oldDoc.lineAt(headInL3).text).toBe("l3")
@@ -82,6 +87,8 @@ describe("buildExternalUpdateTransaction", () => {
     const result = buildExternalUpdateTransaction(oldDoc, "l0\nl2\nl3\nl4", cursorAt(headInL3))
     expect(result).not.toBeNull()
     if (!result?.selection) throw new Error("expected a mapped selection")
+
+    expect(spansWholeDoc(result.changes, oldDoc.length)).toBe(false)
 
     const newDoc = result.changes.apply(oldDoc)
     const head = result.selection.main.head
@@ -111,7 +118,16 @@ describe("buildExternalUpdateTransaction", () => {
     expect(result).not.toBeNull()
     if (!result) return
 
-    expect(result.usedFullReplace).toBe(false)
     expect(result.changes.apply(oldDoc).toString()).toBe(next)
+    expect(spansWholeDoc(result.changes, oldDoc.length)).toBe(false)
+  })
+
+  test("clearing a single-line doc reconstructs empty content without a fallback replace", () => {
+    const oldDoc = docOf("a")
+    const result = buildExternalUpdateTransaction(oldDoc, "", cursorAt(1))
+    expect(result).not.toBeNull()
+    if (!result) return
+
+    expect(result.changes.apply(oldDoc).toString()).toBe("")
   })
 })
