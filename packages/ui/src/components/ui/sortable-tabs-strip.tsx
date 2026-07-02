@@ -376,12 +376,8 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     });
   }, []);
 
-  const list = (
-    <div
-      className={cn('relative flex h-full min-w-0 flex-1', className)}
-      role={pinFirst ? 'tablist' : undefined}
-      aria-label={pinFirst ? t('sortableTabsStrip.aria.tabs') : undefined}
-    >
+  const tabRegion = (
+    <>
       {pinFirst && pinnedItem ? (
         <div ref={pinnedTabRef} className="flex h-full shrink-0">
           <div
@@ -440,7 +436,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               ? 'w-8 from-[var(--surface-background)]'
               : 'w-6 from-background'
           )}
-          style={showScrollButtons ? { right: SCROLL_RAIL_WIDTH } : undefined}
+          style={pinFirst ? undefined : (showScrollButtons ? { right: SCROLL_RAIL_WIDTH } : undefined)}
         />
       ) : null}
       <div
@@ -686,6 +682,22 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
           );
         })}
       </div>
+    </>
+  );
+
+  const list = (
+    <div className={cn('relative flex h-full min-w-0 flex-1', className)}>
+      {pinFirst ? (
+        <div
+          className="relative flex h-full min-w-0 flex-1"
+          role="tablist"
+          aria-label={t('sortableTabsStrip.aria.tabs')}
+        >
+          {tabRegion}
+        </div>
+      ) : (
+        tabRegion
+      )}
       {showScrollButtons && isScrollable ? (
         <div
           className="flex h-full shrink-0 items-center justify-end gap-0.5 pl-1"
