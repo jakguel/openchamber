@@ -69,6 +69,13 @@ const restrictToXAxis: Modifier = ({ transform }) => ({
   y: 0,
 });
 
+// Constant width reserved for the overflow scroll-arrow rail. Kept in sync with
+// the right-edge gradient offset so the fade ends exactly before the rail.
+const SCROLL_RAIL_WIDTH = 56;
+// Minimum per-click scroll distance (one file-tab width) so an ultra-narrow
+// strip still advances when clientWidth / 2 would be smaller.
+const MIN_SCROLL_STEP = 140;
+
 const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode; className?: string }> = ({ id, children, className }) => {
   const {
     attributes,
@@ -115,6 +122,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   animateActivePill,
   activePillLowercase = true,
   pinFirstTab = false,
+  showScrollButtons = false,
   className,
 }) => {
   const { t } = useI18n();
@@ -346,6 +354,23 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     onReorder(String(active.id), String(over.id));
   }, [onReorder]);
 
+  const handleScrollButton = React.useCallback((direction: 'left' | 'right') => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+
+    const step = Math.max(element.clientWidth / 2, MIN_SCROLL_STEP);
+    const prefersReducedMotion = typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    element.scrollBy({
+      left: direction === 'left' ? -step : step,
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    });
+  }, []);
+
   const list = (
     <div
       className={cn('relative flex h-full min-w-0 flex-1', className)}
@@ -410,6 +435,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               ? 'w-8 from-[var(--surface-background)]'
               : 'w-6 from-background'
           )}
+          style={showScrollButtons ? { right: SCROLL_RAIL_WIDTH } : undefined}
         />
       ) : null}
       <div
@@ -650,6 +676,41 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
           );
         })}
       </div>
+      {showScrollButtons && isScrollable ? (
+        <div
+          className="flex h-full shrink-0 items-center justify-end gap-0.5 pl-1"
+          style={{ width: SCROLL_RAIL_WIDTH }}
+        >
+          <button
+            type="button"
+            onClick={() => handleScrollButton('left')}
+            disabled={!overflow.left}
+            aria-label={t('sortableTabsStrip.aria.scrollLeft')}
+            className={cn(
+              'flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors',
+              'hover:bg-interactive-hover/60 hover:text-foreground',
+              'disabled:pointer-events-none disabled:opacity-40',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]'
+            )}
+          >
+            <Icon name="arrow-left-s" className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleScrollButton('right')}
+            disabled={!overflow.right}
+            aria-label={t('sortableTabsStrip.aria.scrollRight')}
+            className={cn(
+              'flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors',
+              'hover:bg-interactive-hover/60 hover:text-foreground',
+              'disabled:pointer-events-none disabled:opacity-40',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]'
+            )}
+          >
+            <Icon name="arrow-right-s" className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 
