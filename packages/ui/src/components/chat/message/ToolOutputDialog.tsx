@@ -23,6 +23,7 @@ import {
 } from './toolRenderers';
 import type { ToolPopupContent, DiffViewMode } from './types';
 import { DiffViewToggle } from './DiffViewToggle';
+import { DiagramPanZoomViewport } from './DiagramPanZoomViewport';
 import { VirtualizedCodeBlock, type CodeLine } from './parts/VirtualizedCodeBlock';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { Icon } from "@/components/icon/Icon";
@@ -637,8 +638,8 @@ const MermaidPreviewDialog: React.FC<{
     isMobile: boolean;
 }> = ({ popup, onOpenChange, isMobile }) => {
     const { t } = useI18n();
-    const [source, setSource] = React.useState<string>(popup.mermaid?.source || '');
-    const [status, setStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(popup.mermaid?.source ? 'ready' : 'idle');
+    const [source, setSource] = React.useState<string>(popup.diagram?.source || '');
+    const [status, setStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(popup.diagram?.source ? 'ready' : 'idle');
     const [errorMessage, setErrorMessage] = React.useState<string>('');
     const { isRendered, isVisible, isTransitioning } = usePreviewOverlayState(popup.open);
     const [diagramAspectRatio, setDiagramAspectRatio] = React.useState<number | null>(null);
@@ -709,7 +710,7 @@ const MermaidPreviewDialog: React.FC<{
     }, []);
 
     const loadMermaidSource = React.useCallback(async () => {
-        const target = popup.mermaid;
+        const target = popup.diagram;
         if (!target?.url) {
             setStatus('error');
             setErrorMessage(t('chat.toolOutputDialog.mermaid.missingSource'));
@@ -780,14 +781,14 @@ const MermaidPreviewDialog: React.FC<{
                 setStatus('error');
                 setErrorMessage(error instanceof Error ? error.message : t('chat.toolOutputDialog.mermaid.loadFailed'));
             });
-    }, [decodeDataUrl, normalizeFilePath, popup.mermaid, t]);
+    }, [decodeDataUrl, normalizeFilePath, popup.diagram, t]);
 
     React.useEffect(() => {
-        if (!popup.open || !popup.mermaid) {
+        if (!popup.open || !popup.diagram) {
             return;
         }
         void loadMermaidSource();
-    }, [loadMermaidSource, popup.mermaid, popup.open]);
+    }, [loadMermaidSource, popup.diagram, popup.open]);
 
     React.useEffect(() => {
         if (!popup.open) {
@@ -963,14 +964,16 @@ const MermaidPreviewDialog: React.FC<{
 
                             {status === 'ready' && (
                                 <div ref={mermaidPreviewRef} className="h-full">
-                                    <SimpleMarkdownRenderer
-                                        content={mermaidMarkdown}
-                                        variant="tool"
-                                        allowMermaidWheelZoom
-                                        className="markdown-mermaid-fullscreen h-full [&_[data-markdown='mermaid-block']_button]:hidden"
-                                        mermaidControls={MERMAID_CONTROLS}
-                                        enableFileReferences={false}
-                                    />
+                                    <DiagramPanZoomViewport resetKey={`${popup.open}:${source}`} data-testid="diagram-panzoom">
+                                        <SimpleMarkdownRenderer
+                                            content={mermaidMarkdown}
+                                            variant="tool"
+                                            allowMermaidWheelZoom
+                                            className="markdown-mermaid-fullscreen [&_[data-markdown='mermaid-block']_button]:hidden"
+                                            mermaidControls={MERMAID_CONTROLS}
+                                            enableFileReferences={false}
+                                        />
+                                    </DiagramPanZoomViewport>
                                 </div>
                             )}
                         </div>
@@ -997,7 +1000,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
         return <ImagePreviewDialog popup={popup} onOpenChange={onOpenChange} isMobile={isMobile} />;
     }
 
-    if (popup.mermaid) {
+    if (popup.diagram) {
         return <MermaidPreviewDialog popup={popup} onOpenChange={onOpenChange} isMobile={isMobile} />;
     }
 

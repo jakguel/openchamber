@@ -2561,6 +2561,7 @@ export const dict: Record<I18nKey, string> = {
   "markdownRenderer.mermaid.actions.copyTitle": "Копіювати",
   "markdownRenderer.mermaid.actions.copySourceTitle": "Копіювати джерело",
   "markdownRenderer.mermaid.actions.downloadSvgTitle": "Завантажити SVG",
+  "markdownRenderer.mermaid.actions.expandTitle": "На весь екран",
   "markdownRenderer.mermaid.toast.downloadFailed": "Не вдалося завантажити діаграму",
   "contextPanel.preview.title": "Попередній перегляд",
   "contextPanel.preview.description": "Використайте дії проєкту або кнопку Preview у терміналі, щоб відкрити перегляд.",

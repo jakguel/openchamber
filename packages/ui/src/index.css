@@ -1439,59 +1439,57 @@ html:not(.dark) .chat-scroll {
   background: var(--surface-elevated);
 }
 
-/* Fullscreen Mermaid popup: scale diagrams to fill available viewport panel area. */
+/* Fullscreen diagram popup: the diagram is fit-to-panel at rest, then the
+   DiagramPanZoomViewport CSS transform (translate + scale) owns all movement. overflow is
+   therefore NEUTRALIZED here (visible, not auto) — an inner scrollbar would fight the
+   transform-based pan. The [data-diagram-panzoom] container clips; the transform moves the
+   content within it. Aspect-ratio panel sizing still lives in ToolOutputDialog dialogSize. */
 .markdown-mermaid-fullscreen {
-  height: 100%;
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .markdown-mermaid-fullscreen .markdown-content {
-  height: 100%;
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] {
-  width: 100%;
-  height: 100%;
-  min-height: 100%;
   margin: 0;
-  padding: 0.75rem;
+  padding: 0;
   border: 0;
   border-radius: 0;
-  background: var(--surface-elevated);
+  background: transparent;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid-scroll"] {
-  width: 100%;
-  height: 100%;
-  overflow: auto;
+  overflow: visible;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid"] {
-  width: max-content;
-  min-width: 100%;
-  min-height: 100%;
   display: block;
+  width: auto;
+  max-width: 100%;
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] [data-markdown="mermaid-ascii"] {
   margin: 0;
   white-space: pre;
-  width: max-content;
-  min-width: 100%;
-  min-height: 100%;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   color: var(--surface-foreground);
   background: transparent;
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] svg {
-  width: auto !important;
-  height: auto !important;
-  max-width: none !important;
-  max-height: none !important;
-  min-width: 100%;
   display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
   background: transparent;
 }
 

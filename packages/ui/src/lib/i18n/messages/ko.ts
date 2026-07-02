@@ -2595,6 +2595,7 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.copyTitle': '복사',
   'markdownRenderer.mermaid.actions.copySourceTitle': '소스 복사',
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'SVG 다운로드',
+  'markdownRenderer.mermaid.actions.expandTitle': '전체 화면',
   'markdownRenderer.mermaid.toast.downloadFailed': '다이어그램 다운로드 실패',
   'common.date.today': 'Today',
   'common.date.yesterday': 'Yesterday',

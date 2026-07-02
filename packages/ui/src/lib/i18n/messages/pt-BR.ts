@@ -2561,6 +2561,7 @@ export const dict: Record<I18nKey, string> = {
   "markdownRenderer.mermaid.actions.copyTitle": "Copiar",
   "markdownRenderer.mermaid.actions.copySourceTitle": "Copiar origem",
   "markdownRenderer.mermaid.actions.downloadSvgTitle": "Baixar SVG",
+  "markdownRenderer.mermaid.actions.expandTitle": "Tela cheia",
   "markdownRenderer.mermaid.toast.downloadFailed": "Não foi possível baixar o diagrama",
   "contextPanel.preview.title": "Visualização",
   "contextPanel.preview.description": "Use Ações do projeto ou o botão Preview do terminal para abrir uma visualização.",

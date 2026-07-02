@@ -2558,6 +2558,7 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.copyTitle': '複製',
   'markdownRenderer.mermaid.actions.copySourceTitle': '複製原始碼',
   'markdownRenderer.mermaid.actions.downloadSvgTitle': '下載 SVG',
+  'markdownRenderer.mermaid.actions.expandTitle': '全螢幕',
   'markdownRenderer.mermaid.toast.downloadFailed': '下載圖表失敗',
   'contextPanel.preview.title': '預覽',
   'contextPanel.preview.description': '使用專案操作或終端機 Preview 按鈕開啟預覽。',

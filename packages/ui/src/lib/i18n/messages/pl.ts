@@ -2082,6 +2082,7 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.mermaid.actions.copySourceTitle': 'Kopiuj źródło',
   'markdownRenderer.mermaid.actions.copyTitle': 'Kopiuj',
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'Pobierz SVG',
+  'markdownRenderer.mermaid.actions.expandTitle': 'Pełny ekran',
   'markdownRenderer.mermaid.toast.downloadFailed': 'Nie udało się pobrać diagramu',
   'markdownRenderer.table.actions.copyTitle': 'Kopiuj tabelę',
   'markdownRenderer.table.actions.downloadTitle': 'Pobierz tabelę',

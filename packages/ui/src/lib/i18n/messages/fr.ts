@@ -2405,6 +2405,7 @@ export const dict = {
   'markdownRenderer.mermaid.actions.copyTitle': 'Copie',
   'markdownRenderer.mermaid.actions.copySourceTitle': 'Copier la source',
   'markdownRenderer.mermaid.actions.downloadSvgTitle': 'Télécharger SVG',
+  'markdownRenderer.mermaid.actions.expandTitle': 'Plein écran',
   'markdownRenderer.mermaid.toast.downloadFailed': 'Échec du téléchargement du diagramme',
   'common.date.today': 'Aujourd’hui',
   'common.date.yesterday': 'Hier',

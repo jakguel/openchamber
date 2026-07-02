@@ -796,11 +796,17 @@ const useMermaidInlineInteractions = ({
         return;
       }
 
-      if (target.closest('button, a, [role="button"]')) {
+      // The magnify toolbar button explicitly opens the popup — this is the bridge from the
+      // DOM-decorate toolbar (data-md-action="mermaid-expand") to this React hook. It must
+      // run BEFORE the button guard below, since the magnify control is itself a <button>.
+      const expandButton = target.closest('[data-md-action="mermaid-expand"]');
+
+      // Any other button/link (copy, download) is handled by the DOM dispatcher, not here.
+      if (!expandButton && target.closest('button, a, [role="button"]')) {
         return;
       }
 
-      const block = target.closest(MERMAID_BLOCK_SELECTOR);
+      const block = (expandButton ?? target).closest(MERMAID_BLOCK_SELECTOR);
       if (!block) {
         return;
       }
@@ -825,7 +831,8 @@ const useMermaidInlineInteractions = ({
           tool: 'mermaid-preview',
           filename,
         },
-        mermaid: {
+        diagram: {
+          kind: 'mermaid',
           url: `data:text/plain;charset=utf-8,${encodeURIComponent(source)}`,
           source,
           filename,
@@ -975,6 +982,7 @@ const useDecorateContext = (
     downloadTable: t('markdownRenderer.table.actions.downloadTitle'),
     copyDiagram: t('markdownRenderer.mermaid.actions.copySourceTitle'),
     downloadDiagram: t('markdownRenderer.mermaid.actions.downloadSvgTitle'),
+    expandDiagram: t('markdownRenderer.mermaid.actions.expandTitle'),
     previewLabel: t('terminalView.preview.open'),
     previewTitle: t('terminalView.preview.openTitle'),
   }), [t]);

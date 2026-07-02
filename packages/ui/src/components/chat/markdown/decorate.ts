@@ -15,6 +15,7 @@ export type DecorateLabels = {
   downloadTable: string;
   copyDiagram: string;
   downloadDiagram: string;
+  expandDiagram: string;
   previewLabel: string;
   previewTitle: string;
 };
@@ -36,6 +37,7 @@ const ICONS = {
   copy: spriteIcon('file-copy'),
   check: spriteIcon('check'),
   download: spriteIcon('download'),
+  expand: spriteIcon('fullscreen'),
 } as const;
 
 const ICON_BTN_CLASS =
@@ -264,8 +266,12 @@ const decorateMermaid = (root: HTMLElement, ctx: DecorateContext): void => {
       copy.setAttribute('data-md-source', source);
       const download = makeIconButton('download', ctx.labels.downloadDiagram, 'mermaid-download');
       download.setAttribute('data-md-svg', '1');
+      // Magnify: emits data-md-action="mermaid-expand"; the React hook
+      // (useMermaidInlineInteractions) listens for it and opens the fullscreen popup.
+      const expand = makeIconButton('expand', ctx.labels.expandDiagram, 'mermaid-expand');
       toolbar.appendChild(copy);
       toolbar.appendChild(download);
+      toolbar.appendChild(expand);
     } else {
       const asciiPre = document.createElement('pre');
       asciiPre.setAttribute('data-markdown', 'mermaid-ascii');
@@ -273,7 +279,11 @@ const decorateMermaid = (root: HTMLElement, ctx: DecorateContext): void => {
       scroll.appendChild(asciiPre);
       const copy = makeIconButton('copy', ctx.labels.copyDiagram, 'mermaid-copy');
       copy.setAttribute('data-md-source', rendered.ascii || source);
+      // Magnify is available in ascii mode too; the popup re-renders the source per the
+      // current rendering mode.
+      const expand = makeIconButton('expand', ctx.labels.expandDiagram, 'mermaid-expand');
       toolbar.appendChild(copy);
+      toolbar.appendChild(expand);
     }
 
     block.appendChild(scroll);

@@ -28,7 +28,10 @@ export interface ToolPopupContent {
         }>;
         index?: number;
     };
-    mermaid?: {
+    // Renderer-agnostic diagram payload for the fullscreen popup. `kind` lets the popup
+    // route mermaid today and plantuml (Story D) tomorrow through the same dialog.
+    diagram?: {
+        kind: 'mermaid' | 'plantuml';
         url: string;
         mimeType?: string;
         filename?: string;
