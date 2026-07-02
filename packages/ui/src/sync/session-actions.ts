@@ -12,7 +12,7 @@ import type { ChildStoreManager } from "./child-store"
 import { opencodeClient } from "@/lib/opencode/client"
 import { mergeSessionDirectoryMetadata, useGlobalSessionsStore } from "@/stores/useGlobalSessionsStore"
 import { useConfigStore } from "@/stores/useConfigStore"
-import { registerSessionDirectory } from "./sync-refs"
+import { registerSessionDirectory, isSyncReady } from "./sync-refs"
 import { isSyntheticPart } from "@/lib/messages/synthetic"
 import { getSessionMaterializationStatus, materializeSessionSnapshots } from "./materialization"
 import { retry } from "./retry"
@@ -1253,6 +1253,11 @@ const getFetchPageSize = () => {
 export async function fetchMessagesForSession(sessionID: string, directory?: string | null): Promise<void> {
   const resolvedDir = directory ?? dir()
   if (!resolvedDir) return
+
+  // Guard: SyncProvider hasn't installed refs yet (boot race).
+  // Clean no-op — avoids the unhandled rejection from sdk() throwing before
+  // the try/catch. The reactive path in ChatContainer retries on mount.
+  if (!isSyncReady()) return
 
   const s = sdk()
   const store = directory

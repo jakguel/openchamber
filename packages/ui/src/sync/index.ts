@@ -117,6 +117,7 @@ export {
 export {
   setSyncRefs,
   getSyncSDK,
+  isSyncReady,
   getSyncChildStores,
   getSyncDirectory,
   getDirectoryState,

@@ -53,6 +53,13 @@ export function getSyncSDK(): OpencodeClient {
   return _sdk
 }
 
+/** Returns true when the sync refs have been installed by SyncProvider.
+ *  Non-throwing safe check — use before getSyncSDK() when the caller
+ *  must silently no-op instead of throwing (e.g. pre-mount fetches). */
+export function isSyncReady(): boolean {
+  return _sdk !== null
+}
+
 export function getSyncChildStores(): ChildStoreManager {
   if (!_childStores) throw new Error("ChildStoreManager not initialized — is SyncProvider mounted?")
   return _childStores
