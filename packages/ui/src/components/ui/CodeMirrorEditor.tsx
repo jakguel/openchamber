@@ -11,6 +11,8 @@ import { createPortal } from 'react-dom';
 import { createVimModeExtensions } from '@/lib/codemirror/vimModeExtension';
 import { cn } from '@/lib/utils';
 
+import { buildExternalUpdateTransaction } from './codeMirrorExternalUpdate';
+
 /** Patches `title` attributes onto CodeMirror search-panel controls for icon-only tooltips. */
 const buttonTooltips: Record<string, string> = {
   next: 'Next match',
@@ -143,6 +145,7 @@ type CodeMirrorEditorProps = {
   searchOpen?: boolean;
   onSearchOpenChange?: (open: boolean) => void;
   vimMode?: boolean;
+  externalUpdate?: { content: string; version: number };
 };
 
 const lineNumbersCompartment = new Compartment();
@@ -269,6 +272,7 @@ export function CodeMirrorEditor({
   searchOpen,
   onSearchOpenChange,
   vimMode,
+  externalUpdate,
 }: CodeMirrorEditorProps) {
   const hostRef = React.useRef<HTMLDivElement | null>(null);
   const viewRef = React.useRef<EditorView | null>(null);
@@ -279,6 +283,7 @@ export function CodeMirrorEditor({
   const onSearchOpenChangeRef = React.useRef(onSearchOpenChange);
   const blockWidgetsRef = React.useRef(blockWidgets);
   const vimModeRef = React.useRef(vimMode);
+  const appliedExternalVersionRef = React.useRef(externalUpdate?.version);
   
   // Scoped map for widget containers to avoid global collisions and memory leaks
   const widgetContainersRef = React.useRef(new Map<string, HTMLElement>());
@@ -488,6 +493,27 @@ export function CodeMirrorEditor({
       closeSearchPanelCompat(view);
     }
   }, [searchOpen, enableSearch]);
+
+  React.useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !externalUpdate) {
+      return;
+    }
+    if (externalUpdate.version === appliedExternalVersionRef.current) {
+      return;
+    }
+    appliedExternalVersionRef.current = externalUpdate.version;
+
+    const result = buildExternalUpdateTransaction(view.state.doc, externalUpdate.content, view.state.selection);
+    if (!result) {
+      return;
+    }
+    view.dispatch(result.selection ? { changes: result.changes, selection: result.selection } : { changes: result.changes });
+    valueRef.current = view.state.doc.toString();
+    forceParsingCompat(view, view.state.doc.length, 300);
+    view.requestMeasure();
+    requestAnimationFrame(() => syncEditorCssVars(view));
+  }, [externalUpdate, syncEditorCssVars]);
 
   React.useEffect(() => {
     const view = viewRef.current;
