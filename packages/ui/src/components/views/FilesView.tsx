@@ -3931,6 +3931,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                 <CodeMirrorEditor
                   value={draftContent}
                   onChange={setDraftContent}
+                  externalUpdate={pendingExternalUpdate ?? undefined}
                   readOnly={!canEdit}
                   vimMode={fileEditorKeymap === 'vim'}
                   extensions={editorExtensions}
@@ -4247,6 +4248,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
               <CodeMirrorEditor
                 value={draftContent}
                 onChange={setDraftContent}
+                externalUpdate={pendingExternalUpdate ?? undefined}
                 readOnly={!canEdit}
                 vimMode={fileEditorKeymap === 'vim'}
                 extensions={editorExtensions}
