@@ -72,6 +72,13 @@ function assertRendered(result: SpikeResult, externalRequests: string[], mode: s
     // Dark proof: render({dark:true}) reliably differs from light.
     expect(result.darkDiffersLight, `[${mode}] render() dark sig differs from light`).toBe(true);
 
+    // renderToString dark-path proof (regression guard): fail if renderToString ever reverts to
+    // light-only. (a) the 4th {dark} options arg is accepted+honored, (b) the dark call produced
+    // an SVG, (c) its palette differs from the light call (dark actually applied, not a no-op).
+    expect(result.rtsAcceptsDarkArg, `[${mode}] renderToString honors the 4th {dark} options arg`).toBe(true);
+    expect(result.rtsDark.ok, `[${mode}] renderToString dark render produced an SVG`).toBe(true);
+    expect(result.rtsDarkDiffersLight, `[${mode}] renderToString dark palette differs from light`).toBe(true);
+
     // Error affordance: an invalid source resolves (never a perpetual spinner) and is DETECTED
     // as an error. Empirically neither API uses onError for syntax errors — both return an
     // error-diagram SVG, so error detection is content-based (isPlantumlError signature).
