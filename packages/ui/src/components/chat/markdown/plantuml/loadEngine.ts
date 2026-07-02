@@ -1,3 +1,9 @@
+// LAZY engine loader: the ~8.6MB @plantuml/core engine (viz-global.js + plantuml.js) is loaded
+// ONLY when loadPlantUmlEngine() is explicitly invoked — never at module import. The top-level
+// `?url` import resolves to a hashed URL STRING (no engine bytes), keeping the baseline bundle
+// unaffected. The "only when a plantuml block is present" gate belongs to the sole call site
+// (decoratePlantuml, openchamber-f9d.16.4); this module intentionally has NO markdown/DOM
+// knowledge and MUST NOT query markdown selectors. Concerns here: SSR-gate + singleton only.
 import vizGlobalUrl from '@plantuml/core/viz-global.js?url';
 
 export type PlantUmlOptions = { dark?: boolean };
