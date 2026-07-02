@@ -44,6 +44,9 @@ const CONTAINER_BODY_PX = 15;
 
 /** A horizontal flowchart renders WIDER than a narrow container (forces the fit path). */
 const WIDE_MERMAID_SOURCE = 'graph LR\n  A --> B --> C --> D --> E --> F --> G --> H';
+/** A short horizontal flowchart: narrower than a WIDE container (real font-balance headroom),
+ *  so the clamp does NOT bind and the legibility upscale still applies. */
+const MEDIUM_MERMAID_SOURCE = 'graph LR\n  A --> B --> C --> D';
 /** A tiny diagram renders NARROWER than a wide container (must not be upscaled). */
 const SMALL_MERMAID_SOURCE = 'graph TD\n  A --> B';
 
@@ -182,6 +185,7 @@ async function renderAndMeasure(page: Page, source: string, containerWidth: numb
 
             const intrinsicWidthAttr = svg ? Number.parseFloat(svg.getAttribute('width') ?? 'NaN') : NaN;
             const svgRect = svg ? svg.getBoundingClientRect() : null;
+            const scrollRect = scroll ? scroll.getBoundingClientRect() : null;
             // Layout width of the svg (used CSS width) — this EXCLUDES the ancestor
             // transform, so it is the true fit-to-width measure. getBoundingClientRect and
             // scrollWidth both fold in diagramScale's transform:scale on the host.
@@ -193,7 +197,12 @@ async function renderAndMeasure(page: Page, source: string, containerWidth: numb
                 scrollClientWidth: scroll ? scroll.clientWidth : -1,
                 scrollOverflowX: scroll ? getComputedStyle(scroll).overflowX : '',
                 svgRenderedWidth: svgRect ? svgRect.width : -1,
+                svgRight: svgRect ? svgRect.right : -1,
+                scrollRight: scrollRect ? scrollRect.right : -1,
                 computedSvgWidth,
+                // Fitted (pre-transform) layout width of the scale host — offsetWidth ignores
+                // the transform:scale, so it is the host width the clamp measures against.
+                hostFittedWidth: host ? host.offsetWidth : -1,
                 intrinsicWidthAttr,
                 // Story A font-balance transform proof: diagramScale stamps this attribute.
                 hasScaleAttr: host?.hasAttribute('data-md-diagram-scale') ?? false,
@@ -240,17 +249,66 @@ test.describe('Story B task 1 — mermaid inline fit-to-width', () => {
         expect(m.svgRenderedWidth).toBeLessThan(600);
     });
 
-    test('AC3: Story A font-balance transform still applies alongside the width fit', async ({ page }) => {
+    test('AC3: Story A font-balance transform still runs and is clamped (not blindly upscaled) for a no-headroom wide diagram', async ({ page }) => {
         await mountHarness(page);
         const m = await renderAndMeasure(page, WIDE_MERMAID_SOURCE, 320);
 
-        // diagramScale ran and stamped its scale marker (font-balance still applies)…
+        // diagramScale ran and stamped its scale marker (font-balance pipeline still runs)…
         expect(m.hasScaleAttr).toBe(true);
         expect(Number.isFinite(m.appliedScale)).toBe(true);
-        expect(m.appliedScale).toBeGreaterThan(1);
-        // …and it did NOT compound wrongly: even with the scale applied, the inner box still
-        // has no horizontal overflow (scrollWidth includes the transform).
+        // …but for a diagram already fitted to the full container width there is no headroom,
+        // so the f9d.15.3 clamp caps the scale at ~container/fitted instead of the >1 upscale
+        // the old static-reservation build applied (which overflowed 295px into a 256px box).
+        expect(m.appliedScale * m.hostFittedWidth).toBeLessThanOrEqual(m.scrollClientWidth + 1);
         expect(m.scrollWidth).toBeLessThanOrEqual(m.scrollClientWidth);
         expect(m.scrollOverflowX).toBe('hidden');
+    });
+});
+
+test.describe('Story B task 3 — clamp font-balance upscale to available headroom', () => {
+    test('AC1: a WIDER-than-container diagram is fully visible inline — right edge inside container, no inner scroll', async ({ page }) => {
+        await mountHarness(page);
+        const m = await renderAndMeasure(page, WIDE_MERMAID_SOURCE, 320);
+
+        expect(m.hasSvg).toBe(true);
+        // Non-vacuous: the diagram really is wider than the (narrow) container.
+        expect(m.intrinsicWidthAttr).toBeGreaterThan(m.scrollClientWidth);
+        // Whole diagram visible: the painted svg right edge sits within the scroll box right
+        // edge (<=2px epsilon). Without the clamp the host*scale = 256*~1.15 ≈ 294 would push
+        // the right edge ~38px past the 256px box — this assertion fails if the clamp is removed.
+        expect(m.svgRight).toBeLessThanOrEqual(m.scrollRight + 2);
+        // No inner horizontal scrollbar: scrollWidth (which folds in the transform) stays within
+        // clientWidth, and the box clips rather than scrolls.
+        expect(m.scrollWidth).toBeLessThanOrEqual(m.scrollClientWidth);
+        expect(m.scrollOverflowX).toBe('hidden');
+    });
+
+    test('AC2: a diagram WITH headroom still receives the font-balance upscale (clamp not globally disabling it)', async ({ page }) => {
+        await mountHarness(page);
+        const m = await renderAndMeasure(page, MEDIUM_MERMAID_SOURCE, 900);
+
+        expect(m.hasSvg).toBe(true);
+        // Real headroom: the fitted host is well inside the wide container, so the clamp ceiling
+        // (container/fitted) is > 1 and does NOT bind…
+        expect(m.hostFittedWidth).toBeLessThan(m.scrollClientWidth);
+        // …so the legibility upscale still applies (scale > 1) — proof the clamp is a ceiling,
+        // not a global off-switch.
+        expect(m.appliedScale).toBeGreaterThan(1);
+        // And the upscaled diagram still fits with no inner scroll.
+        expect(m.scrollWidth).toBeLessThanOrEqual(m.scrollClientWidth);
+    });
+
+    test('AC3: a naturally-small diagram is not shrunk below its intrinsic width by the clamp', async ({ page }) => {
+        await mountHarness(page);
+        const m = await renderAndMeasure(page, SMALL_MERMAID_SOURCE, 900);
+
+        expect(m.hasSvg).toBe(true);
+        // The width ceiling is >= 1 by construction, so it can never pull a small diagram below
+        // its intrinsic size: the fitted host width stays at the intrinsic width (not shrunk,
+        // not stretched to the container).
+        expect(m.hostFittedWidth).toBeGreaterThanOrEqual(m.intrinsicWidthAttr - 2);
+        expect(m.hostFittedWidth).toBeLessThanOrEqual(m.intrinsicWidthAttr + 2);
+        // Deep headroom → the clamp is inactive here (it only binds near the container edge).
+        expect(m.hostFittedWidth).toBeLessThan(m.scrollClientWidth);
     });
 });

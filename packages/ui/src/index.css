@@ -1404,13 +1404,14 @@ html:not(.dark) .chat-scroll {
 [data-markdown="mermaid-block"] [data-markdown="mermaid"] {
   display: block;
   width: fit-content;
-  /* Reserve headroom for the Story A font-balance transform (diagramScale.ts applies a
-     transform:scale on this host, up to DIAGRAM_SCALE_MAX = 1.4). Capping the host layout
-     width at container/1.4 means host * scale stays within the container for any scale up to
-     1.4 — so an upscaled wide diagram fits with no clip and no inner scroll. This only binds
-     for diagrams wider than 1/1.4 of the container; narrower diagrams shrink-wrap at their
-     natural size and the font-balance scale applies freely. */
-  max-width: calc(100% / 1.4);
+  /* Fit the host to the container width. The Story A font-balance transform:scale
+     (diagramScale.ts applyDiagramBodyScale) is clamped in JS to the headroom actually
+     available between this fitted host and its container, so host*scale never exceeds
+     the container — an upscaled wide diagram fits with no clip and no inner scroll,
+     while a narrower one still upscales freely into its real headroom. (Replaces the
+     earlier static calc(100%/1.4) worst-case reservation, which pre-shrank every wide
+     diagram; the JS clamp uses each diagram's true headroom instead.) */
+  max-width: 100%;
 }
 
 [data-markdown="mermaid-block"] [data-markdown="mermaid-ascii"] {

@@ -6,6 +6,12 @@
 export const DIAGRAM_SCALE_MIN = 0.6;
 export const DIAGRAM_SCALE_MAX = 1.4;
 
+// Sub-pixel safety margin for the inline width clamp: keep the painted (transformed)
+// host strictly inside its container so integer/subpixel rounding never pushes
+// scrollWidth past clientWidth and resurrects the inner scrollbar the fit-to-width
+// design removed.
+const DIAGRAM_FIT_EPSILON_PX = 1;
+
 export function scaleForBodyText(intrinsicFontPx: number, targetBodyPx: number): number {
   if (
     !Number.isFinite(intrinsicFontPx) ||
@@ -49,14 +55,42 @@ export function applyDiagramBodyScale(container: HTMLElement | null): void {
   for (const host of Array.from(hosts)) {
     const svg = host.querySelector('svg');
     if (!svg) continue;
+
+    // Clear any prior transform BEFORE measuring so the fitted (pre-scale) layout
+    // width is read. getBoundingClientRect folds in transform:scale, so a stale
+    // scale from an earlier idempotent run would corrupt the width-ceiling below.
+    host.style.transform = '';
+    host.style.removeProperty('transform-origin');
+
     const intrinsic = readIntrinsicSvgFontPx(svg);
     if (intrinsic == null) {
-      host.style.transform = '';
-      host.style.removeProperty('transform-origin');
       host.removeAttribute('data-md-diagram-scale');
       continue;
     }
-    const scale = scaleForBodyText(intrinsic, targetBodyPx);
+    let scale = scaleForBodyText(intrinsic, targetBodyPx);
+
+    // Inline fit-to-width width clamp: the font-balance upscale may only consume the
+    // headroom actually available between the fitted diagram and its container.
+    // Chromium counts the host transform:scale in scrollWidth, so a diagram already
+    // fitted to the container width (see index.css svg max-width:100%) and then
+    // upscaled >1x overflows and gets clipped by the mermaid-scroll overflow:hidden.
+    // Cap the effective scale at (container / fitted) so host*scale never exceeds the
+    // container: a wide diagram (fitted == container) gets ~1x (no upscale, no clip),
+    // while a narrower one keeps its legibility upscale up to the point of overflow.
+    //
+    // Scoped to the inline box only (overflow-x: hidden). The fullscreen popup and the
+    // ASCII fallback use overflow:auto and OWN their horizontal scroll, so they keep the
+    // full font-balance scale untouched — the clamp would wrongly shrink a pan/zoom view.
+    const scrollParent = host.parentElement;
+    if (scrollParent instanceof HTMLElement && getComputedStyle(scrollParent).overflowX === 'hidden') {
+      const fittedWidth = host.getBoundingClientRect().width;
+      const availWidth = scrollParent.clientWidth;
+      if (fittedWidth > 0 && availWidth > 0) {
+        const widthCeiling = (availWidth - DIAGRAM_FIT_EPSILON_PX) / fittedWidth;
+        if (widthCeiling < scale) scale = widthCeiling;
+      }
+    }
+
     if (scale === 1) {
       host.style.transform = '';
       host.style.removeProperty('transform-origin');
