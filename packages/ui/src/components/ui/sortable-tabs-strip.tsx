@@ -71,8 +71,13 @@ const restrictToXAxis: Modifier = ({ transform }) => ({
 });
 
 // Minimum per-click scroll distance (one file-tab width) so an ultra-narrow
-// strip still advances when clientWidth / 2 would be smaller.
+// strip still advances when clientWidth / 2 would be smaller. Doubles as the
+// minimum (and overflow-fallback) width of an equal-width file tab.
 const MIN_SCROLL_STEP = 140;
+
+// Upper bound for equal-width file tabs: when few enough tabs are open to fit
+// the available strip width, they grow evenly but never past this cap.
+const MAX_FILE_TAB_WIDTH = 200;
 
 const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode; className?: string }> = ({ id, children, className }) => {
   const {
@@ -158,8 +163,10 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   const pinFirst = pinFirstTab && items.length > 0;
   const pinnedItem = pinFirst ? items[0] : null;
   const scrollItems = pinFirst ? items.slice(1) : items;
+  const scrollItemCount = scrollItems.length;
   const pinnedTabRef = React.useRef<HTMLDivElement>(null);
   const [pinnedWidth, setPinnedWidth] = React.useState(0);
+  const [fileTabWidth, setFileTabWidth] = React.useState(MIN_SCROLL_STEP);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -253,6 +260,32 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     setHasOverflow((prev) => (prev === next ? prev : next));
   }, [isScrollable, showScrollButtons]);
 
+  // Even-growth sizing for equal-width file tabs. Uses the rail-independent
+  // available width (add the rail back when it is mounted) so the value does not
+  // oscillate at the rail mount boundary. When every tab at the 140px floor would
+  // exceed the available width, all tabs render at exactly 140px and the strip
+  // scrolls; otherwise they grow evenly, capped at 200px. setState is gated on a
+  // real change to keep the ResizeObserver from looping.
+  const measureFileTabWidth = React.useCallback(() => {
+    if (!equalWidthFileTabs) {
+      setFileTabWidth((prev) => (prev === MIN_SCROLL_STEP ? prev : MIN_SCROLL_STEP));
+      return;
+    }
+
+    const element = scrollRef.current;
+    if (!element || scrollItemCount === 0) {
+      return;
+    }
+
+    const railMounted = showScrollButtons && hasOverflowRef.current;
+    const available = element.clientWidth + (railMounted ? SCROLL_RAIL_WIDTH : 0);
+    const next = scrollItemCount * MIN_SCROLL_STEP > available
+      ? MIN_SCROLL_STEP
+      : Math.min(MAX_FILE_TAB_WIDTH, Math.max(MIN_SCROLL_STEP, Math.floor(available / scrollItemCount)));
+
+    setFileTabWidth((prev) => (prev === next ? prev : next));
+  }, [equalWidthFileTabs, scrollItemCount, showScrollButtons]);
+
   React.useEffect(() => {
     if (!isScrollable) {
       setOverflow({ left: false, right: false });
@@ -267,15 +300,19 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     }
 
     updateOverflow();
+    measureFileTabWidth();
     element.addEventListener('scroll', updateOverflow, { passive: true });
-    const observer = new ResizeObserver(updateOverflow);
+    const observer = new ResizeObserver(() => {
+      updateOverflow();
+      measureFileTabWidth();
+    });
     observer.observe(element);
 
     return () => {
       element.removeEventListener('scroll', updateOverflow);
       observer.disconnect();
     };
-  }, [isScrollable, items.length, updateOverflow]);
+  }, [isScrollable, items.length, updateOverflow, measureFileTabWidth]);
 
   React.useEffect(() => {
     if (!usesIndicator) {
@@ -398,7 +435,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
         <div ref={pinnedTabRef} className="flex h-full shrink-0">
           <div
             className={cn(
-              'group relative z-10 flex h-full min-w-0 shrink-0 flex-nowrap items-center bg-sidebar',
+              'group relative z-10 flex h-full shrink-0 flex-nowrap items-center border-r border-border bg-sidebar',
               pinnedItem.id === activeId ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
             )}
           >
@@ -407,7 +444,11 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
               role="tab"
               aria-selected={pinnedItem.id === activeId}
               onClick={() => onSelect(pinnedItem.id)}
-              className="flex h-full min-w-0 flex-nowrap items-center typography-micro max-w-56 justify-start truncate px-3 text-left"
+              className={cn(
+                'flex h-full min-w-[140px] flex-nowrap items-center typography-micro justify-start px-3.5 text-left transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]',
+                pinnedItem.id === activeId ? null : 'hover:bg-interactive-hover/40'
+              )}
               title={pinnedItem.title ?? pinnedItem.label}
             >
               <span className="flex min-w-0 flex-nowrap items-center gap-1.5">
@@ -547,10 +588,11 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                 ref={(element) => setTabRef(item.id, element)}
                 onAuxClick={handleAuxClick}
                 onMouseDown={handleMouseDown}
+                style={equalWidthFileTabs ? { width: fileTabWidth } : undefined}
                 className={cn(
                   'group flex h-full min-w-0 flex-nowrap items-center',
                   (isScrollable || useIntrinsicPillSizing)
-                    ? (equalWidthFileTabs ? 'w-[140px] shrink-0' : 'shrink-0')
+                    ? 'shrink-0'
                     : usesActivePillIndicator
                       ? 'w-full'
                       : 'w-full min-w-0',

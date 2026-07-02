@@ -5,6 +5,7 @@ import { useI18n } from '@/lib/i18n';
 import { ChatView } from '@/components/views/ChatView';
 import { FilesView, type FilesViewRef } from '@/components/views/FilesView';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
+import { Icon } from '@/components/icon/Icon';
 import { SortableTabsStrip, type SortableTabsStripItem } from '@/components/ui/sortable-tabs-strip';
 import { useUIStore } from '@/stores/useUIStore';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
@@ -67,7 +68,12 @@ export const SessionViewWrapper: React.FC = () => {
       icon: <FileTypeIcon filePath={path} className="h-4 w-4" />,
     }));
     return [
-      { id: CHAT_TAB_ID, label: t('sessionTabs.chat'), closable: false },
+      {
+        id: CHAT_TAB_ID,
+        label: t('sessionTabs.chat'),
+        closable: false,
+        icon: <Icon name="chat-thread" className="h-4 w-4" />,
+      },
       ...fileTabs,
     ];
   }, [sessionFileTabs, rootKey, t]);
