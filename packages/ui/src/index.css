@@ -1459,7 +1459,7 @@ html:not(.dark) .chat-scroll {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--surface-background);
   max-width: 100%;
   max-height: 100%;
 }
@@ -1481,7 +1481,7 @@ html:not(.dark) .chat-scroll {
   white-space: pre;
   font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   color: var(--surface-foreground);
-  background: transparent;
+  background: var(--surface-background);
 }
 
 .markdown-mermaid-fullscreen [data-markdown="mermaid-block"] svg {
@@ -1490,7 +1490,7 @@ html:not(.dark) .chat-scroll {
   height: auto;
   max-width: 100%;
   max-height: 100%;
-  background: transparent;
+  background: var(--surface-background);
 }
 
 /* PlantUML block: twin of the mermaid block chrome — same position context for the toolbar,
@@ -1570,7 +1570,7 @@ html:not(.dark) .chat-scroll {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: transparent;
+  background: var(--surface-background);
   max-width: 100%;
   max-height: 100%;
 }
@@ -1593,7 +1593,7 @@ html:not(.dark) .chat-scroll {
   height: auto;
   max-width: 100%;
   max-height: 100%;
-  background: transparent;
+  background: var(--surface-background);
 }
 
 /* Terminal touch input is portaled to document.body; keep it fully non-painting across engines. */
