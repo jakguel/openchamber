@@ -62,7 +62,14 @@ export async function renderPlantuml(source: string, dark: boolean, themeBody: s
         // Splice the vendored theme body into a LOCAL copy only — never mutate the copyable
         // PLANTUML_SOURCE_ATTR / expand-popup source, which must keep the user's original.
         const themed = spliceTheme(source, themeBody);
-        const raw = await renderToStringOnce(engine, themed, dark, RENDER_TIMEOUT_MS);
+        // A vendored theme is a COMPLETE, self-consistent color scheme (its own BackgroundColor +
+        // FontColor + per-element colors). The engine's `dark` adaptation only re-adapts the DEFAULT
+        // palette — applied on top of a spliced theme it forces text to white while leaving the
+        // theme's fixed light fills (e.g. sunlust #C2F0FF) intact, producing unreadable white-on-light.
+        // Render an active theme in its own scheme (dark=false); `dark` still varies the cache key,
+        // so a light/dark toggle repaints.
+        const effectiveDark = themeBody.trim().length > 0 ? false : dark;
+        const raw = await renderToStringOnce(engine, themed, effectiveDark, RENDER_TIMEOUT_MS);
         if (isPlantumlError(raw)) {
             return { error: 'Invalid PlantUML diagram source' };
         }
