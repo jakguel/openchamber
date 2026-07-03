@@ -874,7 +874,8 @@ const MermaidPreviewDialog: React.FC<{
         };
     }, [popup.open, source, status]);
 
-    const mermaidMarkdown = `\`\`\`mermaid\n${source}\n\`\`\``;
+    const diagramKind = popup.diagram?.kind ?? 'mermaid';
+    const diagramMarkdown = `\`\`\`${diagramKind === 'plantuml' ? 'plantuml' : 'mermaid'}\n${source}\n\`\`\``;
 
     const dialogSize = React.useMemo(() => {
         const { maxWidth, maxHeight } = getPreviewViewportBounds(viewport, isMobile);
@@ -966,11 +967,13 @@ const MermaidPreviewDialog: React.FC<{
                                 <div ref={mermaidPreviewRef} className="h-full">
                                     <DiagramPanZoomViewport resetKey={`${popup.open}:${source}`} data-testid="diagram-panzoom">
                                         <SimpleMarkdownRenderer
-                                            content={mermaidMarkdown}
+                                            content={diagramMarkdown}
                                             variant="tool"
                                             allowMermaidWheelZoom
-                                            className="markdown-mermaid-fullscreen [&_[data-markdown='mermaid-block']_button]:hidden"
-                                            mermaidControls={MERMAID_CONTROLS}
+                                            className={diagramKind === 'plantuml'
+                                                ? "markdown-plantuml-fullscreen [&_[data-markdown='plantuml-block']_button]:hidden"
+                                                : "markdown-mermaid-fullscreen [&_[data-markdown='mermaid-block']_button]:hidden"}
+                                            mermaidControls={diagramKind === 'plantuml' ? undefined : MERMAID_CONTROLS}
                                             enableFileReferences={false}
                                         />
                                     </DiagramPanZoomViewport>
