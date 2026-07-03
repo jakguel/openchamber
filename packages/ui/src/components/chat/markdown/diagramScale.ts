@@ -77,13 +77,19 @@ function scaleHostToBodyPx(host: HTMLElement, targetBodyPx: number): void {
 
   // Clear any prior transform BEFORE measuring so the fitted (pre-scale) layout width is read.
   // getBoundingClientRect folds in transform:scale, so a stale scale from an earlier idempotent
-  // run would corrupt the width-ceiling below.
+  // run would corrupt the width-ceiling below. The reserved marginBottom (bottom-clip height
+  // compensation, set below) is cleared here in the SAME place so it stays idempotent across
+  // scale===1, intrinsic==null, downscale, ASCII toggle and morphdom re-runs — the branch below
+  // re-adds it only when an upscale actually overflows a clipped scroll box.
   host.style.transform = '';
   host.style.removeProperty('transform-origin');
+  host.style.removeProperty('margin-bottom');
 
   const intrinsic = readIntrinsicSvgFontPx(svg);
   if (intrinsic == null) {
     host.removeAttribute('data-md-diagram-scale');
+    // A host that lost its readable svg must not keep a margin a prior upscale reserved.
+    host.style.removeProperty('margin-bottom');
     return;
   }
   let scale = scaleForBodyText(intrinsic, targetBodyPx);
@@ -100,7 +106,12 @@ function scaleHostToBodyPx(host: HTMLElement, targetBodyPx: number): void {
   // fallback use overflow:auto and OWN their horizontal scroll, so they keep the full
   // font-balance scale untouched — the clamp would wrongly shrink a pan/zoom view.
   const scrollParent = host.parentElement;
-  if (scrollParent instanceof HTMLElement && getComputedStyle(scrollParent).overflowX === 'hidden') {
+  // True only when the host sits inside the inline overflow:hidden scroll box (not the
+  // fullscreen/ASCII overflow:auto path). Computed once and reused by both the width clamp and
+  // the height compensation below.
+  const overflowClipped =
+    scrollParent instanceof HTMLElement && getComputedStyle(scrollParent).overflowX === 'hidden';
+  if (scrollParent instanceof HTMLElement && overflowClipped) {
     const fittedWidth = host.getBoundingClientRect().width;
     const availWidth = scrollParent.clientWidth;
     if (fittedWidth > 0 && availWidth > 0) {
@@ -109,12 +120,27 @@ function scaleHostToBodyPx(host: HTMLElement, targetBodyPx: number): void {
     }
   }
 
+  // Height compensation for the bottom clip: transform:scale grows the painted box from the
+  // top-left origin but does NOT change layout height, so the extra painted height overflows the
+  // inline scroll box ([data-markdown=*-scroll]{overflow:hidden}) and is clipped at the bottom.
+  // Reserve exactly that growth as marginBottom on THIS inner host — it lives inside the
+  // overflow:hidden BFC, so the margin is counted into the scroll box height and the whole scaled
+  // diagram fits. Gated to an upscale (scale>1) inside a clipped parent: scaleForBodyText clamps
+  // [0.6,1.4], so the scale>1 gate is mandatory — a downscaled (0.6) diagram would otherwise
+  // reserve a NEGATIVE margin and pull following content up. fittedHeight is the pre-transform
+  // layout height, measured while the transform is still cleared.
+  const reserveMargin = overflowClipped && scale > 1;
+  const fittedHeight = reserveMargin ? host.getBoundingClientRect().height : 0;
+
   if (scale === 1) {
     host.style.transform = '';
     host.style.removeProperty('transform-origin');
   } else {
     host.style.transformOrigin = 'top left';
     host.style.transform = `scale(${scale})`;
+  }
+  if (reserveMargin) {
+    host.style.marginBottom = `${fittedHeight * (scale - 1)}px`;
   }
   host.setAttribute('data-md-diagram-scale', String(scale));
 }

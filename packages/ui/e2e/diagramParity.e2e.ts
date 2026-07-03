@@ -348,3 +348,147 @@ test.describe('Story D — PlantUML/Mermaid inline diagram parity (real Chromium
         expect(bboxWidth).toBeGreaterThan(0);
     });
 });
+
+/**
+ * FIX1 bottom-clip — height-compensated auto-scale (openchamber-f9d.22.5).
+ *
+ * Under test: diagramScale.ts scaleHostToBodyPx reserves marginBottom = fittedHeight*(scale-1) on
+ * the INNER [data-md-diagram] host when (and only when) it sits inside the inline overflow:hidden
+ * scroll box AND the applied scale is an upscale (>1). Before the fix the transform:scale grows
+ * the painted diagram downward but layout height is unchanged, so [data-markdown=*-scroll]{
+ * overflow:hidden} clips the bottom — scroll.scrollHeight (which folds in the transform) exceeds
+ * scroll.clientHeight. After the fix the reserved margin grows the scroll box so the whole scaled
+ * diagram fits: scrollHeight <= clientHeight+1.
+ *
+ * This drives the REAL renderer (SimpleMarkdownRenderer -> applyDiagramBodyScale for mermaid,
+ * decorate.ts renderPlantumlBlocks -> applyDiagramHostBodyScale for plantuml) — never a manual
+ * scaleHostToBodyPx call. The container body px is bumped so the font-balance ratio clamps to the
+ * 1.4 cap; the diagrams are tall + narrow so the width clamp does not bind (scale stays at 1.4)
+ * while the vertical growth is real.
+ */
+test.describe('FIX1 bottom-clip — height-compensated auto-scale (openchamber-f9d.22.5, real Chromium)', () => {
+    // Big container body px vs the diagram's small intrinsic svg font -> ratio clamps to the 1.4
+    // cap. Tiny body px -> ratio clamps to the 0.6 floor (a downscale).
+    const BIG_BODY_PX = 60;
+    const SMALL_BODY_PX = 6;
+
+    // Tall + narrow: a vertical flowchart / a two-participant multi-message sequence. Narrow keeps
+    // the width clamp off (host*1.4 << container width); tall makes the reserved vertical growth
+    // a meaningful, non-vacuous amount.
+    const TALL_MERMAID = 'graph TD\n  A[Alpha] --> B[Bravo]\n  B --> C[Charlie]\n  C --> D[Delta]\n  D --> E[Echo]\n  E --> F[Foxtrot]';
+    const TALL_PLANTUML =
+        '@startuml\nAlpha -> Beta : m1\nBeta -> Alpha : m2\nAlpha -> Beta : m3\nBeta -> Alpha : m4\nAlpha -> Beta : m5\nBeta -> Alpha : m6\n@enduml';
+    const INVALID_PLANTUML = '@startuml\ncomponent {\n!!! not valid <<<>>>\n@enduml';
+
+    /** Bump the markdown container body font-size so the font-balance scale reaches a given cap. */
+    async function setBodyPx(page: Page, px: number): Promise<void> {
+        await page.evaluate((value) => {
+            const root = document.getElementById('root');
+            if (root) root.style.fontSize = `${value}px`;
+        }, px);
+    }
+
+    function measureScrollClip(page: Page, kind: DiagramKind) {
+        return page.evaluate(
+            ({ blockSel, scrollSel, hostSel }) => {
+                const block = document.querySelector(blockSel) as HTMLElement | null;
+                const scroll = block?.querySelector(scrollSel) as HTMLElement | null;
+                const host = block?.querySelector(hostSel) as HTMLElement | null;
+                return {
+                    scrollHeight: scroll ? scroll.scrollHeight : -1,
+                    clientHeight: scroll ? scroll.clientHeight : -1,
+                    scrollOverflowX: scroll ? getComputedStyle(scroll).overflowX : '',
+                    appliedScale: host
+                        ? Number.parseFloat(host.getAttribute('data-md-diagram-scale') ?? 'NaN')
+                        : NaN,
+                    // Inline style (empty string when unset) — the authoritative reserved value.
+                    hostMarginBottomInline: host ? host.style.marginBottom : 'NO-HOST',
+                    hostMarginBottomPx: host ? Number.parseFloat(getComputedStyle(host).marginBottom) : NaN,
+                };
+            },
+            { blockSel: BLOCK(kind), scrollSel: `[data-markdown="${kind}-scroll"]`, hostSel: HOST(kind) },
+        );
+    }
+
+    test('AC4: a tall/narrow MERMAID at the 1.4x cap does not clip — scroll scrollHeight <= clientHeight+1', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setBodyPx(page, BIG_BODY_PX);
+        await renderScaledInlineDiagram(page, 'mermaid', mermaidFence(TALL_MERMAID));
+
+        const m = await measureScrollClip(page, 'mermaid');
+        // Non-vacuous preconditions: we are genuinely at the upscale cap inside the clipped box.
+        expect(m.appliedScale).toBeCloseTo(SCALE_MAX, 2);
+        expect(m.scrollOverflowX).toBe('hidden');
+        // The fix engaged: an upscale reserved positive bottom space on the inner host.
+        expect(m.hostMarginBottomPx).toBeGreaterThan(0);
+        // The definitive no-bottom-clip assertion: the reserved margin grew the scroll box so the
+        // whole transform:scaled diagram fits (pre-fix this is scrollHeight ~= fittedHeight*1.4 >
+        // clientHeight == fittedHeight, and this fails).
+        expect(m.scrollHeight).toBeLessThanOrEqual(m.clientHeight + 1);
+    });
+
+    test('AC4: a tall/narrow PLANTUML at the 1.4x cap does not clip — scroll scrollHeight <= clientHeight+1', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 90_000);
+        await mount(page);
+        await setBodyPx(page, BIG_BODY_PX);
+        await renderScaledInlineDiagram(page, 'plantuml', plantumlFence(TALL_PLANTUML));
+
+        const m = await measureScrollClip(page, 'plantuml');
+        expect(m.appliedScale).toBeCloseTo(SCALE_MAX, 2);
+        expect(m.scrollOverflowX).toBe('hidden');
+        expect(m.hostMarginBottomPx).toBeGreaterThan(0);
+        expect(m.scrollHeight).toBeLessThanOrEqual(m.clientHeight + 1);
+    });
+
+    test('a DOWNSCALED (0.6) diagram reserves NO margin — the scale>1 gate forbids a negative margin', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        // Tiny body px vs the intrinsic svg font -> the ratio clamps to the 0.6 floor.
+        await setBodyPx(page, SMALL_BODY_PX);
+        await renderScaledInlineDiagram(page, 'mermaid', mermaidFence(TALL_MERMAID));
+
+        const m = await measureScrollClip(page, 'mermaid');
+        // A genuine downscale (scale < 1): fittedHeight*(scale-1) is NEGATIVE, so the scale>1 gate
+        // must leave the margin unset rather than pull following content up.
+        expect(m.appliedScale).toBeLessThan(1);
+        expect(m.hostMarginBottomInline).toBe('');
+        const mb = Number.isFinite(m.hostMarginBottomPx) ? m.hostMarginBottomPx : 0;
+        expect(mb).toBe(0);
+    });
+
+    test('AC3: a plantuml good->error transition clears the reserved margin (no phantom space below the error)', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 120_000);
+        await mount(page);
+        await setBodyPx(page, BIG_BODY_PX);
+
+        // Good render first: the upscale reserves a positive marginBottom on the [data-md-diagram]
+        // host.
+        await renderScaledInlineDiagram(page, 'plantuml', plantumlFence(TALL_PLANTUML));
+        const good = await measureScrollClip(page, 'plantuml');
+        expect(good.hostMarginBottomPx).toBeGreaterThan(0);
+
+        // Transition the SAME block to an invalid source -> decorate.ts error branch replaces the
+        // svg with an error affordance. That branch bypasses scaleHostToBodyPx, so it must itself
+        // clear the stranded margin (the FIX), else phantom space remains below the error.
+        await setMarkdown(page, plantumlFence(INVALID_PLANTUML));
+        await page.waitForSelector(`${BLOCK('plantuml')} [data-markdown="plantuml-error"]`, {
+            timeout: RENDER_BOUND_MS,
+        });
+
+        const err = await page.evaluate((hostSel) => {
+            const host = document.querySelector(hostSel) as HTMLElement | null;
+            return {
+                hasHost: !!host,
+                marginBottomInline: host ? host.style.marginBottom : 'NO-HOST',
+                hasScaleAttr: host ? host.hasAttribute('data-md-diagram-scale') : true,
+            };
+        }, HOST('plantuml'));
+
+        expect(err.hasHost).toBe(true);
+        // removeProperty('margin-bottom') leaves the inline style empty -> no reserved space.
+        expect(err.marginBottomInline).toBe('');
+        // And the good->error clear also drops the scale stamp (existing behavior, still holds).
+        expect(err.hasScaleAttr).toBe(false);
+    });
+});

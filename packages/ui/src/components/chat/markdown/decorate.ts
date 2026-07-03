@@ -470,11 +470,14 @@ export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext):
         setHtml(liveHost, '');
         liveHost.appendChild(buildPlantumlError(slot.labels.error, result.error));
         // Clear any scale a prior good render stamped so a good->error transition leaves no
-        // stale transform on the now-svg-less host.
+        // stale transform on the now-svg-less host. This branch bypasses scaleHostToBodyPx, so
+        // it must ALSO clear the reserved marginBottom (the bottom-clip height compensation) or a
+        // prior upscale would strand phantom space below the error affordance.
         if (scaleHost) {
           scaleHost.removeAttribute('data-md-diagram-scale');
           scaleHost.style.transform = '';
           scaleHost.style.removeProperty('transform-origin');
+          scaleHost.style.removeProperty('margin-bottom');
         }
       }
       // Stamp the settled key so an unchanged follow-up pass skips this block (AC9).
