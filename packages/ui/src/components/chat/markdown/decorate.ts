@@ -398,7 +398,16 @@ const decoratePlantuml = (root: HTMLElement, ctx: DecorateContext): void => {
     svgHost.appendChild(buildPlantumlPlaceholder(slot.labels.loading));
 
     scroll.appendChild(svgHost);
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'absolute top-1 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity';
+    // Magnify: emits data-md-action="plantuml-expand"; the React hook
+    // (usePlantumlInlineInteractions) listens for it and opens the fullscreen popup.
+    const expand = makeIconButton('expand', ctx.labels.expandDiagram, 'plantuml-expand');
+    toolbar.appendChild(expand);
+
     block.appendChild(scroll);
+    block.appendChild(toolbar);
 
     const host = pre.parentElement;
     if (!host) continue;
