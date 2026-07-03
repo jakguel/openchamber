@@ -16,6 +16,7 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 import {
+    DIAGRAM_PINCH_WHEEL_STEP,
     clampPanOffset,
     computePinchScale,
     computeWheelScale,
@@ -96,7 +97,10 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
         }
         const onWheel = (event: WheelEvent) => {
             event.preventDefault();
-            const nextScale = computeWheelScale(scaleRef.current, event.deltaY);
+            // macOS trackpad pinch arrives as a wheel event with ctrlKey=true.
+            // Use a larger step so pinch feels responsive instead of crawling.
+            const pinchOpts = event.ctrlKey ? { step: DIAGRAM_PINCH_WHEEL_STEP } : undefined;
+            const nextScale = computeWheelScale(scaleRef.current, event.deltaY, pinchOpts);
             setScale(nextScale);
             setOffset((current) => clampWithGeometry(current, nextScale));
         };

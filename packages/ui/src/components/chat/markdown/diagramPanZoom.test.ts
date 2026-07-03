@@ -134,6 +134,16 @@ describe('computeWheelScale', () => {
         expect(next).toBe(DIAGRAM_MAX_SCALE);
     });
 
+    test('large negative deltaY with default step clamps to max (8)', () => {
+        expect(computeWheelScale(1, -100000)).toBe(DIAGRAM_MAX_SCALE);
+        expect(DIAGRAM_MAX_SCALE).toBe(8);
+    });
+
+    test('large positive deltaY with default step clamps to min (0.25)', () => {
+        expect(computeWheelScale(1, 100000)).toBe(DIAGRAM_MIN_SCALE);
+        expect(DIAGRAM_MIN_SCALE).toBe(0.25);
+    });
+
     test('clamps to min scale', () => {
         const next = computeWheelScale(DIAGRAM_MIN_SCALE, 100000);
         expect(next).toBe(DIAGRAM_MIN_SCALE);
@@ -142,6 +152,23 @@ describe('computeWheelScale', () => {
     test('zero delta leaves scale unchanged', () => {
         // Math.exp(0) === 1, so the scale is returned exactly.
         expect(computeWheelScale(1.5, 0)).toBe(1.5);
+    });
+
+    test('ctrlKey pinch step (0.02) zooms faster than default step for same deltaY', () => {
+        // Proves the trackpad-pinch path (ctrlKey=true) produces a larger scale change.
+        const defaultScale = computeWheelScale(1, -100);
+        const pinchScale = computeWheelScale(1, -100, { step: 0.02 });
+        // Both zoom in (scale > 1), but pinch step yields a bigger result.
+        expect(pinchScale).toBeGreaterThan(defaultScale);
+        expect(pinchScale).toBeGreaterThan(1);
+    });
+
+    test('ctrlKey pinch step also clamps to max scale for extreme deltaY', () => {
+        expect(computeWheelScale(1, -100000, { step: 0.02 })).toBe(DIAGRAM_MAX_SCALE);
+    });
+
+    test('ctrlKey pinch step also clamps to min scale for extreme positive deltaY', () => {
+        expect(computeWheelScale(1, 100000, { step: 0.02 })).toBe(DIAGRAM_MIN_SCALE);
     });
 });
 

@@ -20,6 +20,14 @@ export const DIAGRAM_MAX_SCALE = 8;
  */
 export const DIAGRAM_WHEEL_STEP = 0.001;
 
+/**
+ * Wheel sensitivity for Mac trackpad pinch (wheel events with ctrlKey=true).
+ * macOS reports pinch as synthetic wheel events with ctrlKey set; deltaY values are similar
+ * in magnitude to a scroll notch, so we use a larger step to make pinch feel responsive.
+ * 0.015 → ~150% zoom change per 100-unit deltaY vs ~10% for regular scroll.
+ */
+export const DIAGRAM_PINCH_WHEEL_STEP = 0.015;
+
 export interface PanClampInput {
     offsetX: number;
     offsetY: number;
