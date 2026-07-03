@@ -4,6 +4,7 @@ import { dropdownMenuItemClass, dropdownMenuPopupClass } from '@/components/ui/d
 import { createPlantumlRenderQueue, type PlantumlRenderQueue } from './plantuml/renderQueue';
 import { renderPlantuml } from './plantuml/renderPlantuml';
 import { PLANTUML_BLOCK_SELECTOR, PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
+import { applyDiagramHostBodyScale } from './diagramScale';
 
 // ---------------------------------------------------------------------------
 // Shared decoration context
@@ -457,12 +458,24 @@ export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext):
       // Re-query the live host: morphdom may have swapped the host element since enqueue.
       const liveHost = block.querySelector<HTMLElement>(PLANTUML_HOST_SELECTOR);
       if (!liveHost) return;
+      const scaleHost = liveHost.closest<HTMLElement>('[data-md-diagram]');
       if (result.svg) {
         setHtml(liveHost, result.svg);
+        // The shared applyDiagramBodyScale passes already ran (pre-paint), so scale THIS host now
+        // against its just-painted svg — the async PlantUML paint is the only moment its svg
+        // exists. Single-host (no whole-container rescan on the paint hot path).
+        if (scaleHost) applyDiagramHostBodyScale(scaleHost);
       } else {
         // Error affordance in-place — the placeholder is replaced, never left spinning (AC2).
         setHtml(liveHost, '');
         liveHost.appendChild(buildPlantumlError(slot.labels.error, result.error));
+        // Clear any scale a prior good render stamped so a good->error transition leaves no
+        // stale transform on the now-svg-less host.
+        if (scaleHost) {
+          scaleHost.removeAttribute('data-md-diagram-scale');
+          scaleHost.style.transform = '';
+          scaleHost.style.removeProperty('transform-origin');
+        }
       }
       // Stamp the settled key so an unchanged follow-up pass skips this block (AC9).
       block.setAttribute(PLANTUML_RENDERED_KEY_ATTR, key);

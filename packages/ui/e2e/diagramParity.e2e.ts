@@ -47,7 +47,6 @@ const indexCssPath = path.resolve(currentDir, '..', 'src', 'index.css');
 declare global {
     interface Window {
         __setMarkdown?: (markdown: string) => void;
-        __applyDiagramBodyScale?: () => void;
         __parityReady?: boolean;
     }
 }
@@ -113,17 +112,15 @@ async function setMarkdown(page: Page, markdown: string): Promise<void> {
     await page.evaluate((md) => window.__setMarkdown?.(md), markdown);
 }
 
-/** Render an inline diagram, wait for the REAL painted svg, then apply the shared body-text
- *  scaling contract and wait for the stamp. The scaling is exercised via the production
- *  applyDiagramBodyScale function (exposed at the app boundary — NOT a mock), invoked on the
- *  settled svg exactly as the sanctioned mermaid scaling test (mermaidInlineFit) invokes it.
- *  PlantUML paints async, so this proves the generic [data-md-diagram] selector scales a real
- *  plantuml svg toward the body font-size; a regressed selector or an untagged host stamps
- *  nothing and this fails. */
+/** Render an inline diagram ONCE (a single settled render — no re-render nudge, no manual scale
+ *  invocation) and wait for BOTH the painted svg AND the RENDERER-applied body-text scale stamp
+ *  on the [data-md-diagram] host. Mermaid scales synchronously; PlantUML paints async, so the
+ *  production renderer scales it from the paint site (decorate.ts renderPlantumlBlocks). This
+ *  proves the renderer AUTO-SCALES the diagram at rest — removing the paint-site scale call (or
+ *  regressing the generic [data-md-diagram] scaling) leaves the stamp absent and this fails. */
 async function renderScaledInlineDiagram(page: Page, kind: DiagramKind, fence: string): Promise<void> {
     await setMarkdown(page, fence);
     await page.waitForSelector(`${BLOCK(kind)} ${HOST(kind)} svg`, { timeout: RENDER_BOUND_MS });
-    await page.evaluate(() => window.__applyDiagramBodyScale?.());
     await page.waitForFunction(
         (hostSel) => {
             const host = document.querySelector(hostSel);
@@ -132,7 +129,7 @@ async function renderScaledInlineDiagram(page: Page, kind: DiagramKind, fence: s
             return !!svg && attr != null && Number.isFinite(Number.parseFloat(attr));
         },
         HOST(kind),
-        { timeout: 10_000 },
+        { timeout: RENDER_BOUND_MS },
     );
 }
 
