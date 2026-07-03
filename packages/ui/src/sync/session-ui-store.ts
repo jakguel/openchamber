@@ -520,7 +520,7 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
     // Restore incoming session's window layout (applies DEFAULT for new/unknown sessions).
     // Skip on same-session switch to avoid clobbering current UI state (AC4).
     if (isSessionChange) {
-      useUIStore.getState().restoreForSessionSwitch(id)
+      useUIStore.getState().restoreForSessionSwitch(id, resolvedDir)
     }
 
     // Kick off the message fetch on the same tick, before React commits the

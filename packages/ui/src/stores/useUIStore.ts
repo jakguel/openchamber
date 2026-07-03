@@ -758,7 +758,7 @@ interface UIStore {
   prepareForRuntimeSwitch: (runtimeKey?: string | null) => void;
   restoreForRuntimeSwitch: (runtimeKey?: string | null) => void;
   prepareForSessionSwitch: (sessionId: string | null) => void;
-  restoreForSessionSwitch: (sessionId: string | null) => void;
+  restoreForSessionSwitch: (sessionId: string | null, dir?: string | null) => void;
   setMainTabGuard: (guard: MainTabGuard | null) => void;
   setPendingDiffFile: (filePath: string | null, staged?: boolean) => void;
   setPendingDiagramFile: (filePath: string | null) => void;
@@ -1562,7 +1562,7 @@ export const useUIStore = create<UIStore>()(
           sessionWindowStateBySession.set(sessionId, state);
         },
 
-        restoreForSessionSwitch: (sessionId: string | null) => {
+        restoreForSessionSwitch: (sessionId: string | null, dir?: string | null) => {
           const saved = sessionId ? sessionWindowStateBySession.get(sessionId) : null;
           const restored = saved ?? DEFAULT_SESSION_WINDOW_STATE;
           // FIX #1: reconcile a dangling active pointer against the restored list.
@@ -1588,6 +1588,26 @@ export const useUIStore = create<UIStore>()(
             sessionFileTabs: restored.sessionFileTabs,
             activeSessionFileTabId,
           });
+
+          // FIX #3: bridge the restored active file tab into useFilesViewTabsStore.
+          // The FilesView tab strip reads activeSessionFileTabId from THIS store, but
+          // the pane renders from useFilesViewTabsStore.byRoot[root].selectedPath. Without
+          // this bridge a session switch left selectedPath pinned to the PREVIOUS session's
+          // file, so FilesView showed stale content. Mirror setActiveSessionFileTabId /
+          // openSessionFileTab, which already keep the two stores in sync.
+          if (activeSessionFileTabId !== 'chat') {
+            const normalizedDirectory = normalizeDirectoryPath((dir || '').trim());
+            if (normalizedDirectory) {
+              const filesViewTabs = useFilesViewTabsStore.getState();
+              // Reconcile the restored session's whole tab list into openPaths so the
+              // FilesView tab strip and the store's open-tabs view agree, then select
+              // the active tab (setSelectedPath also folds it into openPaths).
+              for (const tabPath of restored.sessionFileTabs) {
+                filesViewTabs.addOpenPath(normalizedDirectory, tabPath);
+              }
+              filesViewTabs.setSelectedPath(normalizedDirectory, activeSessionFileTabId);
+            }
+          }
         },
 
         setPendingDiffFile: (filePath, staged = false) => {
