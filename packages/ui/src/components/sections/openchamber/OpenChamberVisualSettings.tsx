@@ -90,26 +90,32 @@ const PLANTUML_THEME_OPTIONS: Option<PlantumlTheme>[] = [
     {
         id: 'none',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.none.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.none.description',
     },
     {
         id: 'plain',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.plain.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.plain.description',
     },
     {
         id: 'mono',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.mono.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.mono.description',
     },
     {
         id: 'sunlust',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.sunlust.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.sunlust.description',
     },
     {
         id: 'toy',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.toy.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.toy.description',
     },
     {
         id: 'reddress-lightblue',
         labelKey: 'settings.openchamber.visual.option.plantumlTheme.reddressLightblue.label',
+        descriptionKey: 'settings.openchamber.visual.option.plantumlTheme.reddressLightblue.description',
     },
 ];
 
