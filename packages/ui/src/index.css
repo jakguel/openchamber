@@ -1539,6 +1539,19 @@ html:not(.dark) .chat-scroll {
   background: var(--surface-elevated);
 }
 
+/* PlantUML label/edge <text> has NO font-family, so it inherits .markdown-content's
+   --font-sans — which is actually IBM Plex Mono (monospace, design-system.css). The
+   @plantuml/core engine measured label placement with PROPORTIONAL (sans-serif) metrics,
+   so rendering those labels in a monospace face drifts them off their ortho relation axes.
+   Force a proportional sans-serif on PlantUML SVG text ONLY. Scoped to the block node, so
+   it also covers the fullscreen surface (.markdown-plantuml-fullscreen wraps the same
+   [data-markdown="plantuml-block"]). Mermaid emits its own SVG <style> font and is
+   unaffected; diagramScale only READS the first <text> font-size, so the host-scale stays
+   sane. Do NOT change --font-sans globally (that would hit all markdown). */
+[data-markdown="plantuml-block"] svg text {
+  font-family: "Helvetica", Arial, sans-serif;
+}
+
 /* Fullscreen plantuml popup: twin of .markdown-mermaid-fullscreen. The diagram is fit-to-panel
    at rest, then the DiagramPanZoomViewport CSS transform owns all movement, so overflow is
    NEUTRALIZED (visible, not auto) — an inner scrollbar would fight the transform-based pan. */
