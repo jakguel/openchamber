@@ -6,6 +6,7 @@ import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { SyncProvider } from '@/sync/sync-context';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRendererImpl';
+import { useUIStore, type PlantumlTheme } from '@/stores/useUIStore';
 
 /**
  * Real production pipeline harness. Mounts the REAL SimpleMarkdownRenderer inside the context
@@ -18,6 +19,9 @@ import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRendererImpl';
  *  - __plSetMarkdown(md): drives the `content` prop (render, swap sources, fire streaming edits).
  *  - __plSetDark(dark):   flips the real theme system light/dark, so a repaint of an EXISTING
  *                         block through a genuine theme change can be asserted (AC8).
+ *  - __plSetTheme(name):  sets the persisted plantumlTheme in the REAL useUIStore (the exact
+ *                         setter the Settings -> Appearance Select calls), so a live theme-switch
+ *                         repaint of an EXISTING block can be asserted (theme picker e2e).
  */
 
 type ProviderApis = React.ComponentProps<typeof RuntimeAPIProvider>['apis'];
@@ -38,6 +42,7 @@ declare global {
     interface Window {
         __plSetMarkdown?: (markdown: string) => void;
         __plSetDark?: (dark: boolean) => void;
+        __plSetTheme?: (theme: PlantumlTheme) => void;
         __plReady?: boolean;
     }
 }
@@ -54,6 +59,12 @@ const Harness: React.FC = () => {
             // app's theme controls do, changing the dark component of the plantuml render key.
             setSystemPreference(false);
             setThemeMode(dark ? 'dark' : 'light');
+        };
+        window.__plSetTheme = (theme: PlantumlTheme) => {
+            // Drive the persisted plantumlTheme through the REAL store setter — identical to what
+            // the Settings -> Appearance Select does. The reactive useUIStore(s => s.plantumlTheme)
+            // selector in MarkdownRendererImpl then repaints the live block via the cache key.
+            useUIStore.getState().setPlantumlTheme(theme);
         };
         window.__plReady = true;
         const root = document.getElementById('root');
