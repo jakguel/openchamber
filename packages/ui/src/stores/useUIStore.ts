@@ -14,6 +14,7 @@ export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 
 export type RightSidebarTab = 'git' | 'files' | 'context';
 export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser';
 export type MermaidRenderingMode = 'svg' | 'ascii';
+export type PlantumlTheme = 'none' | 'plain' | 'mono' | 'sunlust' | 'toy' | 'reddress-lightblue';
 export type UserMessageRenderingMode = 'markdown' | 'plain';
 export type ChatRenderMode = 'sorted' | 'live';
 export type ActivityRenderMode = 'collapsed' | 'summary';
@@ -707,6 +708,7 @@ interface UIStore {
   timeFormatPreference: TimeFormatPreference;
   weekStartPreference: WeekStartPreference;
   mermaidRenderingMode: MermaidRenderingMode;
+  plantumlTheme: PlantumlTheme;
   userMessageRenderingMode: UserMessageRenderingMode;
   collapsibleUserMessages: boolean;
   stickyUserHeader: boolean;
@@ -856,6 +858,7 @@ interface UIStore {
   setTimeFormatPreference: (value: TimeFormatPreference) => void;
   setWeekStartPreference: (value: WeekStartPreference) => void;
   setMermaidRenderingMode: (value: MermaidRenderingMode) => void;
+  setPlantumlTheme: (value: PlantumlTheme) => void;
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
   setStickyUserHeader: (value: boolean) => void;
@@ -995,6 +998,7 @@ export const useUIStore = create<UIStore>()(
         timeFormatPreference: 'auto',
         weekStartPreference: 'auto',
         mermaidRenderingMode: 'svg',
+        plantumlTheme: 'none',
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
         stickyUserHeader: false,
@@ -2225,6 +2229,9 @@ export const useUIStore = create<UIStore>()(
         setMermaidRenderingMode: (value) => {
           set({ mermaidRenderingMode: value });
         },
+        setPlantumlTheme: (value) => {
+          set({ plantumlTheme: value });
+        },
         setUserMessageRenderingMode: (value) => {
           set({ userMessageRenderingMode: value });
         },
@@ -2475,6 +2482,7 @@ export const useUIStore = create<UIStore>()(
           timeFormatPreference: state.timeFormatPreference,
           weekStartPreference: state.weekStartPreference,
           mermaidRenderingMode: state.mermaidRenderingMode,
+          plantumlTheme: state.plantumlTheme,
           userMessageRenderingMode: state.userMessageRenderingMode,
           collapsibleUserMessages: state.collapsibleUserMessages,
           stickyUserHeader: state.stickyUserHeader,
