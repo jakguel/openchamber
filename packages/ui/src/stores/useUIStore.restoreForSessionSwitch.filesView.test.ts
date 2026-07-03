@@ -79,29 +79,27 @@ describe('restoreForSessionSwitch → useFilesViewTabsStore bridge (FilesView st
     expect(selectedPathForRoot(dir)).toBe(fileX);
   });
 
-  test('\'chat\' active tab leaves selectedPath untouched and does not crash', () => {
-    // Seed a selectedPath, then restore a session whose active tab is 'chat'.
+  test('\'chat\' active tab clears the previous session\'s selectedPath for the root', () => {
+    // Seed a selectedPath (previous session's file), then restore a session
+    // whose active tab is 'chat'. FilesView must render NO file, so the bridge
+    // must clear selectedPath (store's no-selection value is null).
     useFilesViewTabsStore.getState().setSelectedPath(dir, fileX);
     expect(selectedPathForRoot(dir)).toBe(fileX);
 
     // A never-saved session restores DEFAULT (activeSessionFileTabId === 'chat').
-    // Direct call (not expect().not.toThrow()): the project's bun-test.d.ts shim
-    // has no .not.toThrow, so a throw simply fails the test.
     useUIStore.getState().restoreForSessionSwitch('ses_chat_only', dir);
 
     expect(useUIStore.getState().activeSessionFileTabId).toBe('chat');
-    // The chat branch must NOT overwrite the existing selectedPath.
-    expect(selectedPathForRoot(dir)).toBe(fileX);
+    expect(selectedPathForRoot(dir)).toBeNull();
   });
 
-  test('session with no open file tab sets no selectedPath', () => {
-    // Fresh root with no prior selection; restore a chat-only session.
+  test('session with no open file tab leaves no file selected', () => {
+    // Fresh root with no prior selection; restore a chat-only session. The chat
+    // branch clears the root's selection (null), so no file renders.
     useUIStore.getState().restoreForSessionSwitch('ses_no_tabs', dir);
     expect(useUIStore.getState().sessionFileTabs).toEqual([]);
     expect(useUIStore.getState().activeSessionFileTabId).toBe('chat');
-    // No byRoot entry should have been created / selected for this root
-    // (undefined selectedPath => falsy).
-    expect(selectedPathForRoot(dir)).toBeFalsy();
+    expect(selectedPathForRoot(dir)).toBeNull();
   });
 
   test('missing dir (undefined) with an active file tab does not crash and skips the bridge', () => {

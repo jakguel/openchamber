@@ -1595,10 +1595,10 @@ export const useUIStore = create<UIStore>()(
           // this bridge a session switch left selectedPath pinned to the PREVIOUS session's
           // file, so FilesView showed stale content. Mirror setActiveSessionFileTabId /
           // openSessionFileTab, which already keep the two stores in sync.
-          if (activeSessionFileTabId !== 'chat') {
-            const normalizedDirectory = normalizeDirectoryPath((dir || '').trim());
-            if (normalizedDirectory) {
-              const filesViewTabs = useFilesViewTabsStore.getState();
+          const normalizedDirectory = normalizeDirectoryPath((dir || '').trim());
+          if (normalizedDirectory) {
+            const filesViewTabs = useFilesViewTabsStore.getState();
+            if (activeSessionFileTabId !== 'chat') {
               // Reconcile the restored session's whole tab list into openPaths so the
               // FilesView tab strip and the store's open-tabs view agree, then select
               // the active tab (setSelectedPath also folds it into openPaths).
@@ -1606,6 +1606,12 @@ export const useUIStore = create<UIStore>()(
                 filesViewTabs.addOpenPath(normalizedDirectory, tabPath);
               }
               filesViewTabs.setSelectedPath(normalizedDirectory, activeSessionFileTabId);
+            } else {
+              // Active tab is 'chat': no file is selected for this session. Clear any
+              // stale selectedPath (null = the store's no-selection value, matching
+              // SidebarFilesTree's clear path) so FilesView renders no file instead of
+              // the previous session's content.
+              filesViewTabs.setSelectedPath(normalizedDirectory, null);
             }
           }
         },
