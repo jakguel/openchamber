@@ -92,9 +92,6 @@ const getToolIcon = (toolName: string) => {
 };
 
 const PREVIEW_ANIMATION_MS = 150;
-const MERMAID_DIALOG_HEADER_HEIGHT = 40;
-const MERMAID_ASPECT_RETRY_DELAY_MS = 120;
-const MERMAID_ASPECT_MAX_RETRIES = 3;
 
 const DIALOG_CODE_TAG_PROPS = { style: { background: 'transparent', backgroundColor: 'transparent', fontSize: 'inherit' } };
 
@@ -162,76 +159,6 @@ const getWindowViewport = (): ViewportSize => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 0,
     height: typeof window !== 'undefined' ? window.innerHeight : 0,
 });
-
-const PREVIEW_VIEWPORT_LIMITS = {
-    mobile: { widthRatio: 0.94, heightRatio: 0.86, padding: 10 },
-    desktop: { widthRatio: 0.8, heightRatio: 0.8, padding: 16 },
-} as const;
-
-const getPreviewViewportBounds = (viewport: { width: number; height: number }, isMobile: boolean) => {
-    const limits = isMobile ? PREVIEW_VIEWPORT_LIMITS.mobile : PREVIEW_VIEWPORT_LIMITS.desktop;
-    const paddedWidth = Math.max(160, viewport.width - limits.padding * 2);
-    const paddedHeight = Math.max(160, viewport.height - limits.padding * 2);
-
-    return {
-        maxWidth: Math.max(160, Math.min(paddedWidth, viewport.width * limits.widthRatio)),
-        maxHeight: Math.max(160, Math.min(paddedHeight, viewport.height * limits.heightRatio)),
-    };
-};
-
-const getSvgAspectRatio = (svg: SVGElement): number | null => {
-    try {
-        const groups = Array.from(svg.querySelectorAll('g'));
-        let bestArea = 0;
-        let bestRatio: number | null = null;
-
-        for (const group of groups) {
-            if (!(group instanceof SVGGraphicsElement)) {
-                continue;
-            }
-            const box = group.getBBox();
-            if (!(box.width > 0 && box.height > 0)) {
-                continue;
-            }
-            const area = box.width * box.height;
-            if (area > bestArea) {
-                bestArea = area;
-                bestRatio = box.width / box.height;
-            }
-        }
-
-        if (bestRatio && Number.isFinite(bestRatio) && bestRatio > 0) {
-            return bestRatio;
-        }
-    } catch {
-        // Ignore getBBox failures and fall back to SVG attrs/viewBox.
-    }
-
-    const viewBox = svg.getAttribute('viewBox');
-    if (viewBox) {
-        const parts = viewBox.trim().split(/\s+/).map(Number);
-        if (parts.length === 4) {
-            const width = parts[2];
-            const height = parts[3];
-            if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
-                return width / height;
-            }
-        }
-    }
-
-    const attrWidth = Number(svg.getAttribute('width'));
-    const attrHeight = Number(svg.getAttribute('height'));
-    if (Number.isFinite(attrWidth) && Number.isFinite(attrHeight) && attrWidth > 0 && attrHeight > 0) {
-        return attrWidth / attrHeight;
-    }
-
-    const rect = svg.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-        return rect.width / rect.height;
-    }
-
-    return null;
-};
 
 const usePreviewOverlayState = (open: boolean) => {
     const [isRendered, setIsRendered] = React.useState(open);
@@ -635,17 +562,13 @@ DialogReadContent.displayName = 'DialogReadContent';
 const MermaidPreviewDialog: React.FC<{
     popup: ToolPopupContent;
     onOpenChange: (open: boolean) => void;
-    isMobile: boolean;
-}> = ({ popup, onOpenChange, isMobile }) => {
+}> = ({ popup, onOpenChange }) => {
     const { t } = useI18n();
     const [source, setSource] = React.useState<string>(popup.diagram?.source || '');
     const [status, setStatus] = React.useState<'idle' | 'loading' | 'ready' | 'error'>(popup.diagram?.source ? 'ready' : 'idle');
     const [errorMessage, setErrorMessage] = React.useState<string>('');
     const { isRendered, isVisible, isTransitioning } = usePreviewOverlayState(popup.open);
-    const [diagramAspectRatio, setDiagramAspectRatio] = React.useState<number | null>(null);
-    const viewport = usePreviewViewport(popup.open);
     const requestIdRef = React.useRef(0);
-    const mermaidPreviewRef = React.useRef<HTMLDivElement | null>(null);
 
     const normalizeFilePath = React.useCallback((rawPath: string): string | null => {
         const input = rawPath.trim();
@@ -807,87 +730,9 @@ const MermaidPreviewDialog: React.FC<{
         };
     }, [onOpenChange, popup.open]);
 
-    React.useEffect(() => {
-        if (!popup.open || status !== 'ready') {
-            setDiagramAspectRatio(null);
-            return;
-        }
-
-        const measureAspectRatio = () => {
-            const svg = mermaidPreviewRef.current?.querySelector('svg');
-            if (!svg) {
-                return false;
-            }
-
-            const aspectRatio = getSvgAspectRatio(svg as SVGElement);
-            if (!aspectRatio || !Number.isFinite(aspectRatio) || aspectRatio <= 0) {
-                return false;
-            }
-
-            setDiagramAspectRatio((previous) => {
-                if (previous && Math.abs(previous - aspectRatio) < 0.001) {
-                    return previous;
-                }
-                return aspectRatio;
-            });
-            return true;
-        };
-
-        let rafId = window.requestAnimationFrame(() => {
-            if (!measureAspectRatio()) {
-                rafId = window.requestAnimationFrame(() => {
-                    measureAspectRatio();
-                });
-            }
-        });
-
-        let retryCount = 0;
-        let timeoutId: number | undefined;
-        const scheduleRetry = () => {
-            if (retryCount >= MERMAID_ASPECT_MAX_RETRIES) {
-                return;
-            }
-
-            timeoutId = window.setTimeout(() => {
-                retryCount += 1;
-                if (!measureAspectRatio()) {
-                    scheduleRetry();
-                }
-            }, MERMAID_ASPECT_RETRY_DELAY_MS);
-        };
-        scheduleRetry();
-
-        const observer = new MutationObserver(() => {
-            measureAspectRatio();
-        });
-
-        if (mermaidPreviewRef.current) {
-            observer.observe(mermaidPreviewRef.current, { childList: true, subtree: true, attributes: true });
-        }
-
-        return () => {
-            window.cancelAnimationFrame(rafId);
-            if (typeof timeoutId === 'number') {
-                window.clearTimeout(timeoutId);
-            }
-            observer.disconnect();
-        };
-    }, [popup.open, source, status]);
 
     const diagramKind = popup.diagram?.kind ?? 'mermaid';
     const diagramMarkdown = `\`\`\`${diagramKind === 'plantuml' ? 'plantuml' : 'mermaid'}\n${source}\n\`\`\``;
-
-    const dialogSize = React.useMemo(() => {
-        const { maxWidth, maxHeight } = getPreviewViewportBounds(viewport, isMobile);
-        const availableDiagramHeight = Math.max(160, maxHeight - MERMAID_DIALOG_HEADER_HEIGHT);
-
-        if (diagramAspectRatio && diagramAspectRatio < 1) {
-            const squareSide = Math.min(maxWidth, availableDiagramHeight);
-            return { width: Math.round(squareSide), height: Math.round(squareSide) };
-        }
-
-        return { width: Math.round(maxWidth), height: Math.round(availableDiagramHeight) };
-    }, [diagramAspectRatio, isMobile, viewport]);
 
     if (!isRendered || typeof document === 'undefined') {
         return null;
@@ -905,35 +750,26 @@ const MermaidPreviewDialog: React.FC<{
                 onMouseDown={() => onOpenChange(false)}
             />
 
-            <div
-                className={cn(
-                    'absolute inset-0 flex items-center justify-center pointer-events-none',
-                    isMobile ? 'p-2.5' : 'p-4'
-                )}
-            >
+            <div className="absolute inset-0 pointer-events-none">
                 <div
                     className={cn(
-                        'pointer-events-auto flex flex-col gap-2',
+                        'pointer-events-auto relative w-full h-full',
                         isTransitioning && 'transition-opacity duration-150 ease-out',
                         isVisible ? 'opacity-100' : 'opacity-0'
                     )}
-                    style={{ width: `${dialogSize.width}px` }}
+                    data-testid="mermaid-preview-panel"
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    <div className="flex items-center justify-end">
-                        <button
-                            type="button"
-                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground/80 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60"
-                            onClick={() => onOpenChange(false)}
-                            aria-label={t('chat.toolOutputDialog.mermaid.closeAria')}
-                        >
-                            <Icon name="close" className="h-4 w-4" />
-                        </button>
-                    </div>
-                    <div
-                        className="relative overflow-hidden"
-                        style={{ height: `${dialogSize.height}px` }}
+                    <button
+                        type="button"
+                        className="absolute top-4 right-4 z-10 h-11 w-11 flex items-center justify-center rounded-lg bg-[var(--surface-elevated)] text-muted-foreground/80 hover:text-foreground hover:bg-[var(--interactive-hover)] focus:outline-none focus:ring-2 focus:ring-primary/60"
+                        data-testid="mermaid-preview-close"
+                        onClick={() => onOpenChange(false)}
+                        aria-label={t('chat.toolOutputDialog.mermaid.closeAria')}
                     >
+                        <Icon name="close" className="h-6 w-6" />
+                    </button>
+                    <div className="relative w-full h-full overflow-hidden">
                         <div className="h-full overflow-hidden">
                             {status === 'loading' && (
                                 <div className="h-full min-h-28 flex items-center justify-center gap-2 text-muted-foreground typography-meta">
@@ -964,7 +800,7 @@ const MermaidPreviewDialog: React.FC<{
                             )}
 
                             {status === 'ready' && (
-                                <div ref={mermaidPreviewRef} className="h-full">
+                                <div className="h-full">
                                     <DiagramPanZoomViewport resetKey={`${popup.open}:${source}`} data-testid="diagram-panzoom">
                                         <SimpleMarkdownRenderer
                                             content={diagramMarkdown}
@@ -1004,7 +840,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
     }
 
     if (popup.diagram) {
-        return <MermaidPreviewDialog popup={popup} onOpenChange={onOpenChange} isMobile={isMobile} />;
+        return <MermaidPreviewDialog popup={popup} onOpenChange={onOpenChange} />;
     }
 
     return (
