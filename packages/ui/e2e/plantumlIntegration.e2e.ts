@@ -109,7 +109,7 @@ function blockSvgText(page: Page, index = 0): Promise<string> {
     return page.evaluate(
         ({ sel, i }) => {
             const blocks = document.querySelectorAll(sel);
-            const svg = blocks[i]?.querySelector('svg');
+            const svg = blocks[i]?.querySelector('[data-markdown="plantuml"] svg');
             return svg ? (svg.textContent ?? '') : '';
         },
         { sel: BLOCK, i: index },
@@ -125,12 +125,12 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // The real decorate pass creates the block synchronously (placeholder), then the async
         // queue paints the engine svg into it.
         await page.waitForSelector(BLOCK, { timeout: 15_000 });
-        await page.waitForSelector(`${BLOCK} svg`, { timeout: RENDER_BOUND_MS });
+        await page.waitForSelector(`${BLOCK} [data-markdown="plantuml"] svg`, { timeout: RENDER_BOUND_MS });
 
         const measured = await page.evaluate(
             ({ blockSel, loadingSel }) => {
                 const block = document.querySelector(blockSel);
-                const svg = block?.querySelector('svg') ?? null;
+                const svg = block?.querySelector('[data-markdown="plantuml"] svg') ?? null;
                 return {
                     blockCount: document.querySelectorAll(blockSel).length,
                     hasSvg: !!svg,
@@ -173,7 +173,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
                     hasError: !!block?.querySelector(errorSel),
                     errorTextLen: (block?.querySelector(errorSel)?.textContent ?? '').trim().length,
                     spinnerGone: !block?.querySelector(loadingSel),
-                    hasSvg: !!block?.querySelector('svg'),
+                    hasSvg: !!block?.querySelector('[data-markdown="plantuml"] svg'),
                 };
             },
             { blockSel: BLOCK, loadingSel: LOADING, errorSel: ERROR },
@@ -195,7 +195,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         await page.waitForFunction(
             (sel) => {
                 const blocks = document.querySelectorAll(sel);
-                return blocks.length === 2 && [...blocks].every((b) => !!b.querySelector('svg'));
+                return blocks.length === 2 && [...blocks].every((b) => !!b.querySelector('[data-markdown="plantuml"] svg'));
             },
             BLOCK,
             { timeout: RENDER_BOUND_MS },
@@ -228,7 +228,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // First source renders through fully (engine warmed, block established).
         await setMarkdown(page, fence(SEQ_ALPHA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('AlphaOne'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -248,7 +248,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
 
         // The block must settle on the LATEST source (this is where the bug bites: it never does).
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('EpsilonFive'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('EpsilonFive'),
             BLOCK,
             { timeout: 25_000 },
         );
@@ -273,7 +273,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // First source renders fully into the live block.
         await setMarkdown(page, fence(SEQ_ALPHA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('AlphaOne'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -283,7 +283,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // live-node pass repaints it.
         await setMarkdown(page, fence(SEQ_GAMMA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('GammaThree'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('GammaThree'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -291,7 +291,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         const measured = await page.evaluate(
             ({ blockSel, loadingSel }) => {
                 const block = document.querySelector(blockSel);
-                const svg = block?.querySelector('svg') ?? null;
+                const svg = block?.querySelector('[data-markdown="plantuml"] svg') ?? null;
                 return {
                     blockCount: document.querySelectorAll(blockSel).length,
                     svgText: svg?.textContent ?? '',
@@ -317,12 +317,12 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         await page.evaluate(() => window.__plSetDark?.(false));
         await setMarkdown(page, fence(SEQ_ALPHA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('AlphaOne'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
         const lightHtml = await page.evaluate(
-            (sel) => document.querySelector(sel)?.querySelector('svg')?.outerHTML ?? '',
+            (sel) => document.querySelector(sel)?.querySelector('[data-markdown="plantuml"] svg')?.outerHTML ?? '',
             BLOCK,
         );
         expect(lightHtml.length).toBeGreaterThan(0);
@@ -334,7 +334,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         await page.waitForFunction(
             ({ sel, prev }) => {
                 const block = document.querySelectorAll(sel)[0];
-                const svg = block?.querySelector('svg');
+                const svg = block?.querySelector('[data-markdown="plantuml"] svg');
                 if (!svg) return false;
                 if (block?.querySelector('[data-markdown="plantuml-loading"]')) return false;
                 // The dark engine render produces different colors than light (C0-proven), so a
@@ -348,7 +348,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         const measured = await page.evaluate(
             ({ blockSel, loadingSel }) => {
                 const block = document.querySelector(blockSel);
-                const svg = block?.querySelector('svg') ?? null;
+                const svg = block?.querySelector('[data-markdown="plantuml"] svg') ?? null;
                 return {
                     blockCount: document.querySelectorAll(blockSel).length,
                     hasSvg: !!svg,
@@ -375,13 +375,13 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // Prime the cache: valid source A, then a distinct valid source B.
         await setMarkdown(page, fence(SEQ_ALPHA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('AlphaOne'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
         await setMarkdown(page, fence(SEQ_GAMMA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('GammaThree'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('GammaThree'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -390,7 +390,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         // yield EXACTLY ONE svg in the block (no double-paint stacking two svgs).
         await setMarkdown(page, fence(SEQ_ALPHA));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('AlphaOne'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -399,9 +399,9 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
                 const block = document.querySelector(blockSel);
                 return {
                     blockCount: document.querySelectorAll(blockSel).length,
-                    svgCount: block ? block.querySelectorAll('svg').length : 0,
+                    svgCount: block ? block.querySelectorAll('[data-markdown="plantuml"] svg').length : 0,
                     spinnerGone: !block?.querySelector(loadingSel),
-                    svgText: block?.querySelector('svg')?.textContent ?? '',
+                    svgText: block?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '',
                 };
             },
             { blockSel: BLOCK, loadingSel: LOADING },
@@ -418,7 +418,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         await page.waitForSelector(`${BLOCK} ${ERROR}`, { timeout: RENDER_BOUND_MS });
         await setMarkdown(page, fence(SEQ_EPSILON));
         await page.waitForFunction(
-            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('EpsilonFive'),
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('[data-markdown="plantuml"] svg')?.textContent ?? '').includes('EpsilonFive'),
             BLOCK,
             { timeout: RENDER_BOUND_MS },
         );
@@ -430,7 +430,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
                 return {
                     blockCount: document.querySelectorAll(blockSel).length,
                     errorCount: block ? block.querySelectorAll(errorSel).length : 0,
-                    hasSvg: !!block?.querySelector('svg'),
+                    hasSvg: !!block?.querySelector('[data-markdown="plantuml"] svg'),
                     spinnerGone: !block?.querySelector(loadingSel),
                 };
             },
@@ -447,7 +447,7 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         const external = trackExternalRequests(page);
         await mount(page);
         await setMarkdown(page, fence(SEQ_ALPHA));
-        await page.waitForSelector(`${BLOCK} svg`, { timeout: RENDER_BOUND_MS });
+        await page.waitForSelector(`${BLOCK} [data-markdown="plantuml"] svg`, { timeout: RENDER_BOUND_MS });
 
         // Everything (engine, viz-global, C4 stdlib) is bundled/inlined and served same-origin
         // by the dev server; a real diagram rendered while ZERO requests left the origin.
