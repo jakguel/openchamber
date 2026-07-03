@@ -54,6 +54,14 @@ const SCALE_TOLERANCE_PX = 2;
 const MERMAID_SOURCE = 'graph TD\n  A[Start] --> B[Middle]\n  B --> C[End]';
 
 /**
+ * Deliberately invalid mermaid: the first line is not a recognized diagram header, so the
+ * REAL beautiful-mermaid parser throws "Invalid mermaid header" (parser.ts). Production wraps
+ * that throw in a try/catch that returns {} (MarkdownRendererImpl.tsx renderMermaid), which
+ * drives decorateMermaid's ascii-fallback branch — the error affordance under test.
+ */
+const INVALID_MERMAID_SOURCE = 'not a diagram @@@ invalid header';
+
+/**
  * Bundle the REAL render modules into a single IIFE exposed as window.__mmTest.
  * Uses the same `@` → src alias the app uses so decorate.ts's `@/lib/*` imports resolve.
  */
@@ -268,6 +276,80 @@ test.describe('Story A — mermaid typographic integration', () => {
         expect(measured.asciiLen).toBeGreaterThan(0);
         // ascii mode must NOT emit the diagram svg host (regression guard for the mode toggle).
         expect(measured.hasDiagramHost).toBe(false);
+        expect(measured.hasCopy).toBe(true);
+    });
+});
+
+test.describe('mermaid inline error-state (invalid source)', () => {
+    test('invalid source settles to the ascii/error affordance, never a perpetual spinner', async ({ page }) => {
+        await mountHarness(page);
+
+        const measured = await page.evaluate(
+            ({ source, labels }) => {
+                const w = window as unknown as HarnessGlobals;
+                const container = document.querySelector('.markdown-content') as HTMLElement;
+                const target = container.querySelector('[data-markdown-content]') as HTMLElement;
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                code.className = 'language-mermaid';
+                code.textContent = source;
+                pre.appendChild(code);
+                target.appendChild(pre);
+
+                // Mirror the PRODUCTION renderMermaid contract (MarkdownRendererImpl.tsx:
+                // try { renderMermaidSVG(src) } catch { return {} }). `caught` flips only when the
+                // REAL parser rejects the source — it is the non-vacuity guard: a valid source
+                // would leave caught === false and render an svg host, failing the asserts below.
+                let caught = false;
+                const ctx = {
+                    labels,
+                    renderMermaid: (src: string) => {
+                        try {
+                            return { svg: w.__mmTest.renderMermaidSVG(src) };
+                        } catch {
+                            caught = true;
+                            return {};
+                        }
+                    },
+                };
+
+                let threw = false;
+                try {
+                    w.__mmTest.decorateMarkdown(target, ctx);
+                } catch {
+                    threw = true;
+                }
+
+                const block = target.querySelector('[data-markdown="mermaid-block"]') as HTMLElement | null;
+                const asciiEl = block?.querySelector('[data-markdown="mermaid-ascii"]') as HTMLElement | null;
+                return {
+                    caught,
+                    threw,
+                    hasBlock: !!block,
+                    leftoverCodeBlock: !!target.querySelector('pre > code.language-mermaid'),
+                    hasAsciiFallback: !!asciiEl,
+                    asciiText: asciiEl?.textContent ?? '',
+                    hasSvgHost: !!block?.querySelector('[data-md-diagram="mermaid"]'),
+                    hasCopy: !!block?.querySelector('[data-md-action="mermaid-copy"]'),
+                };
+            },
+            { source: INVALID_MERMAID_SOURCE, labels: DECORATE_LABELS },
+        );
+
+        // The real beautiful-mermaid parser genuinely rejected the invalid source (non-vacuity).
+        expect(measured.caught).toBe(true);
+        // decorateMermaid completed synchronously without throwing into the caller...
+        expect(measured.threw).toBe(false);
+        expect(measured.hasBlock).toBe(true);
+        // ...and settled to a TERMINAL state: the fenced block was replaced, not left hanging
+        // (a hung/perpetual-spinner render would leave the original pre>code in place).
+        expect(measured.leftoverCodeBlock).toBe(false);
+        // AC1: the error/ascii-fallback affordance is present and shows the raw source...
+        expect(measured.hasAsciiFallback).toBe(true);
+        expect(measured.asciiText).toContain('invalid header');
+        // ...and NO diagram svg was produced from the invalid source.
+        expect(measured.hasSvgHost).toBe(false);
+        // Copy affordance is still offered in the fallback (parity with ascii mode).
         expect(measured.hasCopy).toBe(true);
     });
 });
