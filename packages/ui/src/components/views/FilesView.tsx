@@ -28,6 +28,7 @@ import { PreviewToggleButton } from './PreviewToggleButton';
 import { resolveExternalChangeAction, runGuardedWrite, shouldSurfaceConflict } from './resolveExternalChangeAction';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
 import { createFlexokiCodeMirrorTheme } from '@/lib/codemirror/flexokiTheme';
 import { shikiHighlightExtension } from '@/lib/codemirror/shikiHighlight';
@@ -739,6 +740,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
   const { isMobile, isTablet, screenWidth } = useDeviceInfo();
   const alwaysShowActions = isMobile || isTablet;
+  const { onShowPopup: onShowDiagramPopup, popupElement: diagramPopupElement } = useDiagramPopup();
   const showHidden = useDirectoryShowHidden();
   const showGitignored = useFilesViewShowGitignored();
 
@@ -3893,6 +3895,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                   className="typography-markdown-body"
                   stripFrontmatter
                   enableFileReferences={false}
+                  onShowPopup={onShowDiagramPopup}
                 />
               </ErrorBoundary>
             </div>
@@ -4237,6 +4240,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                   className="typography-markdown-body"
                   stripFrontmatter
                   enableFileReferences={false}
+                  onShowPopup={onShowDiagramPopup}
                 />
               </ErrorBoundary>
             </div>
@@ -4293,6 +4297,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
         onClose={handleCloseDialog}
         inputRef={dialogInputRef}
       />
+      {diagramPopupElement}
       {fullscreenViewer}
       {isMobile ? (
         showMobilePageContent ? (

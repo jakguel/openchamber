@@ -3,6 +3,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { CodeMirrorEditor } from '@/components/ui/CodeMirrorEditor';
 import { PreviewToggleButton } from './PreviewToggleButton';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Button } from '@/components/ui/button';
@@ -165,6 +166,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null }) => {
   const runtimeApis = useRuntimeAPIs();
   const { isMobile } = useDeviceInfo();
   const { currentTheme } = useThemeSystem();
+  const { onShowPopup: onShowDiagramPopup, popupElement: diagramPopupElement } = useDiagramPopup();
 
   const session = React.useMemo(() => {
     if (!currentSessionId) return null;
@@ -798,7 +800,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null }) => {
                         </div>
                       }
                     >
-                      <SimpleMarkdownRenderer content={content} className="typography-markdown-body" enableFileReferences={false} />
+                      <SimpleMarkdownRenderer content={content} className="typography-markdown-body" enableFileReferences={false} onShowPopup={onShowDiagramPopup} />
                     </ErrorBoundary>
                   </div>
                 ) : (
@@ -891,6 +893,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null }) => {
           )}
         </ScrollableOverlay>
       </div>
+      {diagramPopupElement}
     </div>
   );
 };

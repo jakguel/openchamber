@@ -24,6 +24,7 @@ import {
 } from '@/components/ui/dialog';
 import { Icon } from "@/components/icon/Icon";
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
 import { PreviewToggleButton } from '@/components/views/PreviewToggleButton';
 import { SkillsCatalogPage } from './catalog/SkillsCatalogPage';
 import {
@@ -286,6 +287,8 @@ const SkillsInstalledPage: React.FC = () => {
     setDescription(parsed.description ?? '');
     setInstructions(parsed.instructions);
   }, []);
+
+  const { onShowPopup: onShowDiagramPopup, popupElement: diagramPopupElement } = useDiagramPopup();
 
   const handleSave = async () => {
     const skillName = isNewSkill ? draftName.trim().replace(/\s+/g, '-').toLowerCase() : selectedSkillName?.trim();
@@ -622,6 +625,7 @@ const SkillsInstalledPage: React.FC = () => {
                       className="typography-markdown-body"
                       stripFrontmatter
                       enableFileReferences={false}
+                      onShowPopup={onShowDiagramPopup}
                     />
                   </div>
                 </ScrollableOverlay>
@@ -810,6 +814,7 @@ const SkillsInstalledPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {diagramPopupElement}
     </ScrollableOverlay>
   );
 };

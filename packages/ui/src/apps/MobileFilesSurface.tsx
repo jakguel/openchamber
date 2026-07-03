@@ -20,6 +20,7 @@ import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
+import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
 import { PIERRE_RUNTIME_BASE_CSS } from '@/components/views/PierreDiffViewer';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
@@ -490,11 +491,16 @@ const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, con
     [darkTheme.metadata.id, lightTheme.metadata.id],
   );
 
+  const { onShowPopup: onShowDiagramPopup, popupElement: diagramPopupElement } = useDiagramPopup();
+
   if (isMarkdownFile(path)) {
     return (
-      <ScrollShadow className="h-full overflow-y-auto px-4 py-4">
-        <SimpleMarkdownRenderer content={content} enableFileReferences={false} />
-      </ScrollShadow>
+      <>
+        <ScrollShadow className="h-full overflow-y-auto px-4 py-4">
+          <SimpleMarkdownRenderer content={content} enableFileReferences={false} onShowPopup={onShowDiagramPopup} />
+        </ScrollShadow>
+        {diagramPopupElement}
+      </>
     );
   }
   if (isJsonFile(path)) {
