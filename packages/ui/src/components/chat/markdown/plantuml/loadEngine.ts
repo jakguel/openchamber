@@ -4,6 +4,8 @@
 // unaffected. The "only when a plantuml block is present" gate belongs to the sole call site
 // (decoratePlantuml, openchamber-f9d.16.4); this module intentionally has NO markdown/DOM
 // knowledge and MUST NOT query markdown selectors. Concerns here: SSR-gate + singleton only.
+// Pinned dep: @plantuml/core@1.2026.6 — npm: https://www.npmjs.com/package/@plantuml/core
+// PlantUML language reference: https://plantuml.com/sitemap-language-specification
 import vizGlobalUrl from '@plantuml/core/viz-global.js?url';
 
 export type PlantUmlOptions = { dark?: boolean };
