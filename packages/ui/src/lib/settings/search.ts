@@ -58,6 +58,13 @@ export const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'appearance.plantuml-theme',
+    page: 'appearance',
+    titleKey: 'settings.openchamber.visual.field.plantumlTheme',
+    keywords: ['plantuml', 'diagram', 'theme', 'uml'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'appearance.window-transparency',
     page: 'appearance',
     titleKey: 'settings.openchamber.visual.field.macVibrancy',

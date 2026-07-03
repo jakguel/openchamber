@@ -4,7 +4,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import type { ThemeMode } from '@/types/theme';
-import { useUIStore } from '@/stores/useUIStore';
+import { useUIStore, type PlantumlTheme } from '@/stores/useUIStore';
 import { useMessageQueueStore } from '@/stores/messageQueueStore';
 import { cn, getModifierLabel } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -83,6 +83,33 @@ const MERMAID_RENDERING_OPTIONS: Option<'svg' | 'ascii'>[] = [
         id: 'ascii',
         labelKey: 'settings.openchamber.visual.option.mermaidRendering.ascii.label',
         descriptionKey: 'settings.openchamber.visual.option.mermaidRendering.ascii.description',
+    },
+];
+
+const PLANTUML_THEME_OPTIONS: Option<PlantumlTheme>[] = [
+    {
+        id: 'none',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.none.label',
+    },
+    {
+        id: 'plain',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.plain.label',
+    },
+    {
+        id: 'mono',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.mono.label',
+    },
+    {
+        id: 'sunlust',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.sunlust.label',
+    },
+    {
+        id: 'toy',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.toy.label',
+    },
+    {
+        id: 'reddress-lightblue',
+        labelKey: 'settings.openchamber.visual.option.plantumlTheme.reddressLightblue.label',
     },
 ];
 
@@ -254,6 +281,8 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
 
     const mermaidRenderingMode = useUIStore(state => state.mermaidRenderingMode);
     const setMermaidRenderingMode = useUIStore(state => state.setMermaidRenderingMode);
+    const plantumlTheme = useUIStore(state => state.plantumlTheme);
+    const setPlantumlTheme = useUIStore(state => state.setPlantumlTheme);
     const userMessageRenderingMode = useUIStore(state => state.userMessageRenderingMode);
     const setUserMessageRenderingMode = useUIStore(state => state.setUserMessageRenderingMode);
     const collapsibleUserMessages = useUIStore(state => state.collapsibleUserMessages);
@@ -567,6 +596,10 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
         const option = MOBILE_KEYBOARD_MODE_OPTIONS.find((item) => item.id === mobileKeyboardMode);
         return option ? tUnsafe(option.labelKey) : undefined;
     }, [mobileKeyboardMode, tUnsafe]);
+    const selectedPlantumlThemeLabel = React.useMemo(() => {
+        const option = PLANTUML_THEME_OPTIONS.find((item) => item.id === plantumlTheme);
+        return tUnsafe(option?.labelKey ?? 'settings.openchamber.visual.option.plantumlTheme.none.label');
+    }, [plantumlTheme, tUnsafe]);
 
     const handleMobileLayoutPreferenceChange = React.useCallback((value: MobileLayoutPreference) => {
         if (value === mobileLayoutPreference) {
@@ -761,6 +794,22 @@ export const OpenChamberVisualSettings: React.FC<OpenChamberVisualSettingsProps>
                                                     <SelectItem key={theme.metadata.id} value={theme.metadata.id}>
                                                         {formatThemeLabel(theme.metadata.name, 'dark')}
                                                     </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-2 py-1.5 md:grid-cols-[14rem_auto] md:gap-x-8 md:gap-y-2">
+                                    <div data-settings-item="appearance.plantuml-theme" className="flex min-w-0 items-center gap-2">
+                                        <span className="typography-ui-label text-foreground shrink-0">{t('settings.openchamber.visual.field.plantumlTheme')}</span>
+                                        <Select value={plantumlTheme} onValueChange={(value) => setPlantumlTheme(value as PlantumlTheme)}>
+                                            <SelectTrigger aria-label={t('settings.openchamber.visual.field.selectPlantumlThemeAria')} className="w-fit">
+                                                <SelectValue>{selectedPlantumlThemeLabel}</SelectValue>
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {PLANTUML_THEME_OPTIONS.map((option) => (
+                                                    <SelectItem key={option.id} value={option.id}>{tUnsafe(option.labelKey)}</SelectItem>
                                                 ))}
                                             </SelectContent>
                                         </Select>
