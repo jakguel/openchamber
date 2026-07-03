@@ -1621,7 +1621,19 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     [fileContent]
   );
 
-  const isDirty = draftContent !== displayedContent;
+  // Compare dirty on line-ending-normalized values: a pure CR/CRLF-vs-LF gap
+  // between the editor draft and the loaded baseline must never surface as a
+  // spurious unsaved-changes dialog. Uses the same normalization CodeMirror
+  // applies to its own document, so real content/newline edits still count.
+  const normalizedDisplayedContent = React.useMemo(
+    () => normalizeEditorLineEndings(displayedContent),
+    [displayedContent],
+  );
+  const normalizedDraftContent = React.useMemo(
+    () => normalizeEditorLineEndings(draftContent),
+    [draftContent],
+  );
+  const isDirty = normalizedDraftContent !== normalizedDisplayedContent;
 
   React.useImperativeHandle(ref, () => ({
     closeFile: (path: string) => {
