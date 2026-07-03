@@ -1493,6 +1493,96 @@ html:not(.dark) .chat-scroll {
   background: transparent;
 }
 
+/* PlantUML block: twin of the mermaid block chrome — same position context for the toolbar,
+   same vertical rhythm and box so plantuml diagrams share mermaid's visual balance. */
+[data-markdown="plantuml-block"] {
+  position: relative;
+  /* Vertical rhythm so the diagram isn't cramped against surrounding text —
+     matches code blocks' my-4 (1rem top + bottom). */
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--interactive-border);
+  background: var(--surface-elevated);
+  padding: 0.5rem;
+}
+
+/* Inline SVG diagrams fit to container width — the whole diagram is scaled down to fit,
+   with NO inner horizontal scroll (zoom/pan lives in the fullscreen viewer). overflow is
+   hidden so the diagram is clipped to the box rather than scrolled, and so the shared
+   font-balance transform (diagramScale.ts applyDiagramBodyScale) engages its width-clamp
+   branch (gated on overflowX==='hidden') rather than resurrecting an inner scrollbar. */
+[data-markdown="plantuml-block"] [data-markdown="plantuml-scroll"] {
+  overflow: hidden;
+}
+
+[data-markdown="plantuml-block"] [data-markdown="plantuml"] {
+  display: block;
+  width: fit-content;
+  /* Fit the host to the container width; the shared font-balance transform:scale is clamped
+     in JS to the headroom between this fitted host and its container, so host*scale never
+     exceeds the container — mirrors the mermaid host contract. */
+  max-width: 100%;
+}
+
+/* Fit the rendered diagram to the container width, preserving aspect ratio. A diagram
+   narrower than the container keeps its natural size; a wider one scales down. */
+[data-markdown="plantuml-block"] [data-markdown="plantuml"] svg {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+}
+
+[data-markdown="plantuml-block"] svg {
+  display: block;
+  background: var(--surface-elevated);
+}
+
+/* Fullscreen plantuml popup: twin of .markdown-mermaid-fullscreen. The diagram is fit-to-panel
+   at rest, then the DiagramPanZoomViewport CSS transform owns all movement, so overflow is
+   NEUTRALIZED (visible, not auto) — an inner scrollbar would fight the transform-based pan. */
+.markdown-plantuml-fullscreen {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.markdown-plantuml-fullscreen .markdown-content {
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.markdown-plantuml-fullscreen [data-markdown="plantuml-block"] {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.markdown-plantuml-fullscreen [data-markdown="plantuml-block"] [data-markdown="plantuml-scroll"] {
+  overflow: visible;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.markdown-plantuml-fullscreen [data-markdown="plantuml-block"] [data-markdown="plantuml"] {
+  display: block;
+  width: auto;
+  max-width: 100%;
+}
+
+.markdown-plantuml-fullscreen [data-markdown="plantuml-block"] svg {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  background: transparent;
+}
+
 /* Terminal touch input is portaled to document.body; keep it fully non-painting across engines. */
 input[data-terminal-hidden-input="true"],
 textarea[data-terminal-hidden-input="true"] {
