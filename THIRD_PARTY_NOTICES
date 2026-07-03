@@ -1,0 +1,44 @@
+THIRD-PARTY NOTICES
+===================
+
+This file lists third-party materials vendored into OpenChamber together with
+their upstream source and license.
+
+
+Vendored PlantUML themes
+------------------------
+
+The following PlantUML theme files are vendored (verbatim) for fully offline
+diagram theming under:
+
+    packages/ui/src/components/chat/markdown/plantuml/themes/
+
+Upstream project : plantuml/plantuml  (https://github.com/plantuml/plantuml)
+Pinned commit    : 597262b70fb50671094413e3b6c3a0ef49de9a97
+Upstream path    : src/main/resources/themes/puml-theme-<name>.puml
+
+  * puml-theme-plain.puml
+      Theme "plain" by Matthew Leather.
+      License: PlantUML core theme (distributed as part of plantuml/plantuml).
+
+  * puml-theme-mono.puml
+      Theme "mono" by Denis Bondarenko feat. Matthew Leather.
+      License: PlantUML core theme (distributed as part of plantuml/plantuml).
+
+  * puml-theme-sunlust.puml
+      Theme "sunlust" by Artem V. Ageev.
+      License: GPL-3.0-or-later (GPL 3+).
+
+  * puml-theme-toy.puml
+      Theme "toy" by future-architect (https://github.com/future-architect).
+      Source: https://github.com/future-architect/puml-themes
+      License: Apache License, Version 2.0.
+
+  * puml-theme-reddress-lightblue.puml
+      Theme "reddress-lightblue" by Drakemor (https://github.com/Drakemor).
+      Source: https://github.com/Drakemor/RedDress-PlantUML
+      License: MIT.
+
+Each file is used verbatim except that its leading YAML front-matter metadata
+block (--- ... ---, containing name/license/author fields) is stripped at load
+time because it is not valid PlantUML source.
