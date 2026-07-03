@@ -24,6 +24,7 @@ import {
   attachMarkdownInteractions,
   createPlantumlQueue,
   decorateMarkdown,
+  renderPlantumlBlocks,
   type DecorateContext,
   type DecorateLabels,
   type MermaidRender,
@@ -1188,6 +1189,10 @@ const useMorphdomMarkdown = ({
       decorateMarkdown(block, ctx);
       target.appendChild(block);
       applyDiagramBodyScale(target);
+      // Post-commit PlantUML render pass against the now-LIVE block (append committed it), so the
+      // async engine render is enqueued/painted on the connected node — decorateMarkdown above only
+      // built the placeholder. See renderPlantumlBlocks for the detached-temp-node bug this fixes.
+      renderPlantumlBlocks(target, ctx);
     }
   }, [containerRef, text, ctx]);
 
@@ -1230,6 +1235,11 @@ const useMorphdomMarkdown = ({
       }
 
       applyDiagramBodyScale(target);
+      // Post-commit PlantUML render pass over the LIVE target after this morphdom cycle. Runs for
+      // EVERY block (incl. morphdom-SKIPPED ones on a theme toggle), enqueuing/painting against the
+      // reused live nodes so a source edit or theme flip actually repaints — the fix for the
+      // async block that never repainted when enqueued against the discarded pre-morphdom temp.
+      renderPlantumlBlocks(target, ctx);
 
       if (streaming) {
         onContentGrown?.();

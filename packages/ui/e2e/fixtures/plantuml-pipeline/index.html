@@ -17,8 +17,8 @@
         window.process = window.process || {
             env: { NODE_ENV: 'production' },
             platform: 'browser',
-            cwd: function () { return '/'; },
-            nextTick: function (f) { setTimeout(f, 0); },
+            cwd: () => '/',
+            nextTick: (f) => { setTimeout(f, 0); },
         };
     </script>
 </head>

@@ -3,7 +3,7 @@ import { getExternalFaviconUrl, isExternalHttpUrl, isLoopbackHttpUrl } from '@/l
 import { dropdownMenuItemClass, dropdownMenuPopupClass } from '@/components/ui/dropdown-menu.styles';
 import { createPlantumlRenderQueue, type PlantumlRenderQueue } from './plantuml/renderQueue';
 import { renderPlantuml } from './plantuml/renderPlantuml';
-import { PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
+import { PLANTUML_BLOCK_SELECTOR, PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
 
 // ---------------------------------------------------------------------------
 // Shared decoration context
@@ -357,11 +357,26 @@ const buildPlantumlError = (title: string, detail?: string): HTMLElement => {
   return wrap;
 };
 
+const PLANTUML_HOST_SELECTOR = '[data-markdown="plantuml"]';
+const PLANTUML_LOADING_SELECTOR = '[data-markdown="plantuml-loading"]';
+// Stamped on a LIVE block once its current render key has actually painted, so a later
+// post-pass over an unchanged block is a no-op (AC9 — no double-paint). morphdom strips this
+// attr whenever it updates the block (source edit → fresh spinner, attr absent on the temp
+// node), which correctly re-arms the block for a repaint; a morphdom-SKIPPED block (unchanged
+// data-md-id, e.g. a theme toggle) keeps the stamp, so the key comparison alone re-triggers.
+const PLANTUML_RENDERED_KEY_ATTR = 'data-plantuml-rendered-key';
+
+/**
+ * Build the placeholder DOM for every ```plantuml fence — but DO NOT enqueue the async render
+ * here. This runs against the DETACHED pre-morphdom `temp` node; morphdom then reuses the LIVE
+ * node and discards `temp`, so a render enqueued against `temp` would resolve into a
+ * disconnected node and be dropped by the generation guard (the perpetual-spinner bug). The
+ * enqueue + guarded paint happens in renderPlantumlBlocks, run POST-commit against the live DOM.
+ */
 const decoratePlantuml = (root: HTMLElement, ctx: DecorateContext): void => {
   const slot = ctx.renderPlantuml;
-  // Block-presence gate (AC6): with no wiring OR no plantuml block present this is a no-op,
-  // so the ~8.6MB engine is never touched. renderPlantuml (and its lazy engine load) only
-  // runs via the enqueue below, i.e. only when a real plantuml block is being decorated.
+  // Wiring gate: with no renderPlantuml slot this is a no-op. (The ~8.6MB engine is still never
+  // touched here — enqueue/load lives in renderPlantumlBlocks, gated on a LIVE plantuml block.)
   if (!slot) return;
   const codes = root.querySelectorAll<HTMLElement>('pre > code.language-plantuml');
   for (const code of Array.from(codes)) {
@@ -388,21 +403,60 @@ const decoratePlantuml = (root: HTMLElement, ctx: DecorateContext): void => {
     const host = pre.parentElement;
     if (!host) continue;
     host.replaceChild(block, pre);
+  }
+};
 
+/**
+ * Post-commit PlantUML render pass — the fix for the async-repaint bug. Runs AFTER the live DOM
+ * is committed (the synchronous first-paint append AND every morphdom re-decoration cycle),
+ * against the LIVE target, so every enqueue/paint is anchored to the LIVE block node rather than
+ * the detached `temp` node decoratePlantuml sees. Because morphdom reuses the same live block
+ * node across source edits, the queue's per-node generation + latest-only backpressure stay
+ * coherent: a superseding source bumps the generation and any stale in-flight render loses the
+ * isEligible check. This mirrors mermaid's synchronous paint, but for the async engine.
+ *
+ * Block-presence gate (AC6): no slot OR no live plantuml block ⇒ zero enqueues ⇒ renderPlantuml
+ * (and its lazy engine load) is never invoked, so the baseline bundle stays engine-free.
+ */
+export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext): void => {
+  const slot = ctx.renderPlantuml;
+  if (!slot) return;
+  const blocks = target.querySelectorAll<HTMLElement>(PLANTUML_BLOCK_SELECTOR);
+  for (const block of Array.from(blocks)) {
+    if (!block.isConnected) continue;
+    const svgHost = block.querySelector<HTMLElement>(PLANTUML_HOST_SELECTOR);
+    if (!svgHost) continue;
+    const source = block.getAttribute(PLANTUML_SOURCE_ATTR) ?? '';
     const key = `${slot.themeId}:${slot.dark ? 'dark' : 'light'}:${source}`;
+
+    // Re-enqueue only when the block still shows the loading placeholder (never painted, or
+    // morphdom reset the host to a fresh spinner) OR its render key changed (source edit or a
+    // light/dark theme flip). A settled block whose key is unchanged is skipped — no double
+    // paint (AC9) and no wasted engine work during streaming. A morphdom-SKIPPED block (theme
+    // toggle: unchanged data-md-id, morphdom never ran) still repaints because the dark flip
+    // changes the key even though its stamp survived (AC8).
+    const loading = svgHost.querySelector(PLANTUML_LOADING_SELECTOR) !== null;
+    if (!loading && block.getAttribute(PLANTUML_RENDERED_KEY_ATTR) === key) continue;
+
     const handle = slot.queue.enqueue(key, source, slot.dark, block);
     void handle.promise.then((result) => {
-      // Render-generation guard (AC3): morphdom reuses/replaces nodes during streaming, so a
-      // late resolve MUST only paint when this exact node is still connected AND still carries
-      // the same key+generation — otherwise it would paint a detached or repurposed node.
+      // Generation guard against the LIVE node: only paint if this exact block is still
+      // connected AND still carries the same key+generation. A newer source (or theme) already
+      // bumped the generation via a later enqueue on the same live node, so a stale render — or
+      // one targeting a node morphdom has since discarded — loses here (AC4/AC7 latest-only).
       if (!slot.queue.isEligible(block, handle.key, handle.generation)) return;
+      // Re-query the live host: morphdom may have swapped the host element since enqueue.
+      const liveHost = block.querySelector<HTMLElement>(PLANTUML_HOST_SELECTOR);
+      if (!liveHost) return;
       if (result.svg) {
-        setHtml(svgHost, result.svg);
+        setHtml(liveHost, result.svg);
       } else {
-        // AC4: error affordance in-place — the placeholder is replaced, never left spinning.
-        setHtml(svgHost, '');
-        svgHost.appendChild(buildPlantumlError(slot.labels.error, result.error));
+        // Error affordance in-place — the placeholder is replaced, never left spinning (AC2).
+        setHtml(liveHost, '');
+        liveHost.appendChild(buildPlantumlError(slot.labels.error, result.error));
       }
+      // Stamp the settled key so an unchanged follow-up pass skips this block (AC9).
+      block.setAttribute(PLANTUML_RENDERED_KEY_ATTR, key);
     });
   }
 };

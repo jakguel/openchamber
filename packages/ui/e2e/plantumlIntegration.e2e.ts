@@ -42,6 +42,7 @@ const webDist = path.resolve(uiRoot, '..', 'web', 'dist');
 declare global {
     interface Window {
         __plSetMarkdown?: (markdown: string) => void;
+        __plSetDark?: (dark: boolean) => void;
         __plReady?: boolean;
     }
 }
@@ -218,26 +219,9 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
     });
 
     test('AC4: rapid streaming edits to the same block end with ONLY the latest source painted', async ({ page }) => {
-        // KNOWN PRODUCTION BUG surfaced by this integration proof (openchamber-f9d.16.6 finding).
-        // A plantuml block NEVER repaints after its source changes: re-decoration perpetually
-        // spins. Root cause: useMorphdomMarkdown re-decorates into a DETACHED `temp` node
-        // (decorateMarkdown(temp, ctx) -> decoratePlantuml enqueues against temp's block), then
-        // morphdom(el, temp, {childrenOnly}) reuses the LIVE node and discards temp. When the
-        // async render resolves, renderQueue.isEligible(tempNode,...) is false (tempNode
-        // !isConnected), so the generation guard drops the paint and the live node keeps its
-        // placeholder spinner. Mermaid is immune (synchronous render: the svg exists on `temp`
-        // BEFORE morphdom copies it into the live node). This also breaks a theme toggle, which
-        // re-decorates every block. Fix belongs in decorate.ts/useMorphdomMarkdown (a SEPARATE
-        // task) — this is a TEST-ONLY task, production code is untouched.
-        //
-        // The assertions below encode the CORRECT latest-only backpressure behavior, so this
-        // reproduction is expected to FAIL until the pipeline is fixed. When the fix lands the
-        // block will settle on the latest source, this test will PASS, Playwright will flag the
-        // now-unexpected pass, and THIS test.fail annotation must be removed.
-        test.fail(
-            true,
-            'KNOWN BUG: plantuml block never repaints after a source change (async render dropped by the generation guard because decorate enqueues against the detached morphdom temp node). Fix pending in decorate.ts/useMorphdomMarkdown.',
-        );
+        // Latest-only backpressure through the FIXED pipeline: decoratePlantuml only builds the
+        // placeholder; the post-morphdom renderPlantumlBlocks pass enqueues/paints against the LIVE
+        // block, so rapid source edits supersede via the queue and the block settles on the latest.
         test.setTimeout(RENDER_BOUND_MS + 60_000);
         await mount(page);
 
@@ -280,6 +264,182 @@ test.describe('PlantUML markdown pipeline — real Chromium integration (Story C
         expect(finalText).not.toContain('GammaThree');
         // Exactly one block throughout (no duplication from the re-render churn).
         expect(await page.locator(BLOCK).count()).toBe(1);
+    });
+
+    test('AC7 (FIX): a single settled source change repaints the existing block, no perpetual spinner', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+
+        // First source renders fully into the live block.
+        await setMarkdown(page, fence(SEQ_ALPHA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+
+        // ONE settled change (not a rapid burst): the pre-fix bug left this block spinning forever
+        // because the render was enqueued against the discarded pre-morphdom temp node. Post-fix the
+        // live-node pass repaints it.
+        await setMarkdown(page, fence(SEQ_GAMMA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('GammaThree'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+
+        const measured = await page.evaluate(
+            ({ blockSel, loadingSel }) => {
+                const block = document.querySelector(blockSel);
+                const svg = block?.querySelector('svg') ?? null;
+                return {
+                    blockCount: document.querySelectorAll(blockSel).length,
+                    svgText: svg?.textContent ?? '',
+                    spinnerGone: !block?.querySelector(loadingSel),
+                };
+            },
+            { blockSel: BLOCK, loadingSel: LOADING },
+        );
+
+        expect(measured.blockCount).toBe(1);
+        expect(measured.svgText).toContain('GammaThree');
+        expect(measured.svgText).toContain('DeltaFour');
+        // The repaint replaced the first source — the old diagram is gone, not spinning underneath.
+        expect(measured.svgText).not.toContain('AlphaOne');
+        expect(measured.spinnerGone).toBe(true);
+    });
+
+    test('AC8 (FIX): a light/dark theme toggle repaints the existing block and never leaves it loading', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+
+        // Pin light, render the source through, capture the LIGHT svg markup.
+        await page.evaluate(() => window.__plSetDark?.(false));
+        await setMarkdown(page, fence(SEQ_ALPHA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+        const lightHtml = await page.evaluate(
+            (sel) => document.querySelector(sel)?.querySelector('svg')?.outerHTML ?? '',
+            BLOCK,
+        );
+        expect(lightHtml.length).toBeGreaterThan(0);
+
+        // Flip to dark. The markdown text is UNCHANGED, so morphdom SKIPS the block (same
+        // data-md-id) — the post-pass must still repaint it because the dark render key changed.
+        // A perpetual spinner (or a stale light svg that never updates) fails the wait below.
+        await page.evaluate(() => window.__plSetDark?.(true));
+        await page.waitForFunction(
+            ({ sel, prev }) => {
+                const block = document.querySelectorAll(sel)[0];
+                const svg = block?.querySelector('svg');
+                if (!svg) return false;
+                if (block?.querySelector('[data-markdown="plantuml-loading"]')) return false;
+                // The dark engine render produces different colors than light (C0-proven), so a
+                // real repaint changes the svg markup; equal markup means it never repainted.
+                return svg.outerHTML !== prev && (svg.textContent ?? '').includes('AlphaOne');
+            },
+            { sel: BLOCK, prev: lightHtml },
+            { timeout: RENDER_BOUND_MS },
+        );
+
+        const measured = await page.evaluate(
+            ({ blockSel, loadingSel }) => {
+                const block = document.querySelector(blockSel);
+                const svg = block?.querySelector('svg') ?? null;
+                return {
+                    blockCount: document.querySelectorAll(blockSel).length,
+                    hasSvg: !!svg,
+                    svgText: svg?.textContent ?? '',
+                    darkHtml: svg?.outerHTML ?? '',
+                    spinnerGone: !block?.querySelector(loadingSel),
+                };
+            },
+            { blockSel: BLOCK, loadingSel: LOADING },
+        );
+
+        expect(measured.blockCount).toBe(1);
+        expect(measured.hasSvg).toBe(true);
+        expect(measured.svgText).toContain('AlphaOne');
+        expect(measured.spinnerGone).toBe(true);
+        // A genuine theme repaint: the dark markup differs from the captured light markup.
+        expect(measured.darkHtml).not.toBe(lightHtml);
+    });
+
+    test('AC9: re-decoration paints exactly one svg/error per block; cached positive+negative repaint, no spinner', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 90_000);
+        await mount(page);
+
+        // Prime the cache: valid source A, then a distinct valid source B.
+        await setMarkdown(page, fence(SEQ_ALPHA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+        await setMarkdown(page, fence(SEQ_GAMMA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('GammaThree'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+
+        // Re-decorate back to A: a CACHED-POSITIVE hit must repaint the live DOM (not spin), and
+        // yield EXACTLY ONE svg in the block (no double-paint stacking two svgs).
+        await setMarkdown(page, fence(SEQ_ALPHA));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('AlphaOne'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+        const positive = await page.evaluate(
+            ({ blockSel, loadingSel }) => {
+                const block = document.querySelector(blockSel);
+                return {
+                    blockCount: document.querySelectorAll(blockSel).length,
+                    svgCount: block ? block.querySelectorAll('svg').length : 0,
+                    spinnerGone: !block?.querySelector(loadingSel),
+                    svgText: block?.querySelector('svg')?.textContent ?? '',
+                };
+            },
+            { blockSel: BLOCK, loadingSel: LOADING },
+        );
+        expect(positive.blockCount).toBe(1);
+        expect(positive.svgCount).toBe(1);
+        expect(positive.spinnerGone).toBe(true);
+        expect(positive.svgText).toContain('AlphaOne');
+
+        // Now negative caching: render an INVALID source (error affordance, negative-cached),
+        // swap to a valid one, then re-decorate the SAME invalid source — the cached-negative
+        // result must repaint an error in-place, exactly one, never a perpetual spinner.
+        await setMarkdown(page, fence(INVALID));
+        await page.waitForSelector(`${BLOCK} ${ERROR}`, { timeout: RENDER_BOUND_MS });
+        await setMarkdown(page, fence(SEQ_EPSILON));
+        await page.waitForFunction(
+            (sel) => (document.querySelectorAll(sel)[0]?.querySelector('svg')?.textContent ?? '').includes('EpsilonFive'),
+            BLOCK,
+            { timeout: RENDER_BOUND_MS },
+        );
+        await setMarkdown(page, fence(INVALID));
+        await page.waitForSelector(`${BLOCK} ${ERROR}`, { timeout: RENDER_BOUND_MS });
+        const negative = await page.evaluate(
+            ({ blockSel, loadingSel, errorSel }) => {
+                const block = document.querySelector(blockSel);
+                return {
+                    blockCount: document.querySelectorAll(blockSel).length,
+                    errorCount: block ? block.querySelectorAll(errorSel).length : 0,
+                    hasSvg: !!block?.querySelector('svg'),
+                    spinnerGone: !block?.querySelector(loadingSel),
+                };
+            },
+            { blockSel: BLOCK, loadingSel: LOADING, errorSel: ERROR },
+        );
+        expect(negative.blockCount).toBe(1);
+        expect(negative.errorCount).toBe(1);
+        expect(negative.hasSvg).toBe(false);
+        expect(negative.spinnerGone).toBe(true);
     });
 
     test('AC6: no external (off-origin) network requests occur during render (offline proof)', async ({ page }) => {
