@@ -31,6 +31,7 @@ import {
   type PlantumlRenderSlot,
 } from './markdown/decorate';
 import { extractPlantumlBlocks, PLANTUML_BLOCK_SELECTOR } from './markdown/plantuml/extractPlantumlBlocks';
+import { THEME_BODIES } from './markdown/plantuml/themeBodies';
 import { applyDiagramBodyScale } from './markdown/diagramScale';
 
 const useCurrentMermaidTheme = () => {
@@ -1115,6 +1116,12 @@ const useDecorateContext = (
     plantumlQueueRef.current = createPlantumlQueue();
   }
 
+  // REACTIVE selector (NOT getState) so a theme switch re-runs this hook and rebuilds the
+  // DecorateContext memo below — the queue is a once-created ref, so live repaint must
+  // piggyback the memo path via the plantumlTheme dep.
+  const plantumlTheme = useUIStore((s) => s.plantumlTheme);
+  const plantumlThemeBody = plantumlTheme === 'none' ? '' : (THEME_BODIES[plantumlTheme] ?? '');
+
   return React.useMemo<DecorateContext>(() => {
     const colors = mermaidColorsFromTheme(currentTheme);
     const mode = useUIStore.getState().mermaidRenderingMode;
@@ -1131,11 +1138,13 @@ const useDecorateContext = (
     const renderPlantuml: PlantumlRenderSlot = {
       queue: plantumlQueueRef.current!,
       themeId,
+      plantumlTheme,
+      themeBody: plantumlThemeBody,
       dark: currentTheme.metadata?.variant === 'dark',
       labels: plantumlLabels,
     };
     return { labels, renderMermaid, renderPlantuml, onPreviewLoopback };
-  }, [currentTheme, labels, plantumlLabels, onPreviewLoopback]);
+  }, [currentTheme, labels, plantumlLabels, onPreviewLoopback, plantumlTheme, plantumlThemeBody]);
 };
 
 // Runs the async render pipeline into the container and keeps a stable

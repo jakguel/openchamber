@@ -33,6 +33,7 @@ export type PlantumlRenderFn = (
   key: string,
   source: string,
   dark: boolean,
+  themeBody: string,
 ) => Promise<PlantumlRenderResult>;
 
 /**
@@ -70,6 +71,7 @@ export interface PlantumlRenderQueue {
     key: string,
     source: string,
     dark: boolean,
+    themeBody: string,
     node?: PlantumlTargetNode | null,
   ): EnqueueHandle;
   /**
@@ -101,6 +103,7 @@ interface PendingEntry {
   key: string;
   source: string;
   dark: boolean;
+  themeBody: string;
   resolve: SettleResult;
   promise: Promise<PlantumlRenderResult>;
 }
@@ -177,7 +180,7 @@ export const createPlantumlRenderQueue = (
 
       let result: PlantumlRenderResult;
       try {
-        result = await render(entry.key, entry.source, entry.dark);
+        result = await render(entry.key, entry.source, entry.dark, entry.themeBody);
       } catch (err) {
         result = { error: errorMessage(err) };
       }
@@ -191,6 +194,7 @@ export const createPlantumlRenderQueue = (
     key: string,
     source: string,
     dark: boolean,
+    themeBody: string,
     node?: PlantumlTargetNode | null,
   ): EnqueueHandle => {
     // Every enqueue expresses the node's LATEST intent — bump generation + current key
@@ -222,7 +226,7 @@ export const createPlantumlRenderQueue = (
     const promise = new Promise<PlantumlRenderResult>((res) => {
       resolveFn = res;
     });
-    const entry: PendingEntry = { key, source, dark, resolve: resolveFn, promise };
+    const entry: PendingEntry = { key, source, dark, themeBody, resolve: resolveFn, promise };
 
     const prior = pendingByBlock.get(blockId);
     pendingByBlock.set(blockId, entry);

@@ -3,6 +3,7 @@ import { getExternalFaviconUrl, isExternalHttpUrl, isLoopbackHttpUrl } from '@/l
 import { dropdownMenuItemClass, dropdownMenuPopupClass } from '@/components/ui/dropdown-menu.styles';
 import { createPlantumlRenderQueue, type PlantumlRenderQueue } from './plantuml/renderQueue';
 import { renderPlantuml } from './plantuml/renderPlantuml';
+import { buildPlantumlCacheKey } from './plantuml/cacheKey';
 import { PLANTUML_BLOCK_SELECTOR, PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
 import { applyDiagramHostBodyScale } from './diagramScale';
 
@@ -27,6 +28,11 @@ export type DecorateLabels = {
 export type PlantumlRenderSlot = {
   queue: PlantumlRenderQueue;
   themeId: string;
+  // The selected PlantUML theme (store union incl. 'none'). Part of the render cache key so a
+  // theme switch invalidates the cached SVG (themeId above is the app COLOR theme, not this).
+  plantumlTheme: string;
+  // The vendored raw theme body spliced into the source at render time ('' for 'none').
+  themeBody: string;
   dark: boolean;
   labels: { loading: string; error: string };
 };
@@ -52,7 +58,7 @@ export type DecorateContext = {
  */
 export const createPlantumlQueue = (): PlantumlRenderQueue =>
   createPlantumlRenderQueue({
-    render: (_key, source, dark) => renderPlantuml(source, dark),
+    render: (_key, source, dark, themeBody) => renderPlantuml(source, dark, themeBody),
   });
 
 // Reference the app's icon sprite (injected into <body> by the shared Icon
@@ -437,7 +443,7 @@ export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext):
     const svgHost = block.querySelector<HTMLElement>(PLANTUML_HOST_SELECTOR);
     if (!svgHost) continue;
     const source = block.getAttribute(PLANTUML_SOURCE_ATTR) ?? '';
-    const key = `${slot.themeId}:${slot.dark ? 'dark' : 'light'}:${source}`;
+    const key = buildPlantumlCacheKey(slot, source);
 
     // Re-enqueue only when the block still shows the loading placeholder (never painted, or
     // morphdom reset the host to a fresh spinner) OR its render key changed (source edit or a
@@ -448,7 +454,7 @@ export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext):
     const loading = svgHost.querySelector(PLANTUML_LOADING_SELECTOR) !== null;
     if (!loading && block.getAttribute(PLANTUML_RENDERED_KEY_ATTR) === key) continue;
 
-    const handle = slot.queue.enqueue(key, source, slot.dark, block);
+    const handle = slot.queue.enqueue(key, source, slot.dark, slot.themeBody, block);
     void handle.promise.then((result) => {
       // Generation guard against the LIVE node: only paint if this exact block is still
       // connected AND still carries the same key+generation. A newer source (or theme) already

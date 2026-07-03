@@ -1,6 +1,7 @@
 import { loadPlantUmlEngine, type PlantUmlEngine } from './loadEngine';
 import { ensurePlantumlStdlib } from './stdlib/injectStdlib';
 import { sanitizeSvg } from './sanitizeSvg';
+import { spliceTheme } from './applyTheme';
 
 export type PlantUmlRenderResult = { svg?: string; error?: string };
 
@@ -54,11 +55,14 @@ function renderToStringOnce(engine: PlantUmlEngine, source: string, dark: boolea
     });
 }
 
-export async function renderPlantuml(source: string, dark: boolean): Promise<PlantUmlRenderResult> {
+export async function renderPlantuml(source: string, dark: boolean, themeBody: string): Promise<PlantUmlRenderResult> {
     try {
         const engine = await loadPlantUmlEngine();
         await ensurePlantumlStdlib();
-        const raw = await renderToStringOnce(engine, source, dark, RENDER_TIMEOUT_MS);
+        // Splice the vendored theme body into a LOCAL copy only — never mutate the copyable
+        // PLANTUML_SOURCE_ATTR / expand-popup source, which must keep the user's original.
+        const themed = spliceTheme(source, themeBody);
+        const raw = await renderToStringOnce(engine, themed, dark, RENDER_TIMEOUT_MS);
         if (isPlantumlError(raw)) {
             return { error: 'Invalid PlantUML diagram source' };
         }
