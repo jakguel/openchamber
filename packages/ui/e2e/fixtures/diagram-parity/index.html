@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Diagram parity harness</title>
+    <style>
+        html, body { margin: 0; padding: 0; }
+        /* The markdown container's body font-size is the applyDiagramBodyScale target. */
+        #root { font-size: 15px; width: 760px; padding: 24px; }
+    </style>
+    <script>
+        // Some app modules read `process`/`global` at load time (bundler-provided in the real
+        // app build). Shim them before any module script runs so the real production modules
+        // import cleanly under the dev server. This shims the runtime environment, NOT any
+        // module under src/.
+        window.global = window.global || window;
+        window.process = window.process || {
+            env: { NODE_ENV: 'production' },
+            platform: 'browser',
+            cwd: () => '/',
+            nextTick: (f) => { setTimeout(f, 0); },
+        };
+    </script>
+</head>
+<body>
+    <div id="root" data-parity-status="idle"></div>
+    <script type="module" src="/main.tsx"></script>
+</body>
+</html>
