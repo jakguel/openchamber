@@ -155,5 +155,25 @@ describe('restoreForSessionSwitch → useFilesViewTabsStore bridge (FilesView st
       expect(useUIStore.getState().activeSessionFileTabId).toBe(fileX);
       expect(selectedPathForRoot(dir)).toBe(fileX);
     });
+
+    test('switching to a chat-active session via setCurrentSession clears selectedPath', () => {
+      // Session A active with fileX; its selection is live in useFilesViewTabsStore.
+      useUIStore.getState().restoreForSessionSwitch('ses_int_chat_a', dir);
+      useUIStore.getState().openSessionFileTab(dir, fileX);
+      useUIStore.getState().prepareForSessionSwitch('ses_int_chat_a');
+      expect(selectedPathForRoot(dir)).toBe(fileX);
+
+      // Current session = A (so the next switch is a real session change).
+      useSessionUIStore.setState({ currentSessionId: 'ses_int_chat_a', currentSessionDirectory: dir });
+
+      // Drive the real boundary: switch to a never-saved (chat-only) session. Its
+      // async session-fetch is fire-and-forget (void) so no internal store is mocked;
+      // useUIStore + useFilesViewTabsStore are real. The chat active tab must clear
+      // the previous session's selectedPath so FilesView renders no file.
+      useSessionUIStore.getState().setCurrentSession('ses_int_chat_only', dir);
+
+      expect(useUIStore.getState().activeSessionFileTabId).toBe('chat');
+      expect(selectedPathForRoot(dir)).toBeNull();
+    });
   });
 });
