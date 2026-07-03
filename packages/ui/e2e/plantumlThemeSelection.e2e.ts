@@ -74,7 +74,7 @@ function blockSvgHtml(page: Page): Promise<string> {
 }
 
 test.describe('PlantUML theme picker — real Chromium (openchamber-f9d.24.15)', () => {
-    test('AC1: selecting the toy theme live-repaints the block to fill="#FF6F61"', async ({ page }) => {
+    test('AC1: choosing "Toy" in the real Settings Select live-repaints the block to fill="#FF6F61"', async ({ page }) => {
         test.setTimeout(RENDER_BOUND_MS + 60_000);
         await mount(page);
 
@@ -89,7 +89,11 @@ test.describe('PlantUML theme picker — real Chromium (openchamber-f9d.24.15)',
         expect(beforeHtml.length).toBeGreaterThan(0);
         expect(beforeHtml).not.toContain('FF6F61');
 
-        await page.evaluate(() => window.__plSetTheme?.('toy'));
+        // Drive the ACTUAL Appearance -> "PlantUML Theme" control (OpenChamberVisualSettings):
+        // open the real Select by its aria-label, then click the real "Toy" option — no store shim.
+        const trigger = page.getByRole('combobox', { name: 'Select PlantUML theme' });
+        await trigger.click();
+        await page.getByRole('option', { name: 'Toy', exact: true }).click();
 
         await page.waitForFunction(
             ({ sel, needle }) => (document.querySelector(sel)?.outerHTML ?? '').includes(needle),

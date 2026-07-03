@@ -6,6 +6,7 @@ import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { SyncProvider } from '@/sync/sync-context';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRendererImpl';
+import { OpenChamberVisualSettings } from '@/components/sections/openchamber/OpenChamberVisualSettings';
 import { useUIStore, type PlantumlTheme } from '@/stores/useUIStore';
 
 /**
@@ -22,6 +23,10 @@ import { useUIStore, type PlantumlTheme } from '@/stores/useUIStore';
  *  - __plSetTheme(name):  sets the persisted plantumlTheme in the REAL useUIStore (the exact
  *                         setter the Settings -> Appearance Select calls), so a live theme-switch
  *                         repaint of an EXISTING block can be asserted (theme picker e2e).
+ *
+ * The REAL OpenChamberVisualSettings (visibleSettings=['theme']) is mounted alongside the preview
+ * so an e2e can drive the ACTUAL Appearance -> "PlantUML Theme" Select (aria-label "Select PlantUML
+ * theme", options from PLANTUML_THEME_OPTIONS) through real clicks and prove the user path repaints.
  */
 
 type ProviderApis = React.ComponentProps<typeof RuntimeAPIProvider>['apis'];
@@ -77,7 +82,10 @@ const Harness: React.FC = () => {
     }, [setThemeMode, setSystemPreference]);
 
     return (
-        <SimpleMarkdownRenderer content={content} variant="assistant" enableFileReferences={false} />
+        <>
+            <OpenChamberVisualSettings visibleSettings={['theme']} />
+            <SimpleMarkdownRenderer content={content} variant="assistant" enableFileReferences={false} />
+        </>
     );
 };
 
