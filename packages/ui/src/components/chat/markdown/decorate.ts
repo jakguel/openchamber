@@ -6,6 +6,7 @@ import { renderPlantuml } from './plantuml/renderPlantuml';
 import { buildPlantumlCacheKey } from './plantuml/cacheKey';
 import { PLANTUML_BLOCK_SELECTOR, PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
 import { applyDiagramHostBodyScale } from './diagramScale';
+import { fitPlantumlBoxText } from './plantuml/fitBoxText';
 
 // ---------------------------------------------------------------------------
 // Shared decoration context
@@ -467,6 +468,8 @@ export const renderPlantumlBlocks = (target: HTMLElement, ctx: DecorateContext):
       const scaleHost = liveHost.closest<HTMLElement>('[data-md-diagram]');
       if (result.svg) {
         setHtml(liveHost, result.svg);
+        // Condense any box label that overflows its rect BEFORE the body-scale reads geometry.
+        fitPlantumlBoxText(liveHost);
         // The shared applyDiagramBodyScale passes already ran (pre-paint), so scale THIS host now
         // against its just-painted svg — the async PlantUML paint is the only moment its svg
         // exists. Single-host (no whole-container rescan on the paint hot path).
