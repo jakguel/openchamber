@@ -103,6 +103,42 @@ export function computePinchScale(
     return clamp(baseScale * distanceRatio, min, max);
 }
 
+
+/**
+ * Largest uniform scale that fits `content` inside `viewport` = min(vw/cw, vh/ch), clamped to
+ * [DIAGRAM_MIN_SCALE, DIAGRAM_MAX_SCALE]. Used to seed the fullscreen fit-to-viewport scale so
+ * a diagram fills the popup edge-to-edge instead of painting at inline/intrinsic size.
+ *
+ * Every argument is guarded before dividing: a 0, negative, NaN, or Infinity input returns 1
+ * (safe fallback), never emitting 0, Infinity, or NaN.
+ */
+export function computeFitScale(
+    contentWidth: number,
+    contentHeight: number,
+    viewportWidth: number,
+    viewportHeight: number,
+): number {
+    const args = [contentWidth, contentHeight, viewportWidth, viewportHeight];
+    for (const value of args) {
+        if (!Number.isFinite(value) || value <= 0) return 1;
+    }
+    const fit = Math.min(viewportWidth / contentWidth, viewportHeight / contentHeight);
+    return clamp(fit, DIAGRAM_MIN_SCALE, DIAGRAM_MAX_SCALE);
+}
+
+/**
+ * True iff the scaled content overflows the viewport on either axis (strictly greater). Gates
+ * pointer-drag panning: panning is only allowed when there is off-screen content to reveal.
+ */
+export function isContentPannable(
+    scaledWidth: number,
+    scaledHeight: number,
+    viewportWidth: number,
+    viewportHeight: number,
+): boolean {
+    return scaledWidth > viewportWidth || scaledHeight > viewportHeight;
+}
+
 export function clamp(value: number, min: number, max: number): number {
     if (value < min) return min;
     if (value > max) return max;
