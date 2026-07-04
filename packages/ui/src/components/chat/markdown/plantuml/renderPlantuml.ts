@@ -2,6 +2,7 @@ import { loadPlantUmlEngine, type PlantUmlEngine } from './loadEngine';
 import { ensurePlantumlStdlib } from './stdlib/injectStdlib';
 import { sanitizeSvg } from './sanitizeSvg';
 import { spliceTheme } from './applyTheme';
+import { rewriteLinetypeForLabels } from './rewriteLinetype';
 
 export type PlantUmlRenderResult = { svg?: string; error?: string };
 
@@ -61,7 +62,9 @@ export async function renderPlantuml(source: string, dark: boolean, themeBody: s
         await ensurePlantumlStdlib();
         // Splice the vendored theme body into a LOCAL copy only — never mutate the copyable
         // PLANTUML_SOURCE_ATTR / expand-popup source, which must keep the user's original.
-        const themed = spliceTheme(source, themeBody);
+        // Then rewrite `linetype ortho` -> `polyline` on that SAME render copy so crow's-foot ER
+        // edge labels re-attach (Graphviz cannot place labels on ortho edges — see rewriteLinetype).
+        const themed = rewriteLinetypeForLabels(spliceTheme(source, themeBody));
         // A vendored theme is a COMPLETE, self-consistent color scheme (its own BackgroundColor +
         // FontColor + per-element colors). The engine's `dark` adaptation only re-adapts the DEFAULT
         // palette — applied on top of a spliced theme it forces text to white while leaving the
