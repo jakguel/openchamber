@@ -239,3 +239,106 @@ test.describe('PlantUML box-label overflow — real Chromium (openchamber-f9d.26
         ).toBeGreaterThan(0);
     });
 });
+
+/**
+ * FULLSCREEN surface (story openchamber-f9d.26, AC-S1 second half).
+ *
+ * The fullscreen popup (ToolOutputDialog.tsx) renders the SAME production pipeline
+ * (SimpleMarkdownRenderer -> decorate.ts -> renderPlantuml -> @plantuml/core), but wraps the
+ * renderer's OUTER container with className `markdown-plantuml-fullscreen` (see
+ * ToolOutputDialog.tsx: the class is passed to SimpleMarkdownRenderer, which applies it to the
+ * `break-words w-full min-w-0` div — the direct parent of the `[data-markdown-content]` node) and
+ * mounts it inside a DiagramPanZoomViewport. fitBoxText runs in decorate.ts on
+ * `[data-markdown="plantuml-block"]` for EVERY surface, so the fix already protects fullscreen; the
+ * inline block above only proved it for the inline preview. This block adds the missing e2e
+ * EVIDENCE that boxed labels are contained on the fullscreen surface too.
+ *
+ * FAITHFUL rendering: `applyFullscreenSurface` adds `markdown-plantuml-fullscreen` to the EXACT
+ * wrapper production targets (the parent of `[data-markdown-content]`) BEFORE the render fires, so
+ * decorate.ts/fitBoxText measure the labels within the REAL fullscreen CSS cascade
+ * (index.css `.markdown-plantuml-fullscreen [data-markdown="plantuml-block"] …` rules), not after
+ * the fact. The DiagramPanZoomViewport only applies a CSS transform for pan/zoom; getBBox() reports
+ * geometry in the SVG's own user-coordinate space and is transform-invariant, so the containment
+ * metric is identical to what the popup paints — reproducing the viewport transform would change
+ * nothing measurable. The SAME wide-metric CSS forcing (letter-spacing) is used, so the fullscreen
+ * case is as deterministic as the inline one (overflow pre-fix, condensed by textLength post-fix).
+ */
+async function applyFullscreenSurface(page: Page): Promise<void> {
+    await page.evaluate(() => {
+        // `[data-markdown-content]` exists from mount (empty until setMarkdown); its parent is the
+        // renderer's outer container — the exact node ToolOutputDialog puts the fullscreen class on.
+        const content = document.querySelector('[data-markdown-content]');
+        const wrapper = content?.parentElement;
+        if (!wrapper) {
+            throw new Error('markdown renderer wrapper ([data-markdown-content] parent) not found');
+        }
+        wrapper.classList.add('markdown-plantuml-fullscreen');
+    });
+}
+
+test.describe('PlantUML box-label overflow — FULLSCREEN surface (openchamber-f9d.26.1)', () => {
+    test('AC-S1 fullscreen guard: the fullscreen class genuinely wraps the rendered plantuml block', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await applyFullscreenSurface(page);
+        await setMarkdown(page, fence('plantuml', DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        // Prove this really is the fullscreen surface: the block resolves through the
+        // `.markdown-plantuml-fullscreen` ancestor selector (otherwise the GREEN below is vacuous —
+        // it would just be re-proving the inline path under a different describe name).
+        const wraps = await page.evaluate(
+            (blockSel) => !!document.querySelector(`.markdown-plantuml-fullscreen ${blockSel}`),
+            BLOCK,
+        );
+        expect(
+            wraps,
+            'markdown-plantuml-fullscreen is not an ancestor of the plantuml block — not the fullscreen surface',
+        ).toBe(true);
+    });
+
+    test('AC-S1 fullscreen GREEN: every boxed label fits inside its rect after the fit pass', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await applyFullscreenSurface(page);
+        await setMarkdown(page, fence('plantuml', DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const result = await measureBoxOverflow(page, { stripFit: false });
+
+        // Same three guards as the inline GREEN, now on the fullscreen surface.
+        expect(result.boxedCount, 'no boxed <text> found in the fullscreen render').toBeGreaterThan(0);
+        expect(
+            result.withTextLength,
+            'fitBoxText set no textLength on the fullscreen surface — the overflow was not detected/condensed',
+        ).toBeGreaterThan(0);
+        expect(
+            result.overflows,
+            `fullscreen boxed labels still overflow after fit: ${JSON.stringify(result.overflows.slice(0, 5))}`,
+        ).toEqual([]);
+    });
+
+    test('AC-S1 fullscreen RED-on-revert: stripping the fit attributes reintroduces box overflow', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await applyFullscreenSurface(page);
+        await setMarkdown(page, fence('plantuml', DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        // Revert the fitBoxText call on the fullscreen surface: remove textLength/lengthAdjust,
+        // re-measure. getBBox is transform-invariant, so the overflow returns exactly as inline.
+        const reverted = await measureBoxOverflow(page, { stripFit: true });
+
+        expect(reverted.boxedCount).toBeGreaterThan(0);
+        expect(
+            reverted.overflows.length,
+            'expected >=1 fullscreen box overflow once the fit attributes are stripped (RED-on-revert)',
+        ).toBeGreaterThan(0);
+    });
+});
