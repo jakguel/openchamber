@@ -9,6 +9,7 @@ export const dict: Record<I18nKey, string> = {
   "markdown.toc.gotoHeadingAria": "Ir para {heading}",
   "markdown.toc.collapseAria": "Recolher {heading}",
   "markdown.toc.expandAria": "Expandir {heading}",
+  "markdown.toc.openAria": "Abrir sumário",
   "common.language.english": "Inglês",
   "common.language.french": "Francês",
   "common.language.simplifiedChinese": "Chinês (simplificado)",

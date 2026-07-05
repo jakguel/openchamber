@@ -8,6 +8,7 @@ export const dict = {
   'markdown.toc.gotoHeadingAria': 'Go to {heading}',
   'markdown.toc.collapseAria': 'Collapse {heading}',
   'markdown.toc.expandAria': 'Expand {heading}',
+  'markdown.toc.openAria': 'Open table of contents',
   'common.language.english': 'English',
   'common.language.french': 'French',
   'common.language.simplifiedChinese': 'Chinese (Simplified)',

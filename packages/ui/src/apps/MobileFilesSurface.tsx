@@ -3,9 +3,7 @@ import { File as PierreFile } from '@pierre/diffs/react';
 import {
   RiArrowLeftLine,
   RiArrowRightSLine,
-  RiClipboardLine,
   RiCloseLine,
-  RiFileCopyLine,
   RiFolder3Fill,
   RiFolderOpenFill,
   RiLoader4Line,
@@ -13,19 +11,21 @@ import {
   RiSearchLine,
 } from '@remixicon/react';
 
-import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
+import { Icon } from '@/components/icon/Icon';
 import { FileTypeIcon } from '@/components/icons/FileTypeIcon';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
+import { extractToc } from '@/components/chat/markdown/toc';
+import { TocTree } from '@/components/chat/markdown/toc/TocTree';
+import { createCommitSignal, scrollToHeading } from '@/components/chat/markdown/toc/scrollToHeading';
 import { PIERRE_RUNTIME_BASE_CSS } from '@/components/views/PierreDiffViewer';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
-import { copyTextToClipboard } from '@/lib/clipboard';
 import { useI18n } from '@/lib/i18n';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
@@ -35,6 +35,8 @@ import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
 import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
 import { cn } from '@/lib/utils';
+
+import { MobileSurfaceShell } from './MobileSurfaceShell';
 
 type MobileFilesRoute =
   | { type: 'browser'; directory: string }
@@ -224,18 +226,6 @@ export const MobileFilesSurface: React.FC<MobileFilesSurfaceProps> = ({ onClose 
     setRoute({ type: 'file', path, returnDirectory: currentDirectory || root });
   };
 
-  const handleCopyPath = async (path: string) => {
-    const result = await copyTextToClipboard(path);
-    if (result.ok) toast.success(t('mobile.files.toast.pathCopied'));
-    else toast.error(t('mobile.files.toast.copyFailed'));
-  };
-
-  const handleCopyContent = async () => {
-    const result = await copyTextToClipboard(fileContent);
-    if (result.ok) toast.success(t('mobile.files.toast.contentCopied'));
-    else toast.error(t('mobile.files.toast.copyFailed'));
-  };
-
   if (!root) {
     return <MobileFilesState message={t('mobile.files.empty.noDirectory')} />;
   }
@@ -248,8 +238,6 @@ export const MobileFilesSurface: React.FC<MobileFilesSurfaceProps> = ({ onClose 
         error={fileError}
         isLoading={isLoadingFile}
         onBack={() => setRoute({ type: 'browser', directory: route.returnDirectory })}
-        onCopyPath={() => void handleCopyPath(route.path)}
-        onCopyContent={() => void handleCopyContent()}
       />
     );
   }
@@ -397,10 +385,47 @@ const MobileFileDetail: React.FC<{
   error: string | null;
   isLoading: boolean;
   onBack: () => void;
-  onCopyPath: () => void;
-  onCopyContent: () => void;
-}> = ({ path, content, error, isLoading, onBack, onCopyPath, onCopyContent }) => {
+}> = ({ path, content, error, isLoading, onBack }) => {
   const { t } = useI18n();
+
+  // Ordered H1–H3 ToC model for the markdown preview. Empty for non-markdown or
+  // zero-heading files → the bookmarks button AND the sheet are hidden. Strip
+  // frontmatter so the extracted order matches the rendered <h1-3> tags 1:1.
+  const isMarkdown = isMarkdownFile(path);
+  const tocEntries = React.useMemo(
+    () => (isMarkdown ? extractToc(content, { stripFrontmatter: true }) : []),
+    [isMarkdown, content],
+  );
+  const hasToc = tocEntries.length > 0;
+  const [tocOpen, setTocOpen] = React.useState(false);
+  // The markdown ScrollShadow scroll element — both the scroller AND the content
+  // root that holds the decorated heading ids (they live inside it).
+  const scrollerRef = React.useRef<HTMLElement | null>(null);
+  // Fires once the markdown render commit lands (heading ids in the live DOM);
+  // a ToC tap awaits it only when the target id is not yet present.
+  const commitSignal = React.useMemo(() => createCommitSignal(), []);
+
+  // Close the sheet whenever the viewed file changes.
+  React.useEffect(() => {
+    setTocOpen(false);
+  }, [path]);
+
+  const handleTocSelect = React.useCallback(
+    async (id: string) => {
+      const scroller = scrollerRef.current;
+      if (!scroller) {
+        setTocOpen(false);
+        return;
+      }
+      if (!scroller.querySelector(`#${CSS.escape(id)}`)) {
+        await commitSignal.waitForCommit();
+      }
+      scrollToHeading(scroller, scroller, id, { smooth: true });
+      setTocOpen(false);
+    },
+    [commitSignal],
+  );
+
   const imageAuthKey = isImageFile(path) && !path.toLowerCase().endsWith('.svg') ? path : '';
   const [imageAuthReadyKey, setImageAuthReadyKey] = React.useState('');
 
@@ -440,14 +465,17 @@ const MobileFileDetail: React.FC<{
         <div className="min-w-0 flex-1">
           <h2 className="truncate typography-ui-header text-foreground">{getNameFromPath(path)}</h2>
         </div>
-        {!isImageFile(path) ? (
-          <Button type="button" variant="ghost" size="icon" onClick={onCopyContent} aria-label={t('mobile.files.copyContentAria')}>
-            <RiFileCopyLine className="size-4" />
+        {hasToc ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={() => setTocOpen(true)}
+            aria-label={t('markdown.toc.openAria')}
+          >
+            <Icon name="list-unordered" className="size-4" />
           </Button>
         ) : null}
-        <Button type="button" variant="ghost" size="icon" onClick={onCopyPath} aria-label={t('mobile.files.copyPathAria')}>
-          <RiClipboardLine className="size-4" />
-        </Button>
       </header>
       <div className="min-h-0 flex-1 overflow-hidden">
         {isLoading || imageAuthLoading ? (
@@ -463,14 +491,41 @@ const MobileFileDetail: React.FC<{
             <img src={`data:${getImageMimeType(path)};utf8,${encodeURIComponent(content)}`} alt={getNameFromPath(path)} className="mx-auto max-h-full max-w-full rounded-lg object-contain" />
           </ScrollShadow>
         ) : (
-          <MobileTextFile path={path} content={content} />
+          <MobileTextFile
+            path={path}
+            content={content}
+            scrollerRef={scrollerRef}
+            injectHeadingIds={hasToc}
+            onCommit={commitSignal.notify}
+          />
         )}
       </div>
+      {hasToc ? (
+        <MobileSurfaceShell
+          open={tocOpen}
+          onClose={() => setTocOpen(false)}
+          ariaLabel={t('markdown.toc.navAria')}
+          title={t('markdown.toc.navAria')}
+        >
+          <ScrollShadow className="h-full overflow-y-auto px-2 py-2">
+            <TocTree entries={tocEntries} onScrollToHeading={handleTocSelect} />
+          </ScrollShadow>
+        </MobileSurfaceShell>
+      ) : null}
     </div>
   );
 };
 
-const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, content }) => {
+const MobileTextFile: React.FC<{
+  path: string;
+  content: string;
+  /** Bound to the markdown ScrollShadow scroll element so the ToC sheet can scroll it. */
+  scrollerRef?: React.Ref<HTMLElement>;
+  /** Inject stable heading ids into the rendered markdown so the ToC can anchor-scroll. */
+  injectHeadingIds?: boolean;
+  /** Fires after each markdown render commit, once heading ids exist in the live DOM. */
+  onCommit?: () => void;
+}> = ({ path, content, scrollerRef, injectHeadingIds = false, onCommit }) => {
   const { currentTheme, availableThemes, lightThemeId, darkThemeId } = useThemeSystem();
   const lightTheme = React.useMemo(
     () => availableThemes.find((theme) => theme.metadata.id === lightThemeId) ?? getDefaultTheme(false),
@@ -496,8 +551,14 @@ const MobileTextFile: React.FC<{ path: string; content: string }> = ({ path, con
   if (isMarkdownFile(path)) {
     return (
       <>
-        <ScrollShadow className="h-full overflow-y-auto px-4 py-4">
-          <SimpleMarkdownRenderer content={content} enableFileReferences={false} onShowPopup={onShowDiagramPopup} />
+        <ScrollShadow ref={scrollerRef} className="h-full overflow-y-auto px-4 py-4">
+          <SimpleMarkdownRenderer
+            content={content}
+            enableFileReferences={false}
+            onShowPopup={onShowDiagramPopup}
+            injectHeadingIds={injectHeadingIds}
+            onCommit={onCommit}
+          />
         </ScrollShadow>
         {diagramPopupElement}
       </>
