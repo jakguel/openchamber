@@ -1591,8 +1591,6 @@ export const settingsDict = {
   'settings.openchamber.visual.field.collapsibleUserMessages': 'Réduire les longs messages utilisateur',
   'settings.openchamber.visual.field.stickyUserHeaderAria': 'En-tête utilisateur collant',
   'settings.openchamber.visual.field.stickyUserHeader': 'En-tête utilisateur collant',
-  'settings.openchamber.visual.field.expandedEditorToolbarAria': 'Toujours afficher la barre d’outils de l’éditeur',
-  'settings.openchamber.visual.field.expandedEditorToolbar': 'Toujours afficher la barre d’outils de l’éditeur (ancrée sous les onglets de fichiers)',
   'settings.openchamber.visual.field.wideChatLayoutAria': 'Large disposition de discussion',
   'settings.openchamber.visual.field.wideChatLayout': 'Disposition de discussion large',
   'settings.openchamber.visual.field.showSplitAssistantMessageActionsAria': 'Actions intégrées de l\'assistant',

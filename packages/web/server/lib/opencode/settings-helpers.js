@@ -438,9 +438,6 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.stickyUserHeader === 'boolean') {
       result.stickyUserHeader = candidate.stickyUserHeader;
     }
-    if (typeof candidate.expandedEditorToolbar === 'boolean') {
-      result.expandedEditorToolbar = candidate.expandedEditorToolbar;
-    }
     if (typeof candidate.showSplitAssistantMessageActions === 'boolean') {
       result.showSplitAssistantMessageActions = candidate.showSplitAssistantMessageActions;
     }

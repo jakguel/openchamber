@@ -712,7 +712,6 @@ interface UIStore {
   userMessageRenderingMode: UserMessageRenderingMode;
   collapsibleUserMessages: boolean;
   stickyUserHeader: boolean;
-  expandedEditorToolbar: boolean;
   showSplitAssistantMessageActions: boolean;
   isMobileSessionStatusBarCollapsed: boolean;
   mobileSessionPanelOpen: boolean;
@@ -862,7 +861,6 @@ interface UIStore {
   setUserMessageRenderingMode: (value: UserMessageRenderingMode) => void;
   setCollapsibleUserMessages: (value: boolean) => void;
   setStickyUserHeader: (value: boolean) => void;
-  setExpandedEditorToolbar: (value: boolean) => void;
   setShowSplitAssistantMessageActions: (value: boolean) => void;
   setIsMobileSessionStatusBarCollapsed: (value: boolean) => void;
   setMobileSessionPanelOpen: (value: boolean) => void;
@@ -1002,7 +1000,6 @@ export const useUIStore = create<UIStore>()(
         userMessageRenderingMode: 'markdown',
         collapsibleUserMessages: true,
         stickyUserHeader: false,
-        expandedEditorToolbar: false,
         showSplitAssistantMessageActions: false,
         isMobileSessionStatusBarCollapsed: false,
         mobileSessionPanelOpen: false,
@@ -2241,9 +2238,6 @@ export const useUIStore = create<UIStore>()(
         setStickyUserHeader: (value) => {
           set({ stickyUserHeader: value });
         },
-        setExpandedEditorToolbar: (value: boolean) => {
-          set({ expandedEditorToolbar: value });
-        },
         setShowSplitAssistantMessageActions: (value) => {
           set({ showSplitAssistantMessageActions: value });
         },
@@ -2486,7 +2480,6 @@ export const useUIStore = create<UIStore>()(
           userMessageRenderingMode: state.userMessageRenderingMode,
           collapsibleUserMessages: state.collapsibleUserMessages,
           stickyUserHeader: state.stickyUserHeader,
-          expandedEditorToolbar: state.expandedEditorToolbar,
           showSplitAssistantMessageActions: state.showSplitAssistantMessageActions,
           isMobileSessionStatusBarCollapsed: state.isMobileSessionStatusBarCollapsed,
           mobileSessionFilterProjectId: state.mobileSessionFilterProjectId,
