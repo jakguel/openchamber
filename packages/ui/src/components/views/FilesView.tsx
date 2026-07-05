@@ -29,6 +29,9 @@ import { resolveExternalChangeAction, runGuardedWrite, shouldSurfaceConflict } f
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { SimpleMarkdownRenderer } from '@/components/chat/MarkdownRenderer';
 import { useDiagramPopup } from '@/components/chat/markdown/useDiagramPopup';
+import { extractToc } from '@/components/chat/markdown/toc';
+import { TocTree } from '@/components/chat/markdown/toc/TocTree';
+import { createCommitSignal } from '@/components/chat/markdown/toc/scrollToHeading';
 import { languageByExtension, loadLanguageByExtension } from '@/lib/codemirror/languageByExtension';
 import { createFlexokiCodeMirrorTheme } from '@/lib/codemirror/flexokiTheme';
 import { shikiHighlightExtension } from '@/lib/codemirror/shikiHighlight';
@@ -759,11 +762,19 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const [wrapLines, setWrapLines] = React.useState(true);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
-  // Sidebar rendering lands in a follow-up task; this only exposes the toggle state.
   const [tocVisible, setTocVisible] = React.useState(false);
   const handleToggleToc = React.useCallback(() => {
     setTocVisible((visible) => !visible);
   }, []);
+  // Preview scrollers + post-commit signals for the ToC sidebar. One pair per
+  // surface (inline desktop viewer / fullscreen overlay) so a ToC click scrolls
+  // the correct scroller and waits for heading ids to land before scrolling.
+  const inlinePreviewScrollerRef = React.useRef<HTMLDivElement>(null);
+  const fullscreenPreviewScrollerRef = React.useRef<HTMLDivElement>(null);
+  const inlineTocCommit = React.useMemo(() => createCommitSignal(), []);
+  const fullscreenTocCommit = React.useMemo(() => createCommitSignal(), []);
+  const getInlinePreviewScroller = React.useCallback(() => inlinePreviewScrollerRef.current, []);
+  const getFullscreenPreviewScroller = React.useCallback(() => fullscreenPreviewScrollerRef.current, []);
   const toolbarDropdownOpenCountRef = React.useRef(0);
 
   const handleToolbarDropdownOpenChange = React.useCallback((open: boolean) => {
@@ -2394,6 +2405,13 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const canCopyPath = Boolean(selectedFile && displaySelectedPath.length > 0);
   const canEdit = Boolean(selectedFile && !selectedFileIsOutsideWorkspace && !isSelectedImage && !isSelectedPdf && files.writeFile && fileContent.length <= MAX_VIEW_CHARS);
   const isMarkdown = Boolean(selectedFile?.path && isMarkdownFile(selectedFile.path));
+  // Ordered H1–H3 ToC model for the markdown preview. Empty for non-markdown or
+  // zero-heading files → the sidebar AND the toggle are hidden. Strip frontmatter
+  // so the heading order matches the rendered <h1-3> tags 1:1.
+  const tocEntries = React.useMemo(
+    () => (isMarkdown ? extractToc(fileContent, { stripFrontmatter: true }) : []),
+    [isMarkdown, fileContent],
+  );
   const isJson = Boolean(selectedFile?.path && isJsonFile(selectedFile.path));
   const isHtml = Boolean(selectedFile?.path && isHtmlFile(selectedFile.path));
   const isDrawio = Boolean(selectedFile?.path && isDrawioFile(selectedFile.path));
@@ -3415,7 +3433,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           </Tooltip>
         )}
 
-        {isMarkdown && getMdViewMode() === 'preview' && (
+        {isMarkdown && getMdViewMode() === 'preview' && tocEntries.length > 0 && (
           withTooltip(t('filesView.editor.toggleToc'),
             <Button
               variant="ghost"
@@ -3834,30 +3852,44 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
               </div>
             </ErrorBoundary>
           ) : selectedFile && isMarkdown && getMdViewMode() === 'preview' ? (
-            <div className="h-full overflow-auto p-3">
-              {fileContent.length > 500 * 1024 && (
-                <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
-                  {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
-                </div>
+            <div className="flex h-full min-h-0">
+              {tocVisible && tocEntries.length > 0 && (
+                <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
+                  <TocTree
+                    entries={tocEntries}
+                    getScroller={getInlinePreviewScroller}
+                    getContentRoot={getInlinePreviewScroller}
+                    waitForCommit={inlineTocCommit.waitForCommit}
+                  />
+                </aside>
               )}
-              <ErrorBoundary
-                fallback={
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-                    <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {t('filesView.error.switchToEditMode')}
-                    </div>
+              <div ref={inlinePreviewScrollerRef} className="h-full min-w-0 flex-1 overflow-auto p-3">
+                {fileContent.length > 500 * 1024 && (
+                  <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                    {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
                   </div>
-                }
-              >
-                <SimpleMarkdownRenderer
-                  content={fileContent}
-                  className="typography-markdown-body"
-                  stripFrontmatter
-                  enableFileReferences={false}
-                  onShowPopup={onShowDiagramPopup}
-                />
-              </ErrorBoundary>
+                )}
+                <ErrorBoundary
+                  fallback={
+                    <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                      <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {t('filesView.error.switchToEditMode')}
+                      </div>
+                    </div>
+                  }
+                >
+                  <SimpleMarkdownRenderer
+                    content={fileContent}
+                    className="typography-markdown-body"
+                    stripFrontmatter
+                    enableFileReferences={false}
+                    onShowPopup={onShowDiagramPopup}
+                    injectHeadingIds
+                    onCommit={inlineTocCommit.notify}
+                  />
+                </ErrorBoundary>
+              </div>
             </div>
           ) : selectedFile && isHtml && htmlViewMode === 'preview' ? (
             isHtmlAssetAuthLoading ? (
@@ -4190,30 +4222,44 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           ) : isSelectedPdf ? (
             renderPdfPreview(selectedFile)
           ) : isMarkdown && getMdViewMode() === 'preview' ? (
-            <div className="h-full overflow-auto p-4">
-              {fileContent.length > 500 * 1024 && (
-                  <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
-                    {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
-                  </div>
-                )}
-              <ErrorBoundary
-                fallback={
-                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-                    <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {t('filesView.error.switchToEditMode')}
+            <div className="flex h-full min-h-0">
+              {tocVisible && tocEntries.length > 0 && (
+                <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
+                  <TocTree
+                    entries={tocEntries}
+                    getScroller={getFullscreenPreviewScroller}
+                    getContentRoot={getFullscreenPreviewScroller}
+                    waitForCommit={fullscreenTocCommit.waitForCommit}
+                  />
+                </aside>
+              )}
+              <div ref={fullscreenPreviewScrollerRef} className="h-full min-w-0 flex-1 overflow-auto p-4">
+                {fileContent.length > 500 * 1024 && (
+                    <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                      {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
                     </div>
-                  </div>
-                }
-              >
-                <SimpleMarkdownRenderer
-                  content={fileContent}
-                  className="typography-markdown-body"
-                  stripFrontmatter
-                  enableFileReferences={false}
-                  onShowPopup={onShowDiagramPopup}
-                />
-              </ErrorBoundary>
+                  )}
+                <ErrorBoundary
+                  fallback={
+                    <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                      <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {t('filesView.error.switchToEditMode')}
+                      </div>
+                    </div>
+                  }
+                >
+                  <SimpleMarkdownRenderer
+                    content={fileContent}
+                    className="typography-markdown-body"
+                    stripFrontmatter
+                    enableFileReferences={false}
+                    onShowPopup={onShowDiagramPopup}
+                    injectHeadingIds
+                    onCommit={fullscreenTocCommit.notify}
+                  />
+                </ErrorBoundary>
+              </div>
             </div>
           ) : canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)
