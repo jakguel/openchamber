@@ -61,6 +61,21 @@ const DIAGRAM = [
     '@enduml',
 ].join('\n');
 
+/** PATH-boxed container title (openchamber-5ki.39.1). A `package` title is drawn inside a
+ * `<g class="cluster">` whose background is a `<path>` (folder shape), NOT a `<rect>`. The long
+ * package name makes the container size to its title, so — with the wide-metric override — the
+ * painted title overflows the path box the same way a rect label does. The pre-fix code only
+ * scanned `<rect>`, so this title was skipped and stayed overflowing; Direction A fits it to the
+ * cluster's background `<path>`. The inner rectangle carries a multiline label so the diagram also
+ * exercises the plain-rect path within the same container. */
+const PATH_BOX_DIAGRAM = [
+    '@startuml',
+    'package "ObservabilityAndMonitoringDefinitionLongTitle" {',
+    '  rectangle "Observability /\\nMonitoringDefinition" as OBS',
+    '}',
+    '@enduml',
+].join('\n');
+
 /** Widens the PAINTED glyph advance so the engine-sized boxes overflow deterministically even on
  * macOS+Helvetica. textLength (the fix) overrides total advance, so fixed labels still fit. */
 const WIDE_METRIC_CSS = `${BLOCK} svg text { letter-spacing: 1.5px !important; }`;
@@ -339,6 +354,190 @@ test.describe('PlantUML box-label overflow — FULLSCREEN surface (openchamber-f
         expect(
             reverted.overflows.length,
             'expected >=1 fullscreen box overflow once the fit attributes are stripped (RED-on-revert)',
+        ).toBeGreaterThan(0);
+    });
+});
+
+/**
+ * PATH-boxed container-title fit (openchamber-5ki.39.1 — Direction A).
+ *
+ * The prior fit pass only scanned `<rect>`, so a package/cluster/container TITLE — drawn inside a
+ * `<g class="cluster">` whose background is a `<path>`/`<polygon>` (folder/frame shape), never a
+ * `<rect>` — was skipped and kept overflowing. Direction A fits each `<text>` to the largest-area
+ * direct background shape (rect|path|polygon) of its nearest ancestor entity/cluster group.
+ *
+ * This measurement mirrors the production selection so it can see PATH-boxed titles the rect-only
+ * `measureBoxOverflow` above cannot: for each `<text>` it walks up to the nearest `g.entity`/
+ * `g.cluster` and takes that group's largest-area direct rect|path|polygon child as the fit box
+ * (the background CHILD bbox, not the group's inflated bbox). It reports the box's shape tag so the
+ * test can prove the `<path>` case is genuinely exercised (non-vacuous) and that Direction A — not
+ * the old rect-only code — condensed the container title.
+ */
+function measureGroupBoxOverflow(
+    page: Page,
+    opts: { stripFit: boolean },
+): Promise<{
+    boxedCount: number;
+    withTextLength: number;
+    pathBoxedCount: number;
+    pathBoxedWithTextLength: number;
+    overflows: Array<{ t: string; shape: string; textW: number; usable: number }>;
+}> {
+    return page.evaluate(
+        ({ hostSel, stripFit, padPx }) => {
+            const svg = document.querySelector<SVGSVGElement>(`${hostSel} svg`);
+            if (!svg) {
+                return {
+                    boxedCount: 0,
+                    withTextLength: 0,
+                    pathBoxedCount: 0,
+                    pathBoxedWithTextLength: 0,
+                    overflows: [],
+                };
+            }
+
+            const texts = Array.from(svg.querySelectorAll<SVGGraphicsElement>('text'));
+            if (stripFit) {
+                for (const t of texts) {
+                    t.removeAttribute('textLength');
+                    t.removeAttribute('lengthAdjust');
+                }
+            }
+
+            const nearestGroup = (el: Element): Element | null => {
+                let node: Element | null = el.parentElement;
+                while (node && node !== svg) {
+                    if (node.matches('g.entity, g.cluster')) return node;
+                    node = node.parentElement;
+                }
+                return null;
+            };
+
+            type Box = { x: number; y: number; width: number; height: number };
+            const bgShape = (group: Element): { tag: string; box: Box } | null => {
+                const shapes = Array.from(
+                    group.querySelectorAll<SVGGraphicsElement>(
+                        ':scope > rect, :scope > path, :scope > polygon',
+                    ),
+                );
+                let best: { tag: string; box: Box } | null = null;
+                let maxArea = 0;
+                for (const s of shapes) {
+                    const b = s.getBBox();
+                    if (b.width <= 0 || b.height <= 0) continue;
+                    const area = b.width * b.height;
+                    if (area > maxArea) {
+                        maxArea = area;
+                        best = {
+                            tag: s.tagName.toLowerCase(),
+                            box: { x: b.x, y: b.y, width: b.width, height: b.height },
+                        };
+                    }
+                }
+                return best;
+            };
+
+            let boxedCount = 0;
+            let withTextLength = 0;
+            let pathBoxedCount = 0;
+            let pathBoxedWithTextLength = 0;
+            const overflows: Array<{ t: string; shape: string; textW: number; usable: number }> = [];
+
+            for (const t of texts) {
+                const tb = t.getBBox();
+                if (tb.width <= 0) continue;
+                const group = nearestGroup(t);
+                if (!group) continue;
+                const bg = bgShape(group);
+                if (!bg) continue;
+
+                const cx = tb.x + tb.width / 2;
+                const cy = tb.y + tb.height / 2;
+                if (
+                    cx < bg.box.x ||
+                    cx > bg.box.x + bg.box.width ||
+                    cy < bg.box.y ||
+                    cy > bg.box.y + bg.box.height
+                ) {
+                    continue;
+                }
+
+                boxedCount += 1;
+                const hasTextLength = !!t.getAttribute('textLength');
+                if (hasTextLength) withTextLength += 1;
+                const isPathBox = bg.tag === 'path' || bg.tag === 'polygon';
+                if (isPathBox) {
+                    pathBoxedCount += 1;
+                    if (hasTextLength) pathBoxedWithTextLength += 1;
+                }
+
+                // Usable width uses a SMALLER pad than the fix (3px) so a correctly condensed label
+                // (width == box.width-6) comfortably clears this threshold (box.width-4).
+                const usable = bg.box.width - padPx * 2;
+                if (tb.width > usable) {
+                    overflows.push({
+                        t: (t.textContent ?? '').trim(),
+                        shape: bg.tag,
+                        textW: tb.width,
+                        usable,
+                    });
+                }
+            }
+
+            return { boxedCount, withTextLength, pathBoxedCount, pathBoxedWithTextLength, overflows };
+        },
+        { hostSel: PL_HOST, stripFit: opts.stripFit, padPx: 2 },
+    );
+}
+
+test.describe('PlantUML PATH-boxed container-title overflow — real Chromium (openchamber-5ki.39.1)', () => {
+    test('AC2 GREEN: a package title in a <path> box is condensed to fit its background shape', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', PATH_BOX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const result = await measureGroupBoxOverflow(page, { stripFit: false });
+
+        expect(result.boxedCount, 'no boxed <text> found in the rendered diagram').toBeGreaterThan(0);
+        // Non-vacuous: the container title really is boxed by a <path>/<polygon>, not a <rect>.
+        expect(
+            result.pathBoxedCount,
+            'no <path>/<polygon>-boxed title found — the container-title case is not exercised',
+        ).toBeGreaterThan(0);
+        // Direction A condensed the PATH-boxed title. The old rect-only code set no textLength here,
+        // so this assertion fails if the fix is reverted to scanning <rect> only.
+        expect(
+            result.pathBoxedWithTextLength,
+            'no textLength on any path-boxed title — Direction A did not condense the container title',
+        ).toBeGreaterThan(0);
+        // Core GREEN: nothing overflows its background shape after the fit pass.
+        expect(
+            result.overflows,
+            `labels still overflow their background shape after fit: ${JSON.stringify(result.overflows.slice(0, 5))}`,
+        ).toEqual([]);
+    });
+
+    test('AC4 RED-on-revert: stripping the fit attributes reintroduces the path-box title overflow', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', PATH_BOX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        // Simulate reverting the fitBoxText call: remove textLength/lengthAdjust, re-measure.
+        const reverted = await measureGroupBoxOverflow(page, { stripFit: true });
+
+        expect(reverted.pathBoxedCount).toBeGreaterThan(0);
+        const pathOverflows = reverted.overflows.filter(
+            (o) => o.shape === 'path' || o.shape === 'polygon',
+        );
+        expect(
+            pathOverflows.length,
+            'expected the <path>-boxed container title to overflow once the fit attributes are stripped (RED-on-revert)',
         ).toBeGreaterThan(0);
     });
 });

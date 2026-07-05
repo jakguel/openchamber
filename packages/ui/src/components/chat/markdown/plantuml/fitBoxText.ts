@@ -3,11 +3,17 @@
  *
  * The @plantuml/core engine sizes boxes with its own logical font metrics (and ships no font
  * files), while the browser paints labels with the CSS font — on platforms where the painted
- * glyphs run wider, a boxed label overflows its rect. `skinparam defaultFontName` does not steer
+ * glyphs run wider, a boxed label overflows its box. `skinparam defaultFontName` does not steer
  * the engine metrics, so this corrects on the paint side: measure the real rendered text and, only
  * where it overflows its box, condense it to the exact inner width via SVG `textLength` +
  * `lengthAdjust="spacingAndGlyphs"` (which reacts to the ACTUAL painted metrics → cross-platform).
- * Labels with no enclosing rect (edge/relation/title) are left untouched, and font-size is never
+ *
+ * A label's box is the primary background shape of its nearest ancestor `<g class="entity">`
+ * (rectangle/class boxes, drawn as `<rect>`) or `<g class="cluster">` (package/folder/frame
+ * container boxes, drawn as `<path>`/`<polygon>`) — the largest-area direct child among
+ * rect/path/polygon. The background CHILD shape's bbox is the fit box, NOT the group's own bbox,
+ * because the group bbox is inflated by the very text that overflows it. Labels with no enclosing
+ * entity/cluster group (edge/relation/free title) are left untouched, and font-size is never
  * modified (diagramScale reads the first <text> font-size). Idempotent.
  */
 
@@ -26,47 +32,55 @@ const safeBBox = (el: SVGGraphicsElement): DOMRect | null => {
   }
 };
 
+const nearestBoxGroup = (text: Element, host: Element): Element | null => {
+  let node: Element | null = text.parentElement;
+  while (node && node !== host) {
+    if (node.matches('g.entity, g.cluster')) return node;
+    node = node.parentElement;
+  }
+  return null;
+};
+
+const backgroundShapeBox = (group: Element): Box | null => {
+  const shapes = Array.from(
+    group.querySelectorAll<SVGGraphicsElement>(':scope > rect, :scope > path, :scope > polygon'),
+  );
+  let box: Box | null = null;
+  let maxArea = 0;
+  for (const shape of shapes) {
+    const b = safeBBox(shape);
+    if (!b || b.width <= 0 || b.height <= 0) continue;
+    const area = b.width * b.height;
+    if (area > maxArea) {
+      maxArea = area;
+      box = { x: b.x, y: b.y, width: b.width, height: b.height };
+    }
+  }
+  return box;
+};
+
 export function fitPlantumlBoxText(svgHost: Element | null | undefined): void {
   if (!svgHost) return;
-
-  const rects = Array.from(svgHost.querySelectorAll<SVGGraphicsElement>('rect'));
-  if (rects.length === 0) return;
-
-  // getBBox reports the box in user units — the same unit `textLength` expects. Skip zero-area.
-  const boxes: Box[] = [];
-  for (const rect of rects) {
-    const b = safeBBox(rect);
-    if (!b || b.width <= 0 || b.height <= 0) continue;
-    boxes.push({ x: b.x, y: b.y, width: b.width, height: b.height });
-  }
-  if (boxes.length === 0) return;
 
   const texts = Array.from(svgHost.querySelectorAll<SVGGraphicsElement>('text'));
   for (const text of texts) {
     const tb = safeBBox(text);
     if (!tb || tb.width <= 0) continue;
 
+    const group = nearestBoxGroup(text, svgHost);
+    if (!group) continue;
+
+    const box = backgroundShapeBox(group);
+    if (!box) continue;
+
     const cx = tb.x + tb.width / 2;
     const cy = tb.y + tb.height / 2;
-
-    // The label's box is the smallest-area rect whose bounds contain the text bbox centre.
-    let box: Box | null = null;
-    let boxArea = Number.POSITIVE_INFINITY;
-    for (const candidate of boxes) {
-      const inside =
-        cx >= candidate.x &&
-        cx <= candidate.x + candidate.width &&
-        cy >= candidate.y &&
-        cy <= candidate.y + candidate.height;
-      if (!inside) continue;
-      const area = candidate.width * candidate.height;
-      if (area < boxArea) {
-        boxArea = area;
-        box = candidate;
-      }
-    }
-
-    if (!box) continue;
+    const inside =
+      cx >= box.x &&
+      cx <= box.x + box.width &&
+      cy >= box.y &&
+      cy <= box.y + box.height;
+    if (!inside) continue;
 
     const available = box.width - BOX_INNER_PADDING_PX * 2;
     if (available <= 0) continue;
