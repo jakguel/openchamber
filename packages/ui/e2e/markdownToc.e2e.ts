@@ -142,6 +142,89 @@ async function waitHeadingAtTop(page: Page, rootSel: string, text: string): Prom
     );
 }
 
+// Reads the docked file-content bar chrome (post f75eb67f). `scope` is either the
+// whole document (inline bar) or the fullscreen overlay. Resolves var(--background)
+// and var(--surface-subtle) through probe elements appended in the bar's own cascade
+// so the comparison is theme-accurate.
+type BarChrome = { barBg: string; background: string; surfaceSubtle: string; barText: string } | null;
+function barChrome(page: Page, scope: 'document' | typeof OVERLAY): Promise<BarChrome> {
+    return page.evaluate((scopeSel) => {
+        const root: ParentNode | null = scopeSel === 'document' ? document : document.querySelector(scopeSel);
+        if (!root) return null;
+        const toggle = root.querySelector('button[aria-label="Toggle table of contents"]');
+        const bar = toggle?.closest('div') ?? null;
+        if (!bar) return null;
+        const probe = (value: string): string => {
+            const el = document.createElement('div');
+            el.style.backgroundColor = value;
+            bar.appendChild(el);
+            const resolved = getComputedStyle(el).backgroundColor;
+            el.remove();
+            return resolved;
+        };
+        return {
+            barBg: getComputedStyle(bar).backgroundColor,
+            background: probe('var(--background)'),
+            surfaceSubtle: probe('var(--surface-subtle)'),
+            barText: (bar.textContent ?? '').trim(),
+        };
+    }, scope);
+}
+
+type CmLineProbe = {
+    scroller: boolean;
+    found: boolean;
+    scrollTop: number;
+    scrollerTop: number;
+    scrollerBottom: number;
+    lineTop: number | null;
+    lineBottom: number | null;
+};
+
+// Measures a CodeMirror source line (matched by exact text) against the .cm-scroller
+// viewport — the surface scrollEditorToHeading targets in markdown edit mode.
+function cmLineProbe(page: Page, text: string): Promise<CmLineProbe> {
+    return page.evaluate((text) => {
+        const scroller = document.querySelector('.cm-scroller');
+        if (!scroller) {
+            return { scroller: false, found: false, scrollTop: 0, scrollerTop: 0, scrollerBottom: 0, lineTop: null, lineBottom: null };
+        }
+        const sr = scroller.getBoundingClientRect();
+        const line = Array.from(scroller.querySelectorAll<HTMLElement>('.cm-line')).find(
+            (l) => (l.textContent ?? '').trim() === text,
+        );
+        if (!line) {
+            return { scroller: true, found: false, scrollTop: scroller.scrollTop, scrollerTop: sr.top, scrollerBottom: sr.bottom, lineTop: null, lineBottom: null };
+        }
+        const lr = line.getBoundingClientRect();
+        return { scroller: true, found: true, scrollTop: scroller.scrollTop, scrollerTop: sr.top, scrollerBottom: sr.bottom, lineTop: lr.top, lineBottom: lr.bottom };
+    }, text);
+}
+
+async function waitCmLineInViewport(page: Page, text: string): Promise<void> {
+    await page.waitForFunction(
+        (text) => {
+            const scroller = document.querySelector('.cm-scroller');
+            if (!scroller) return false;
+            const sr = scroller.getBoundingClientRect();
+            const line = Array.from(scroller.querySelectorAll<HTMLElement>('.cm-line')).find(
+                (l) => (l.textContent ?? '').trim() === text,
+            );
+            if (!line) return false;
+            const lr = line.getBoundingClientRect();
+            return scroller.scrollTop > 0 && lr.top >= sr.top - 2 && lr.bottom <= sr.bottom + 2;
+        },
+        text,
+        { timeout: 8_000 },
+    );
+}
+
+async function enterMarkdownEditMode(page: Page): Promise<void> {
+    await page.getByRole('button', { name: 'Switch to edit mode' }).click();
+    await page.waitForSelector('.cm-editor .cm-scroller', { timeout: READY_MS });
+    await page.waitForFunction(() => document.querySelectorAll('.cm-line').length > 3, { timeout: READY_MS });
+}
+
 test.describe('Markdown ToC — desktop FilesView (real Chromium)', () => {
     test('AC1: ToC lists exactly the H1–H3 headings in order with correct nesting', async ({ page }) => {
         await mount(page, 'surface=desktop&file=nested');
@@ -269,7 +352,7 @@ test.describe('Markdown ToC — desktop FilesView (real Chromium)', () => {
         await expect(nav.locator(goTo('Echo'))).toBeVisible();
     });
 
-    test('AC7: docked toolbar is always-on inline and fullscreen, no floating menu, no Download', async ({ page }) => {
+    test('AC7/AC-T3a: docked bar is bg-background, ToC-toggle-only chrome — no filename, copy, or open-in-app', async ({ page }) => {
         await mount(page, 'surface=desktop&file=nested');
         await page.waitForSelector('[data-markdown-content] h1', { timeout: READY_MS });
 
@@ -282,7 +365,24 @@ test.describe('Markdown ToC — desktop FilesView (real Chromium)', () => {
         // No Download button in the preview chrome.
         expect(await page.locator('svg use[href="#oc-download"]').count()).toBe(0);
 
-        // Fullscreen: the docked toolbar is rebuilt always-on inside the overlay.
+        // The docked bar background resolves to var(--background) (not var(--surface-subtle))
+        // and carries no filename/path text.
+        const chrome = await barChrome(page, 'document');
+        expect(chrome).not.toBeNull();
+        expect(chrome!.barBg).toBe(chrome!.background);
+        if (chrome!.background !== chrome!.surfaceSubtle) {
+            expect(chrome!.barBg).not.toBe(chrome!.surfaceSubtle);
+        }
+        expect(chrome!.barText).not.toContain('nested');
+
+        // The bar exposes no Open-in-App, Copy File Contents, or Copy File Path controls.
+        expect(await page.getByRole('button', { name: /open in desktop app/i }).count()).toBe(0);
+        expect(await page.getByRole('button', { name: /copy file contents/i }).count()).toBe(0);
+        expect(await page.getByRole('button', { name: /copy file path/i }).count()).toBe(0);
+        expect(await page.getByRole('button', { name: /copy/i }).count()).toBe(0);
+
+        // Fullscreen: the docked toolbar is rebuilt always-on inside the overlay with
+        // the same bg-background chrome and the same removals.
         await page.getByRole('button', { name: 'Fullscreen', exact: true }).click();
         const overlay = page.locator(OVERLAY);
         await expect(overlay).toBeVisible();
@@ -290,6 +390,89 @@ test.describe('Markdown ToC — desktop FilesView (real Chromium)', () => {
         await expect(overlay.getByRole('button', { name: TOC_TOGGLE })).toBeVisible();
         expect(await overlay.locator('.pointer-events-auto.rounded-lg.shadow-sm').count()).toBe(0);
         expect(await overlay.locator('svg use[href="#oc-download"]').count()).toBe(0);
+
+        const overlayChrome = await barChrome(page, OVERLAY);
+        expect(overlayChrome).not.toBeNull();
+        expect(overlayChrome!.barBg).toBe(overlayChrome!.background);
+        expect(overlayChrome!.barText).not.toContain('nested');
+        expect(await overlay.getByRole('button', { name: /open in desktop app/i }).count()).toBe(0);
+        expect(await overlay.getByRole('button', { name: /copy/i }).count()).toBe(0);
+    });
+
+    test('AC-T3b: markdown edit mode shows the ToC toggle and opens the aside with heading entries', async ({ page }) => {
+        await mount(page, 'surface=desktop&file=nested');
+        await page.waitForSelector('[data-markdown-content] h1', { timeout: READY_MS });
+
+        await enterMarkdownEditMode(page);
+
+        // ToC toggle stays present in code/edit mode (gated on markdown + headings, not view mode).
+        await expect(page.getByRole('button', { name: TOC_TOGGLE })).toBeVisible();
+        await page.getByRole('button', { name: TOC_TOGGLE }).click();
+
+        const nav = page.locator('nav[aria-label="Table of contents"]').first();
+        await expect(nav).toBeVisible();
+        const order = await nav.locator('button[aria-label^="Go to "]').evaluateAll((btns) =>
+            btns.map((b) => (b.textContent ?? '').trim()),
+        );
+        expect(order).toEqual(['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot']);
+    });
+
+    test('AC-T3c: clicking a lower ToC entry in edit mode scrolls its source line into the CodeMirror viewport', async ({ page }) => {
+        await mount(page, 'surface=desktop&file=nested');
+        await page.waitForSelector('[data-markdown-content] h1', { timeout: READY_MS });
+
+        await enterMarkdownEditMode(page);
+        await page.getByRole('button', { name: TOC_TOGGLE }).click();
+        await expect(page.locator('nav[aria-label="Table of contents"]').first()).toBeVisible();
+
+        // Pre-click: the editor is at the top and the lower "## Foxtrot" source line is
+        // off-screen (either not virtualized into the DOM, or below the scroller).
+        const before = await cmLineProbe(page, '## Foxtrot');
+        expect(before.scroller).toBe(true);
+        expect(before.scrollTop).toBe(0);
+        if (before.found) {
+            expect(before.lineTop!).toBeGreaterThan(before.scrollerBottom);
+        }
+
+        await page.locator(goTo('Foxtrot')).click();
+        await waitCmLineInViewport(page, '## Foxtrot');
+
+        const after = await cmLineProbe(page, '## Foxtrot');
+        expect(after.found).toBe(true);
+        expect(after.scrollTop).toBeGreaterThan(0);
+        expect(after.lineTop!).toBeGreaterThanOrEqual(after.scrollerTop - 2);
+        expect(after.lineBottom!).toBeLessThanOrEqual(after.scrollerBottom + 2);
+    });
+
+    test('AC-T3c: edit-mode ToC scroll respects the frontmatter line offset', async ({ page }) => {
+        await mount(page, 'surface=desktop&file=frontmatter');
+        await page.waitForSelector('[data-markdown-content] h1', { timeout: READY_MS });
+
+        await enterMarkdownEditMode(page);
+        await page.getByRole('button', { name: TOC_TOGGLE }).click();
+        await expect(page.locator('nav[aria-label="Table of contents"]').first()).toBeVisible();
+
+        // The heading's absolute source line (past 4 frontmatter lines) is what gets
+        // scrolled to — the exact "## Sub Front" line lands in the viewport, proving the
+        // toc.ts frontmatter offset flows through scrollEditorToHeading.
+        await page.locator(goTo('Sub Front')).click();
+        await waitCmLineInViewport(page, '## Sub Front');
+
+        const after = await cmLineProbe(page, '## Sub Front');
+        expect(after.found).toBe(true);
+        expect(after.lineTop!).toBeGreaterThanOrEqual(after.scrollerTop - 2);
+        expect(after.lineBottom!).toBeLessThanOrEqual(after.scrollerBottom + 2);
+    });
+
+    test('AC-T3d: a plain code file opens without a preview toggle', async ({ page }) => {
+        await mount(page, 'surface=desktop&file=code');
+        await page.waitForSelector('[data-toc-status="ready"]', { timeout: READY_MS });
+        await page.waitForSelector('.cm-editor .cm-content', { timeout: READY_MS });
+
+        // Code files open directly in CodeMirror — no markdown/HTML preview toggle, and
+        // no ToC toggle (non-markdown).
+        expect(await page.getByRole('button', { name: /switch to (edit|preview) mode/i }).count()).toBe(0);
+        await expect(page.getByRole('button', { name: TOC_TOGGLE })).toHaveCount(0);
     });
 
     test('AC7: the ToC toggle is absent for a non-markdown (JSON) file', async ({ page }) => {

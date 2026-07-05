@@ -49,11 +49,22 @@ const ZERO = ['Just a paragraph with no headings.', 'Another paragraph here.'].j
 
 const JSON_DOC = '{\n  "name": "example",\n  "nested": { "value": 1 }\n}\n';
 
+// Non-markdown editable file for the AC-T3d "code file has no preview toggle" case.
+const CODE_TS = [
+    'export const add = (a: number, b: number): number => a + b;',
+    '',
+    'export function greet(name: string): string {',
+    '  return `Hello, ${name}`;',
+    '}',
+    '',
+].join('\n');
+
 const DESKTOP_CONTENT: Record<string, { content: string; ext: string }> = {
     nested: { content: NESTED, ext: 'md' },
     frontmatter: { content: FRONTMATTER, ext: 'md' },
     zero: { content: ZERO, ext: 'md' },
     json: { content: JSON_DOC, ext: 'json' },
+    code: { content: CODE_TS, ext: 'ts' },
 };
 
 type ProviderApis = React.ComponentProps<typeof RuntimeAPIProvider>['apis'];
