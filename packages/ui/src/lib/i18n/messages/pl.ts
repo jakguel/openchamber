@@ -6,6 +6,10 @@ export const dict: Record<I18nKey, string> = {
 
   'common.loading': 'Ładowanie...',
   'common.unavailable': 'Niedostępne',
+  'markdown.toc.navAria': 'Spis treści',
+  'markdown.toc.gotoHeadingAria': 'Przejdź do {heading}',
+  'markdown.toc.collapseAria': 'Zwiń {heading}',
+  'markdown.toc.expandAria': 'Rozwiń {heading}',
   'common.language.english': 'Angielski',
   'common.language.french': 'Francuski',
   'common.language.simplifiedChinese': 'Chiński (Uproszczony)',
