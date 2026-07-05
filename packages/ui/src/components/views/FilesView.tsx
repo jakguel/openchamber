@@ -770,7 +770,9 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   // surface (inline desktop viewer / fullscreen overlay) so a ToC click scrolls
   // the correct scroller and waits for heading ids to land before scrolling.
   const inlinePreviewScrollerRef = React.useRef<HTMLDivElement>(null);
-  const fullscreenPreviewScrollerRef = React.useRef<HTMLDivElement>(null);
+  // ScrollableOverlay forwards its inner overflow-auto scroll container as an
+  // HTMLElement (useImperativeHandle), so this ref is HTMLElement, not HTMLDivElement.
+  const fullscreenPreviewScrollerRef = React.useRef<HTMLElement>(null);
   const inlineTocCommit = React.useMemo(() => createCommitSignal(), []);
   const fullscreenTocCommit = React.useMemo(() => createCommitSignal(), []);
   const getInlinePreviewScroller = React.useCallback(() => inlinePreviewScrollerRef.current, []);
@@ -4198,7 +4200,26 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       </div>
       {/* Fullscreen content */}
       <div className="flex-1 min-h-0 min-w-0 relative">
-        <ScrollableOverlay outerClassName="h-full min-w-0" className="h-full min-w-0">
+        <div className="flex h-full min-h-0">
+          {isMarkdown && getMdViewMode() === 'preview' && tocVisible && tocEntries.length > 0 && (
+            <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
+              <TocTree
+                entries={tocEntries}
+                getScroller={getFullscreenPreviewScroller}
+                getContentRoot={getFullscreenPreviewScroller}
+                waitForCommit={fullscreenTocCommit.waitForCommit}
+              />
+            </aside>
+          )}
+          {/* ScrollableOverlay stays the SOLE scroller (its forwarded ref = the
+              overlay-scrollbar-target overflow-auto container) so the fullscreen
+              pan/fit feature keeps working; the sidebar is a flex SIBLING, never
+              nested in the scroll flow. */}
+          <ScrollableOverlay
+            ref={fullscreenPreviewScrollerRef}
+            outerClassName="h-full min-w-0 flex-1"
+            className="h-full min-w-0"
+          >
           {(fileLoading || isImageAssetAuthLoading || isPdfAssetAuthLoading) ? (
             suppressFileLoadingIndicator
               ? <div className="p-4" />
@@ -4222,44 +4243,34 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           ) : isSelectedPdf ? (
             renderPdfPreview(selectedFile)
           ) : isMarkdown && getMdViewMode() === 'preview' ? (
-            <div className="flex h-full min-h-0">
-              {tocVisible && tocEntries.length > 0 && (
-                <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
-                  <TocTree
-                    entries={tocEntries}
-                    getScroller={getFullscreenPreviewScroller}
-                    getContentRoot={getFullscreenPreviewScroller}
-                    waitForCommit={fullscreenTocCommit.waitForCommit}
-                  />
-                </aside>
-              )}
-              <div ref={fullscreenPreviewScrollerRef} className="h-full min-w-0 flex-1 overflow-auto p-4">
-                {fileContent.length > 500 * 1024 && (
-                    <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
-                      {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
+            // No own scroller — the wrapping ScrollableOverlay scrolls the content
+            // (its forwarded ref is the scroll target; ids render inside it).
+            <div className="p-4">
+              {fileContent.length > 500 * 1024 && (
+                  <div className="mb-3 rounded-md border border-status-warning/20 bg-status-warning/10 px-3 py-2 text-sm text-status-warning">
+                    {t('filesView.warning.largeFilePreviewLimited', { sizeKb: Math.round(fileContent.length / 1024) })}
+                  </div>
+                )}
+              <ErrorBoundary
+                fallback={
+                  <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                    <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {t('filesView.error.switchToEditMode')}
                     </div>
-                  )}
-                <ErrorBoundary
-                  fallback={
-                    <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
-                      <div className="mb-1 font-medium text-destructive">{t('filesView.error.previewUnavailable')}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {t('filesView.error.switchToEditMode')}
-                      </div>
-                    </div>
-                  }
-                >
-                  <SimpleMarkdownRenderer
-                    content={fileContent}
-                    className="typography-markdown-body"
-                    stripFrontmatter
-                    enableFileReferences={false}
-                    onShowPopup={onShowDiagramPopup}
-                    injectHeadingIds
-                    onCommit={fullscreenTocCommit.notify}
-                  />
-                </ErrorBoundary>
-              </div>
+                  </div>
+                }
+              >
+                <SimpleMarkdownRenderer
+                  content={fileContent}
+                  className="typography-markdown-body"
+                  stripFrontmatter
+                  enableFileReferences={false}
+                  onShowPopup={onShowDiagramPopup}
+                  injectHeadingIds
+                  onCommit={fullscreenTocCommit.notify}
+                />
+              </ErrorBoundary>
             </div>
           ) : canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)
@@ -4297,7 +4308,8 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
               )}
             </div>
           )}
-        </ScrollableOverlay>
+          </ScrollableOverlay>
+        </div>
       </div>
     </div>
   );
