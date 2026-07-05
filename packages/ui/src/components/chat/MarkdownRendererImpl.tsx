@@ -19,6 +19,7 @@ import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime } from '@/l
 import { ensureOutsideFileGrantForDesktop } from '@/lib/outsideFileGrants';
 import { getDirectoryForFilePath, isAbsoluteFilePath, isFilePathWithinDirectory, normalizeFilePath, toAbsoluteFilePath } from '@/lib/path-utils';
 import { renderMarkdownBlocks, renderMarkdownSync } from './markdown/markdownCore';
+import { stripLeadingFrontmatter } from './markdown/frontmatter';
 import { ensureMarkdownShikiTheme, getMarkdownSyntaxVars } from './markdown/markdownTheme';
 import {
   attachMarkdownInteractions,
@@ -27,6 +28,7 @@ import {
   renderPlantumlBlocks,
   type DecorateContext,
   type DecorateLabels,
+  type HeadingIdSlot,
   type MermaidRender,
   type PlantumlRenderSlot,
 } from './markdown/decorate';
@@ -118,18 +120,6 @@ const extractMermaidBlocks = (markdown: string): string[] => {
   }
 
   return blocks;
-};
-
-const stripLeadingFrontmatter = (markdown: string): string => {
-  const frontmatterMatch = markdown.match(
-    /^(?:\uFEFF)?(---|\+\+\+)[^\S\r\n]*\r?\n[\s\S]*?\r?\n\1[^\S\r\n]*(?:\r?\n|$)/,
-  );
-
-  if (!frontmatterMatch) {
-    return markdown;
-  }
-
-  return markdown.slice(frontmatterMatch[0].length);
 };
 
 export type MarkdownVariant = 'assistant' | 'tool' | 'reasoning';
@@ -1086,6 +1076,7 @@ const mermaidColorsFromTheme = (theme: Theme) => ({
 const useDecorateContext = (
   currentTheme: Theme,
   onPreviewLoopback?: (url: string) => void,
+  headingSlot?: HeadingIdSlot,
 ): DecorateContext => {
   const { t } = useI18n();
   const labels: DecorateLabels = React.useMemo(() => ({
@@ -1143,8 +1134,8 @@ const useDecorateContext = (
       dark: currentTheme.metadata?.variant === 'dark',
       labels: plantumlLabels,
     };
-    return { labels, renderMermaid, renderPlantuml, onPreviewLoopback };
-  }, [currentTheme, labels, plantumlLabels, onPreviewLoopback, plantumlTheme, plantumlThemeBody]);
+    return { labels, renderMermaid, renderPlantuml, onPreviewLoopback, injectHeadingIds: headingSlot };
+  }, [currentTheme, labels, plantumlLabels, onPreviewLoopback, plantumlTheme, plantumlThemeBody, headingSlot]);
 };
 
 // Runs the async render pipeline into the container and keeps a stable
@@ -1157,6 +1148,7 @@ const useMorphdomMarkdown = ({
   syntaxVars,
   ctx,
   onContentGrown,
+  onCommit,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   text: string;
@@ -1169,6 +1161,11 @@ const useMorphdomMarkdown = ({
   // that growth — so the auto-follow snap corrects scrollTop pre-paint (kills the
   // paint-at-stale-scrollTop flicker). Post-paint ResizeObserver stays as fallback.
   onContentGrown?: () => void;
+  // Fired after each async morphdom commit (not just streaming), once the
+  // render + decorate output — including any opt-in heading-id injection — is in
+  // the LIVE DOM. A future ToC can await this to know anchor ids exist before it
+  // scrolls. Optional; no consumer is wired here yet.
+  onCommit?: () => void;
 }) => {
   React.useEffect(() => {
     ensureMarkdownShikiTheme();
@@ -1253,12 +1250,15 @@ const useMorphdomMarkdown = ({
       if (streaming) {
         onContentGrown?.();
       }
+      // Post-commit signal: the async render + decorate (incl. any opt-in heading
+      // id injection) is committed to the LIVE DOM here. No consumer wired yet.
+      onCommit?.();
     });
 
     return () => {
       active = false;
     };
-  }, [containerRef, text, streaming, cacheKey, ctx, onContentGrown]);
+  }, [containerRef, text, streaming, cacheKey, ctx, onContentGrown, onCommit]);
 
   React.useEffect(() => {
     const container = containerRef.current;
@@ -1372,6 +1372,11 @@ const SimpleMarkdownRendererImpl: React.FC<{
   mermaidControls?: MermaidControlOptions;
   allowMermaidWheelZoom?: boolean;
   enableFileReferences?: boolean;
+  // Opt-in: inject stable heading ids into the rendered preview so a ToC can
+  // anchor-scroll to them (preview only; the chat renderer never sets this).
+  injectHeadingIds?: boolean;
+  // Fired after each render commit, once heading ids exist in the live DOM.
+  onCommit?: () => void;
 }> = ({
   content,
   className,
@@ -1381,6 +1386,8 @@ const SimpleMarkdownRendererImpl: React.FC<{
   onShowPopup,
   allowMermaidWheelZoom = false,
   enableFileReferences = true,
+  injectHeadingIds = false,
+  onCommit,
 }) => {
   const { editor, runtime } = useRuntimeAPIs();
   const currentTheme = useCurrentMermaidTheme();
@@ -1414,7 +1421,13 @@ const SimpleMarkdownRendererImpl: React.FC<{
   useExternalLinkInteractions({ containerRef, enabled: !disableLinkSafety });
 
   const syntaxVars = React.useMemo(() => getMarkdownSyntaxVars(currentTheme), [currentTheme]);
-  const ctx = useDecorateContext(currentTheme);
+  // Opt-in heading-id slot. Carries the EXACT rendered (post-strip) text so the
+  // decorate step assigns ids to h1/h2/h3 positionally, matching the ToC 1:1.
+  const headingSlot = React.useMemo<HeadingIdSlot | undefined>(
+    () => (injectHeadingIds ? { renderedContent } : undefined),
+    [injectHeadingIds, renderedContent],
+  );
+  const ctx = useDecorateContext(currentTheme, undefined, headingSlot);
 
   useMorphdomMarkdown({
     containerRef,
@@ -1423,6 +1436,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
     cacheKey: `simple:${variant}`,
     syntaxVars,
     ctx,
+    onCommit,
   });
 
   return (
@@ -1440,5 +1454,7 @@ export const SimpleMarkdownRenderer = React.memo(SimpleMarkdownRendererImpl, (pr
     && prev.stripFrontmatter === next.stripFrontmatter
     && prev.onShowPopup === next.onShowPopup
     && prev.allowMermaidWheelZoom === next.allowMermaidWheelZoom
-    && prev.enableFileReferences === next.enableFileReferences;
+    && prev.enableFileReferences === next.enableFileReferences
+    && prev.injectHeadingIds === next.injectHeadingIds
+    && prev.onCommit === next.onCommit;
 });

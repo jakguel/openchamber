@@ -7,6 +7,7 @@ import { buildPlantumlCacheKey } from './plantuml/cacheKey';
 import { PLANTUML_BLOCK_SELECTOR, PLANTUML_SOURCE_ATTR } from './plantuml/extractPlantumlBlocks';
 import { applyDiagramHostBodyScale } from './diagramScale';
 import { fitPlantumlBoxText } from './plantuml/fitBoxText';
+import { planHeadingIds } from './toc';
 
 // ---------------------------------------------------------------------------
 // Shared decoration context
@@ -38,6 +39,18 @@ export type PlantumlRenderSlot = {
   labels: { loading: string; error: string };
 };
 
+// Opt-in slot for heading id injection (decorateHeadings). When present, the
+// rendered h1/h2/h3 get stable, de-duped ids derived from `renderedContent` so a
+// ToC can anchor-scroll to them. Absent by default (chat renderer never sets it)
+// so heading id injection is a complete no-op there. Mirrors the renderPlantuml?
+// optional-slot pattern below.
+export type HeadingIdSlot = {
+  // The EXACT markdown text the renderer lexed (already frontmatter-stripped if
+  // the renderer stripped it), so the extracted heading order matches the
+  // rendered <h1-3> order 1:1 for positional id assignment.
+  renderedContent: string;
+};
+
 export type DecorateContext = {
   labels: DecorateLabels;
   // Renders a mermaid block source to svg/ascii using current theme colors.
@@ -48,6 +61,8 @@ export type DecorateContext = {
   // absent, decoratePlantuml is a no-op.
   renderPlantuml?: PlantumlRenderSlot;
   onPreviewLoopback?: (url: string) => void;
+  // Opt-in heading id injection (see HeadingIdSlot). No-op when absent.
+  injectHeadingIds?: HeadingIdSlot;
 };
 
 /**
@@ -539,6 +554,38 @@ const decorateLinks = (root: HTMLElement, ctx: DecorateContext): void => {
   }
 };
 
+// Assign stable, de-duped ids to the rendered h1/h2/h3 headings BY POSITION
+// (nth collected heading token -> nth rendered h-tag), so a ToC can anchor-scroll
+// to them. Runs POST-sanitize (called from decorateMarkdown on the temp node
+// before morphdom), so the ids bypass DOMPurify's allowlist. Opt-in: only when
+// ctx.injectHeadingIds is provided. On a heading token/element count mismatch it
+// SKIPS injection entirely and warns — never risking a misassignment. Ids are
+// de-duped in-document and against existing ids because morphdom keys on id, so
+// a duplicate would corrupt the DOM on the next content edit.
+export const decorateHeadings = (root: HTMLElement, slot: HeadingIdSlot): void => {
+  const headings = root.querySelectorAll<HTMLElement>('h1, h2, h3');
+
+  // Reserve every id already in the tree EXCEPT the target headings (whose ids we
+  // own/overwrite), so injected slugs never collide with a pre-existing id.
+  const targets = new Set<Element>(Array.from(headings));
+  const reserved = new Set<string>();
+  root.querySelectorAll<HTMLElement>('[id]').forEach((el) => {
+    if (!targets.has(el) && el.id) reserved.add(el.id);
+  });
+
+  const ids = planHeadingIds(slot.renderedContent, headings.length, { existingIds: reserved });
+  if (!ids) {
+    console.warn(
+      '[decorateHeadings] heading token/element count mismatch — skipping id injection to avoid misassignment',
+    );
+    return;
+  }
+
+  headings.forEach((heading, index) => {
+    heading.id = ids[index]!;
+  });
+};
+
 /** Run all idempotent DOM decoration passes over freshly-rendered markdown. */
 export const decorateMarkdown = (root: HTMLElement, ctx: DecorateContext): void => {
   decorateInlineCode(root);
@@ -547,6 +594,9 @@ export const decorateMarkdown = (root: HTMLElement, ctx: DecorateContext): void 
   decorateCodeBlocks(root, ctx.labels);
   decorateTables(root, ctx.labels);
   decorateLinks(root, ctx);
+  // Opt-in, runs LAST so heading ids can de-dupe against any ids the decorators
+  // above introduced. No-op unless a caller wired ctx.injectHeadingIds.
+  if (ctx.injectHeadingIds) decorateHeadings(root, ctx.injectHeadingIds);
 };
 
 // ---------------------------------------------------------------------------
