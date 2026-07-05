@@ -123,6 +123,12 @@ async function mount(page: Page): Promise<void> {
     await page.addStyleTag({ content: WIDE_METRIC_CSS });
 }
 
+async function mountPlain(page: Page): Promise<void> {
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__plReady === true, { timeout: 20_000 });
+    await page.addStyleTag({ content: shippingCss });
+}
+
 async function setMarkdown(page: Page, markdown: string): Promise<void> {
     await page.evaluate((md) => window.__plSetMarkdown?.(md), markdown);
 }
@@ -539,5 +545,291 @@ test.describe('PlantUML PATH-boxed container-title overflow — real Chromium (o
             pathOverflows.length,
             'expected the <path>-boxed container title to overflow once the fit attributes are stripped (RED-on-revert)',
         ).toBeGreaterThan(0);
+    });
+});
+
+/**
+ * Anchor-aware edge-containment across ALL box shapes (openchamber-5ki.42).
+ *
+ * WHY these cases exist (and why the 5ki.39 spec above was insufficient): 5ki.39 only exercised the
+ * <rect>/<path>-boxed entity+cluster shapes and only proved that SOME <text> got a `textLength` — a
+ * label sitting exactly on its box edge still counts as "has textLength" yet visibly bursts. That
+ * shape+assertion gave a FALSE GREEN: Jiyan's real diagram (package title, usecase, 3D node) kept
+ * overflowing because the pre-fix code (a) never scanned <ellipse>/<circle> (usecase boxes were
+ * skipped entirely), (b) picked the LARGEST-area shape (wrong box for a 3D node / nested title),
+ * and (c) fit to the FULL inner width ignoring the label's anchor, so a left-anchored title spilled
+ * past the right edge. The committed fix (26667ec9) scans ellipse/circle, picks the SMALLEST-area
+ * shape CONTAINING the anchor, and computes an ANCHOR-RELATIVE available width.
+ *
+ * These cases therefore assert EDGE-CONTAINMENT — the painted <text>'s left AND right edges sit
+ * within the box's padded inner bounds (box.x+3 .. box.x+box.width-3) — NOT merely that a textLength
+ * attribute exists. Under the committed fix every boxed label's right edge lands exactly on the
+ * padded right (anchor-relative fit), so it is contained; reverting fitBoxText.ts to its pre-fix
+ * version (`git checkout 26667ec9~1 -- …/fitBoxText.ts`, the fixture serves it straight from source)
+ * makes the usecase overflow by ~53px (ellipse never scanned → untouched), the 3D node by ~12px
+ * (wrong/largest polygon + full-width fit), the rectangle by ~7px and the package title by ~1px
+ * (full-width fit ignoring the left anchor) — each new case goes RED. The actor caption stays
+ * untouched in BOTH versions (it is an unboxed icon caption, must keep its natural width).
+ *
+ * Same wide-metric forcing (letter-spacing) as the spec above so the overflow is deterministic on
+ * macOS+Helvetica; textLength (the fix) overrides total advance so the fixed labels still fit.
+ */
+
+/** All five shape kinds in one diagram: a package (path-boxed cluster) wrapping a rectangle
+ * (rect-boxed entity), plus a usecase (ellipse), a 3D node (polygon) and an actor (unboxed
+ * caption). Each long name overflows its engine-sized box once the wide-metric override applies. */
+const SHAPE_MATRIX_DIAGRAM = [
+    '@startuml',
+    'package "ObservabilityAndMonitoringDefinitionLongTitle" {',
+    '  rectangle "VeryLongRectangleTitleThatOverflowsBox" as R',
+    '}',
+    'usecase "VeryLongUsecaseNameThatOverflowsEllipse" as UC',
+    'node "VeryLongNodeNameThatOverflowsThe3DBox" as N',
+    'actor "VeryLongActorCaptionThatShouldStayNatural" as A',
+    '@enduml',
+].join('\n');
+
+/** Short labels that comfortably fit their engine-sized boxes even under the CSS font. Rendered
+ * WITHOUT the wide-metric override so nothing overflows — the fix must NOT spuriously condense
+ * them (no textLength). Guards against an over-eager fit pass. */
+const FITTING_DIAGRAM = [
+    '@startuml',
+    'rectangle "A" as A',
+    'usecase "B" as B',
+    '@enduml',
+].join('\n');
+
+/** Sub-pixel tolerance for edge-containment. The committed fix lands each fitted label's right edge
+ * exactly on the padded right (ink advance never exceeds the anchor-relative textLength), so 0.5px
+ * absorbs getBBox rounding without letting the pre-fix overflow (>=1px past the padded right on the
+ * package title, far more on the others) slip through as a pass. */
+const CONTAIN_EPS_PX = 0.5;
+
+type AnchorRow = {
+    text: string;
+    anchor: string;
+    left: number;
+    right: number;
+    hasTextLength: boolean;
+    hasBox: boolean;
+    boxTag: string | null;
+    padL: number | null;
+    padR: number | null;
+};
+
+/**
+ * Mirrors the production box selection (fitBoxText.ts) so the test measures containment against the
+ * SAME box the fix targets: for each <text>, walk to the nearest `g.entity`/`g.cluster`, then take
+ * the SMALLEST-area direct rect/path/polygon/ellipse/circle child whose bbox CONTAINS the label's
+ * anchor point {anchorX = the `x` attr (its true origin) or bbox centre-x, anchorY = bbox centre-y}.
+ * Reports the painted text's left/right edges and the box's padded inner bounds so a case can assert
+ * both edges sit inside — real edge-containment, not textLength-presence. A label with no containing
+ * shape (e.g. an actor caption below its icon) reports hasBox=false and is left untouched by the fix.
+ */
+function measureAnchorRows(page: Page): Promise<AnchorRow[]> {
+    return page.evaluate(
+        ({ hostSel, padPx }) => {
+            const svg = document.querySelector<SVGSVGElement>(`${hostSel} svg`);
+            if (!svg) return [];
+
+            const nearestGroup = (el: Element): Element | null => {
+                let node: Element | null = el.parentElement;
+                while (node && node !== svg) {
+                    if (node.matches('g.entity, g.cluster')) return node;
+                    node = node.parentElement;
+                }
+                return null;
+            };
+
+            const rows: Array<{
+                text: string;
+                anchor: string;
+                left: number;
+                right: number;
+                hasTextLength: boolean;
+                hasBox: boolean;
+                boxTag: string | null;
+                padL: number | null;
+                padR: number | null;
+            }> = [];
+
+            for (const t of Array.from(svg.querySelectorAll<SVGGraphicsElement>('text'))) {
+                const tb = t.getBBox();
+                if (tb.width <= 0) continue;
+
+                const xAttr = t.getAttribute('x');
+                const parsedX = xAttr !== null && xAttr !== '' ? Number(xAttr) : Number.NaN;
+                const anchorX = Number.isFinite(parsedX) ? parsedX : tb.x + tb.width / 2;
+                const anchorY = tb.y + tb.height / 2;
+
+                let anchor = '';
+                try {
+                    anchor = getComputedStyle(t as unknown as Element).textAnchor || '';
+                } catch {
+                    anchor = '';
+                }
+                if (!anchor) anchor = t.getAttribute('text-anchor') || 'start';
+
+                let boxTag: string | null = null;
+                let padL: number | null = null;
+                let padR: number | null = null;
+                const group = nearestGroup(t);
+                if (group) {
+                    const shapes = Array.from(
+                        group.querySelectorAll<SVGGraphicsElement>(
+                            ':scope > rect, :scope > path, :scope > polygon, :scope > ellipse, :scope > circle',
+                        ),
+                    );
+                    let minArea = Number.POSITIVE_INFINITY;
+                    for (const s of shapes) {
+                        const b = s.getBBox();
+                        if (b.width <= 0 || b.height <= 0) continue;
+                        if (
+                            anchorX < b.x ||
+                            anchorX > b.x + b.width ||
+                            anchorY < b.y ||
+                            anchorY > b.y + b.height
+                        ) {
+                            continue;
+                        }
+                        const area = b.width * b.height;
+                        if (area < minArea) {
+                            minArea = area;
+                            boxTag = s.tagName.toLowerCase();
+                            padL = b.x + padPx;
+                            padR = b.x + b.width - padPx;
+                        }
+                    }
+                }
+
+                rows.push({
+                    text: (t.textContent ?? '').trim(),
+                    anchor,
+                    left: tb.x,
+                    right: tb.x + tb.width,
+                    hasTextLength: !!t.getAttribute('textLength'),
+                    hasBox: boxTag !== null,
+                    boxTag,
+                    padL,
+                    padR,
+                });
+            }
+
+            return rows;
+        },
+        { hostSel: PL_HOST, padPx: 3 },
+    );
+}
+
+/** Renders SHAPE_MATRIX_DIAGRAM under the wide-metric override and returns the row for the <text>
+ * whose content starts with `prefix`, failing loudly if it is missing (guards vacuous passes). */
+async function rowFor(page: Page, prefix: string): Promise<AnchorRow> {
+    const rows = await measureAnchorRows(page);
+    const row = rows.find((r) => r.text.startsWith(prefix));
+    expect(row, `no <text> starting "${prefix}" in the rendered matrix (rows: ${JSON.stringify(rows.map((r) => r.text))})`).toBeTruthy();
+    return row as AnchorRow;
+}
+
+/** Asserts the painted label's left AND right edges sit within its box's padded inner bounds. */
+function expectEdgeContained(row: AnchorRow, label: string): void {
+    expect(row.hasBox, `${label}: no containing box shape detected — the fix cannot target it`).toBe(true);
+    expect(
+        row.hasTextLength,
+        `${label}: fitBoxText set no textLength — the overflow was not detected/condensed (RED-on-revert signal)`,
+    ).toBe(true);
+    expect(
+        row.left,
+        `${label}: left edge ${row.left.toFixed(1)} spills past the padded left ${(row.padL ?? NaN).toFixed(1)}`,
+    ).toBeGreaterThanOrEqual((row.padL as number) - CONTAIN_EPS_PX);
+    expect(
+        row.right,
+        `${label}: right edge ${row.right.toFixed(1)} overflows the padded right ${(row.padR ?? NaN).toFixed(1)} (RED-on-revert signal)`,
+    ).toBeLessThanOrEqual((row.padR as number) + CONTAIN_EPS_PX);
+}
+
+test.describe('PlantUML anchor-aware box-label edge-containment — real Chromium (openchamber-5ki.42)', () => {
+    test('AC-P2a(a) package title (path-boxed cluster) is edge-contained', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', SHAPE_MATRIX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const row = await rowFor(page, 'ObservabilityAndMonitoringDefinition');
+        expect(row.boxTag, 'package title is not boxed by a <path> cluster shape').toBe('path');
+        expectEdgeContained(row, 'package title');
+    });
+
+    test('AC-P2a(b) rectangle title (rect-boxed entity) is edge-contained', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', SHAPE_MATRIX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const row = await rowFor(page, 'VeryLongRectangleTitle');
+        expect(row.boxTag, 'rectangle title is not boxed by a <rect> shape').toBe('rect');
+        expectEdgeContained(row, 'rectangle title');
+    });
+
+    test('AC-P2a(c) usecase (ellipse) is detected, fitted and edge-contained', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', SHAPE_MATRIX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const row = await rowFor(page, 'VeryLongUsecaseName');
+        // Non-vacuous: the usecase really is boxed by an <ellipse> the pre-fix code never scanned.
+        expect(row.boxTag, 'usecase is not boxed by an <ellipse> — the ellipse case is not exercised').toBe(
+            'ellipse',
+        );
+        expectEdgeContained(row, 'usecase (ellipse)');
+    });
+
+    test('AC-P2a(d) 3D node (polygon) label sits within its anchor-relative bounds', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', SHAPE_MATRIX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const row = await rowFor(page, 'VeryLongNodeName');
+        // Non-vacuous: the 3D node's front face is a <polygon>; the pre-fix largest-area pick + full
+        // width fit lets this ~12px past the padded right, so containment goes RED on revert.
+        expect(row.boxTag, '3D node label is not boxed by a <polygon>').toBe('polygon');
+        expectEdgeContained(row, '3D node (polygon)');
+    });
+
+    test('AC-P2a(e) actor caption is UNTOUCHED (unboxed icon caption, no textLength)', async ({ page }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', SHAPE_MATRIX_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const row = await rowFor(page, 'VeryLongActorCaption');
+        // An actor's caption sits BELOW the stick-figure icon — inside no candidate shape — so the
+        // anchor-aware fix leaves it at its natural width. Crushing it to icon width would be wrong.
+        expect(row.hasBox, 'actor caption unexpectedly resolved to a containing box shape').toBe(false);
+        expect(
+            row.hasTextLength,
+            'actor caption was condensed with textLength — an unboxed icon caption must keep its natural width',
+        ).toBe(false);
+    });
+
+    test('AC-P2 negative guard: a label that already fits is NOT condensed (no spurious textLength)', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        // Plain mount (NO wide-metric override) so the short labels comfortably fit their boxes.
+        await mountPlain(page);
+        await setMarkdown(page, fence('plantuml', FITTING_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const rows = await measureAnchorRows(page);
+        const boxed = rows.filter((r) => r.hasBox);
+        // Non-vacuous: there ARE boxed labels the fix COULD have condensed.
+        expect(boxed.length, 'no boxed <text> found — the negative guard is vacuous').toBeGreaterThan(0);
+        const spurious = boxed.filter((r) => r.hasTextLength);
+        expect(
+            spurious.map((r) => r.text),
+            'fitBoxText condensed a label that already fits (spurious textLength)',
+        ).toEqual([]);
     });
 });
