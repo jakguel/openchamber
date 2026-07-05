@@ -195,12 +195,38 @@ describe('planHeadingIds — positional plan + mismatch guard', () => {
   });
 });
 
-describe('render stage never injects heading ids (chat byte-identity guard)', () => {
-  test('marked/parse HTML for headings carries NO id attribute and no md-h- prefix', () => {
-    const html = renderToHtml('# Heading One\n## Heading Two\n### Heading Three');
-    expect(html).toContain('<h1>Heading One</h1>');
-    expect(html).toContain('<h2>Heading Two</h2>');
-    expect(html).not.toContain('id=');
+// AC5 — chat byte-identity at the bun level. The AUTHORITATIVE real-path proof
+// (render a chat message through MarkdownRenderer + decorate + morphdom and assert
+// headings carry no md-h- id) needs a DOM and is deferred to the T7 Chromium e2e
+// (openchamber-5ki.37.17). Here we prove the two DOM-free halves: (a) the render
+// stage injects no heading ids, and (b) md-h- ids come ONLY from the opt-in
+// planner/slot path (decorateHeadings -> planHeadingIds), which chat never invokes.
+describe('AC5 — chat byte-identity: heading ids come ONLY from the opt-in slot path', () => {
+  // Rendered heading open-tags that carry an id attribute.
+  const headingTagsWithId = (html: string): string[] =>
+    (html.match(/<h[1-6]\b[^>]*>/gi) ?? []).filter((tag) => /\sid\s*=/i.test(tag));
+
+  const RICH = ['# Top', 'para', '> ## Quoted', '- # In List', '### Deep `code`', '<h2>Raw</h2>'].join('\n');
+
+  test('AC5(a): baseline rendered heading HTML carries NO id attribute and NO md-h- (render never injects ids)', () => {
+    const html = renderToHtml(RICH);
+    // guard against a vacuous pass: the fixture really renders headings
+    expect(renderedHeadingDepths(html).length).toBeGreaterThan(0);
+    // no rendered heading tag has an id attribute...
+    expect(headingTagsWithId(html)).toEqual([]);
+    // ...and the namespace never appears in the un-decorated render output
     expect(html).not.toContain(HEADING_ID_PREFIX);
+  });
+
+  test('AC5(b): md-h- ids are produced ONLY by the planner/slot path, never by rendering', () => {
+    const content = '# Alpha\n## Beta';
+    // render path (no slot) -> zero md-h- ids
+    expect(renderToHtml(content)).not.toContain(HEADING_ID_PREFIX);
+    // slot path (what decorateHeadings calls) -> ordered md-h- ids
+    const ids = planHeadingIds(content, 2);
+    expect(ids).toEqual([`${HEADING_ID_PREFIX}alpha`, `${HEADING_ID_PREFIX}beta`]);
+    for (const id of ids ?? []) expect(id.startsWith(HEADING_ID_PREFIX)).toBe(true);
+    // and the slot path injects NOTHING on a count mismatch (null skip, no ids)
+    expect(planHeadingIds(content, 3)).toBeNull();
   });
 });
