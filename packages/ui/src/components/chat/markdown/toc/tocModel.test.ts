@@ -8,6 +8,9 @@ const entry = (depth: TocDepth, text: string): TocEntry => ({
   depth,
   text,
   slug: `${HEADING_ID_PREFIX}${text.toLowerCase().replace(/\s+/g, '-')}`,
+  // `line` is irrelevant to tree structure — these entries are synthetic and no
+  // assertion here reads it; a fixed placeholder keeps the TocEntry shape valid.
+  line: 1,
 });
 
 // Flatten the tree back to a slug list in document order — the invariant that no

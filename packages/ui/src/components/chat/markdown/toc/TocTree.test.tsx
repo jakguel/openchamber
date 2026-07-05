@@ -17,6 +17,9 @@ const entry = (depth: TocDepth, text: string): TocEntry => ({
   depth,
   text,
   slug: `${HEADING_ID_PREFIX}${text.toLowerCase().replace(/\s+/g, '-')}`,
+  // `line` is irrelevant to the render/collapse assertions here — synthetic
+  // entries with a fixed placeholder keep the TocEntry shape valid.
+  line: 1,
 });
 
 const model: TocEntry[] = [

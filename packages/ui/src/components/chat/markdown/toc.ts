@@ -7,8 +7,8 @@ import { stripLeadingFrontmatter } from './frontmatter';
  * sheet).
  *
  * Public API (stable — downstream tasks depend on it):
- *  - `extractToc(content, options?)` → ordered `{ depth, text, slug }[]` of the
- *    H1–H3 headings, in render order, derived from `marked.lexer` (so setext,
+ *  - `extractToc(content, options?)` → ordered `{ depth, text, slug, line }[]` of
+ *    the H1–H3 headings, in render order, derived from `marked.lexer` (so setext,
  *    blockquote/list-nested, and raw-HTML headings are all captured, and fenced
  *    code headings are excluded). Strips leading frontmatter by default so the
  *    heading order matches the rendered `<h1-3>` tags 1:1.
@@ -34,6 +34,13 @@ export type TocEntry = {
   text: string;
   /** Namespaced, de-duped DOM id (e.g. `md-h-overview`, `md-h-overview-1`). */
   slug: string;
+  /**
+   * 1-based source line of the heading in the FULL ORIGINAL content, INCLUDING
+   * any leading frontmatter block (i.e. not relative to the stripped body). Used
+   * by the editor-mode ToC to scroll the CodeMirror source to a heading. This
+   * field is strictly additive: it never feeds into `slug` / `HEADING_ID_PREFIX`.
+   */
+  line: number;
 };
 
 export type ExtractTocOptions = {
@@ -73,10 +80,22 @@ export const slugifyHeading = (text: string): string => {
 // Heading collection (recursive marked.lexer walk)
 // ---------------------------------------------------------------------------
 
-type RawHeading = { depth: TocDepth; text: string };
+type RawHeading = { depth: TocDepth; text: string; line: number };
 
 const readArray = (value: unknown): Tokens.Generic[] =>
   Array.isArray(value) ? (value as Tokens.Generic[]) : [];
+
+// Count '\n' occurrences (CRLF counts once — only the '\n' is tallied). Used to
+// thread a running 1-based line number through the marked.lexer token walk.
+const countNewlines = (value: string): number => {
+  let n = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    if (value.charCodeAt(i) === 10) n += 1;
+  }
+  return n;
+};
+
+const rawOf = (token: Tokens.Generic): string => (typeof token.raw === 'string' ? token.raw : '');
 
 const decodeEntities = (value: string): string =>
   value
@@ -121,41 +140,58 @@ const isTocDepth = (depth: unknown): depth is TocDepth =>
 
 // Pull <h1-3> headings out of a raw block-HTML token (marked emits raw HTML as
 // an `html` token, not heading tokens). Regex order preserves document order.
-const collectHtmlHeadings = (html: string, out: RawHeading[]): void => {
+// `baseLine` is the 1-based source line at which `html` starts; each heading's
+// line is derived from the newline count in `html` before the tag's match index.
+const collectHtmlHeadings = (html: string, out: RawHeading[], baseLine: number): void => {
   const re = /<(h[1-3])\b[^>]*>([\s\S]*?)<\/\1>/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(html)) !== null) {
     const depth = Number(match[1]!.slice(1));
     if (!isTocDepth(depth)) continue;
     const inner = (match[2] ?? '').replace(/<[^>]*>/g, '');
-    out.push({ depth, text: decodeEntities(inner).replace(/\s+/g, ' ').trim() });
+    const line = baseLine + countNewlines(html.slice(0, match.index));
+    out.push({ depth, text: decodeEntities(inner).replace(/\s+/g, ' ').trim(), line });
   }
 };
 
-// Depth-first walk in document order. Recurses blockquotes and list items so
-// nested headings are captured; `code` (and everything else) contributes no
-// rendered <h1-3> and is skipped.
-const collectHeadings = (tokens: Tokens.Generic[], out: RawHeading[]): void => {
+// Depth-first walk in document order, threading a running 1-based source line.
+// `baseLine` is the line at which the FIRST token in `tokens` starts. Recurses
+// blockquotes and list items so nested headings are captured; `code` (and
+// everything else) contributes no rendered <h1-3>, but its `raw` newlines still
+// advance the line counter so a `# ...` line inside a fence neither counts as a
+// heading nor corrupts the offset of following headings.
+//
+// Container newline invariant: for a blockquote, the concatenated child token
+// `.raw` reconstructs the source newline structure (only the `> ` marker is
+// stripped, never a line break); for a list, the concatenated `item.raw`
+// newlines equal the list token's `.raw` newlines. So recursing with the
+// container's own start line and then advancing the outer counter by the
+// container token's `.raw` newlines stays consistent.
+const collectHeadings = (tokens: Tokens.Generic[], out: RawHeading[], baseLine: number): void => {
+  let line = baseLine;
   for (const token of tokens) {
     switch (token.type) {
       case 'heading':
-        if (isTocDepth(token.depth)) out.push({ depth: token.depth, text: headingText(token) });
+        if (isTocDepth(token.depth)) out.push({ depth: token.depth, text: headingText(token), line });
         break;
       case 'blockquote':
-        collectHeadings(readArray(token.tokens), out);
+        collectHeadings(readArray(token.tokens), out, line);
         break;
-      case 'list':
-        for (const item of readArray(token.items)) collectHeadings(readArray(item.tokens), out);
+      case 'list': {
+        let itemLine = line;
+        for (const item of readArray(token.items)) {
+          collectHeadings(readArray(item.tokens), out, itemLine);
+          itemLine += countNewlines(rawOf(item));
+        }
         break;
+      }
       case 'html':
-        collectHtmlHeadings(
-          typeof token.raw === 'string' ? token.raw : typeof token.text === 'string' ? token.text : '',
-          out,
-        );
+        collectHtmlHeadings(rawOf(token) || (typeof token.text === 'string' ? token.text : ''), out, line);
         break;
       default:
         break;
     }
+    line += countNewlines(rawOf(token));
   }
 };
 
@@ -165,7 +201,7 @@ const collectHeadings = (tokens: Tokens.Generic[], out: RawHeading[]): void => {
 
 const buildToc = (headings: RawHeading[], existingIds?: Iterable<string>): TocEntry[] => {
   const used = new Set<string>(existingIds ? Array.from(existingIds) : []);
-  return headings.map(({ depth, text }) => {
+  return headings.map(({ depth, text, line }) => {
     const base = slugifyHeading(text);
     let slug = `${HEADING_ID_PREFIX}${base}`;
     let n = 1;
@@ -174,7 +210,7 @@ const buildToc = (headings: RawHeading[], existingIds?: Iterable<string>): TocEn
       n += 1;
     }
     used.add(slug);
-    return { depth, text, slug };
+    return { depth, text, slug, line };
   });
 };
 
@@ -185,8 +221,12 @@ const buildToc = (headings: RawHeading[], existingIds?: Iterable<string>): TocEn
 export const extractToc = (content: string, options: ExtractTocOptions = {}): TocEntry[] => {
   const { stripFrontmatter = true, existingIds } = options;
   const source = stripFrontmatter ? stripLeadingFrontmatter(content) : content;
+  // Lines removed as leading frontmatter — added back so every heading `line`
+  // is absolute in the ORIGINAL content. When nothing is stripped, source ===
+  // content and the offset is 0.
+  const frontmatterOffset = countNewlines(content.slice(0, content.length - source.length));
   const headings: RawHeading[] = [];
-  collectHeadings(marked.lexer(source) as Tokens.Generic[], headings);
+  collectHeadings(marked.lexer(source) as Tokens.Generic[], headings, frontmatterOffset + 1);
   return buildToc(headings, existingIds);
 };
 

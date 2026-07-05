@@ -55,9 +55,9 @@ describe('extractToc — depth + slug model', () => {
   test('ATX headings, only H1–H3 (H4 excluded)', () => {
     const toc = extractToc('# H1\n## H2\n### H3\n#### H4');
     expect(toc).toEqual([
-      { depth: 1, text: 'H1', slug: `${HEADING_ID_PREFIX}h1` },
-      { depth: 2, text: 'H2', slug: `${HEADING_ID_PREFIX}h2` },
-      { depth: 3, text: 'H3', slug: `${HEADING_ID_PREFIX}h3` },
+      { depth: 1, text: 'H1', slug: `${HEADING_ID_PREFIX}h1`, line: 1 },
+      { depth: 2, text: 'H2', slug: `${HEADING_ID_PREFIX}h2`, line: 2 },
+      { depth: 3, text: 'H3', slug: `${HEADING_ID_PREFIX}h3`, line: 3 },
     ]);
   });
 
@@ -72,35 +72,35 @@ describe('extractToc — depth + slug model', () => {
   test('heading nested in a blockquote is collected', () => {
     const toc = extractToc('> ## Quoted heading');
     expect(toc).toEqual([
-      { depth: 2, text: 'Quoted heading', slug: `${HEADING_ID_PREFIX}quoted-heading` },
+      { depth: 2, text: 'Quoted heading', slug: `${HEADING_ID_PREFIX}quoted-heading`, line: 1 },
     ]);
   });
 
   test('heading nested in a list item is collected', () => {
     const toc = extractToc('- # List Heading\n- plain item');
     expect(toc).toEqual([
-      { depth: 1, text: 'List Heading', slug: `${HEADING_ID_PREFIX}list-heading` },
+      { depth: 1, text: 'List Heading', slug: `${HEADING_ID_PREFIX}list-heading`, line: 1 },
     ]);
   });
 
   test('headings inside a fenced code block are EXCLUDED', () => {
     const toc = extractToc('# Real\n```\n## fake\n```');
     expect(toc).toEqual([
-      { depth: 1, text: 'Real', slug: `${HEADING_ID_PREFIX}real` },
+      { depth: 1, text: 'Real', slug: `${HEADING_ID_PREFIX}real`, line: 1 },
     ]);
   });
 
   test('raw-HTML heading (<h2>) is collected positionally', () => {
     const toc = extractToc('<h2>Raw HTML</h2>\n\nafter');
     expect(toc).toEqual([
-      { depth: 2, text: 'Raw HTML', slug: `${HEADING_ID_PREFIX}raw-html` },
+      { depth: 2, text: 'Raw HTML', slug: `${HEADING_ID_PREFIX}raw-html`, line: 1 },
     ]);
   });
 
   test('inline code / emphasis heading → clean text + stable slug', () => {
     const toc = extractToc('## `fn()` returns *x*');
     expect(toc).toEqual([
-      { depth: 2, text: 'fn() returns x', slug: `${HEADING_ID_PREFIX}fn-returns-x` },
+      { depth: 2, text: 'fn() returns x', slug: `${HEADING_ID_PREFIX}fn-returns-x`, line: 1 },
     ]);
   });
 
@@ -170,6 +170,61 @@ describe('extractToc — frontmatter + rendered-h-tag 1:1 parity', () => {
     expect(tocDepths).toEqual(renderedDepths);
     // sanity: the fixture really exercises H1..H3 and excludes the fenced + H4
     expect(tocDepths).toEqual([1, 2, 1, 3, 2]);
+  });
+});
+
+describe('extractToc — 1-based source line derivation', () => {
+  test('basic ATX: consecutive lines map to 1, 2', () => {
+    expect(extractToc('# A\n## B').map((e) => [e.text, e.line])).toEqual([
+      ['A', 1],
+      ['B', 2],
+    ]);
+  });
+
+  test('frontmatter offset: heading line counts the stripped block (line 4, not 1)', () => {
+    const toc = extractToc('---\nx: 1\n---\n# A');
+    expect(toc).toEqual([{ depth: 1, text: 'A', slug: `${HEADING_ID_PREFIX}a`, line: 4 }]);
+  });
+
+  test('setext heading line points at the TEXT line, not the underline', () => {
+    // lines: 1 "para", 2 "", 3 "Sect", 4 "----" → heading text on line 3.
+    expect(extractToc('para\n\nSect\n----').map((e) => [e.text, e.line])).toEqual([['Sect', 3]]);
+  });
+
+  test('raw-HTML heading line is the tag line within the source', () => {
+    // lines: 1 "para", 2 "", 3 "<h2>X</h2>" → line 3.
+    expect(extractToc('para\n\n<h2>X</h2>').map((e) => [e.text, e.line])).toEqual([['X', 3]]);
+  });
+
+  test('heading nested in a blockquote gets its ABSOLUTE source line', () => {
+    // lines: 1 "lead", 2 "", 3 "> ## Q" → line 3.
+    expect(extractToc('lead\n\n> ## Q').map((e) => [e.text, e.line])).toEqual([['Q', 3]]);
+  });
+
+  test('heading nested in a list item gets its ABSOLUTE source line', () => {
+    // lines: 1 "lead", 2 "", 3 "- # H", 4 "- x" → line 3.
+    expect(extractToc('lead\n\n- # H\n- x').map((e) => [e.text, e.line])).toEqual([['H', 3]]);
+  });
+
+  test('fenced code is excluded AND its lines still advance the following heading', () => {
+    // lines: 1 "# One", 2 "```", 3 "# not a heading", 4 "```", 5 "## Two".
+    const toc = extractToc('# One\n```\n# not a heading\n```\n## Two');
+    expect(toc.map((e) => [e.text, e.line])).toEqual([
+      ['One', 1],
+      ['Two', 5],
+    ]);
+    // the fenced "# not a heading" must not appear at all
+    expect(toc).toHaveLength(2);
+  });
+
+  test('duplicate heading text on different lines → distinct lines, dedup slug suffix unchanged', () => {
+    // lines: 1 "## Dup", 2 "", 3 "## Dup".
+    const toc = extractToc('## Dup\n\n## Dup');
+    expect(toc.map((e) => e.line)).toEqual([1, 3]);
+    expect(toc.map((e) => e.slug)).toEqual([
+      `${HEADING_ID_PREFIX}dup`,
+      `${HEADING_ID_PREFIX}dup-1`,
+    ]);
   });
 });
 
