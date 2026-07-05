@@ -990,6 +990,7 @@ export const dict = {
   'filesView.editor.saveFile': 'Enregistrer le fichier',
   'filesView.editor.exitFullscreen': 'Quitter le plein écran',
   'filesView.editor.fullscreen': 'Plein écran',
+  'filesView.editor.toggleToc': 'Afficher/masquer la table des matières',
   'filesView.unsaved.title': 'Modifications non enregistrées',
   'filesView.unsaved.description': 'Enregistrer vos modifications avant de continuer ?',
   'filesView.unsaved.saveChanges': 'Enregistrer les modifications',

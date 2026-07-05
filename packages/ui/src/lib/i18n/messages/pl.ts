@@ -1550,6 +1550,7 @@ export const dict: Record<I18nKey, string> = {
   'filesView.editor.exitFullscreen': 'Wyjdź z pełnego ekranu',
   'filesView.editor.findInFile': 'Znajdź w pliku',
   'filesView.editor.fullscreen': 'Pełny ekran',
+  'filesView.editor.toggleToc': 'Przełącz spis treści',
   'filesView.editor.goToLine': 'Przejdź do linii',
   'filesView.editor.htmlPreviewTitle': 'Podgląd HTML',
   'filesView.diagram.closeDiagramView': 'Zamknij widok diagramu',

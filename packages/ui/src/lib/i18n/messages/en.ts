@@ -1115,6 +1115,7 @@ export const dict = {
   'filesView.editor.saveFile': 'Save file',
   'filesView.editor.exitFullscreen': 'Exit fullscreen',
   'filesView.editor.fullscreen': 'Fullscreen',
+  'filesView.editor.toggleToc': 'Toggle table of contents',
   'filesView.unsaved.title': 'Unsaved changes',
   'filesView.unsaved.description': 'Save your edits before continuing?',
   'filesView.unsaved.saveChanges': 'Save changes',

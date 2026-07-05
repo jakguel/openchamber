@@ -1081,6 +1081,7 @@ export const dict: Record<I18nKey, string> = {
   "filesView.editor.saveFile": "Зберегти файл",
   "filesView.editor.exitFullscreen": "Вийти з повноекранного режиму",
   "filesView.editor.fullscreen": "Повний екран",
+  "filesView.editor.toggleToc": "Перемкнути зміст",
   "filesView.unsaved.title": "Незбережені зміни",
   "filesView.unsaved.description": "Зберегти зміни, перш ніж продовжити?",
   "filesView.unsaved.saveChanges": "Зберегти зміни",

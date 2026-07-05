@@ -1081,6 +1081,7 @@ export const dict: Record<I18nKey, string> = {
   "filesView.editor.saveFile": "Salvar arquivo",
   "filesView.editor.exitFullscreen": "Sair da tela cheia",
   "filesView.editor.fullscreen": "Tela completa",
+  "filesView.editor.toggleToc": "Alternar sumário",
   "filesView.unsaved.title": "Alterações não salvas",
   "filesView.unsaved.description": "Deseja salvar suas alterações antes de continuar?",
   "filesView.unsaved.saveChanges": "Salvar alterações",

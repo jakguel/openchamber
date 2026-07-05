@@ -759,8 +759,11 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const [wrapLines, setWrapLines] = React.useState(true);
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [isSearchOpen, setIsSearchOpen] = React.useState(false);
-  const [isFloatingToolbarOpen, setIsFloatingToolbarOpen] = React.useState(false);
-  const floatingToolbarRef = React.useRef<HTMLDivElement | null>(null);
+  // Sidebar rendering lands in a follow-up task; this only exposes the toggle state.
+  const [tocVisible, setTocVisible] = React.useState(false);
+  const handleToggleToc = React.useCallback(() => {
+    setTocVisible((visible) => !visible);
+  }, []);
   const toolbarDropdownOpenCountRef = React.useRef(0);
 
   const handleToolbarDropdownOpenChange = React.useCallback((open: boolean) => {
@@ -769,24 +772,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       toolbarDropdownOpenCountRef.current + (open ? 1 : -1),
     );
   }, []);
-
-  const isClickInsidePortalledMenu = React.useCallback((target: EventTarget | null) => {
-    if (!(target instanceof Element)) return false;
-    return target.closest('[data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-item"]') !== null;
-  }, []);
-
-  React.useEffect(() => {
-    if (!isFloatingToolbarOpen) return;
-    const handler = (event: MouseEvent) => {
-      if (toolbarDropdownOpenCountRef.current > 0) return;
-      if (isClickInsidePortalledMenu(event.target)) return;
-      if (floatingToolbarRef.current && !floatingToolbarRef.current.contains(event.target as Node)) {
-        setIsFloatingToolbarOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [isClickInsidePortalledMenu, isFloatingToolbarOpen]);
   type TextViewMode = 'view' | 'edit';
   type PreviewViewMode = 'preview' | 'edit';
 
@@ -1040,7 +1025,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const fileEditorKeymap = useUIStore((state) => state.fileEditorKeymap);
   const settingsDefaultFileViewerPreview = useConfigStore((state) => state.settingsDefaultFileViewerPreview);
   const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
-  const settingsExpandedEditorToolbar = useUIStore((state) => state.expandedEditorToolbar);
 
   // Global mouseup to end drag selection
   React.useEffect(() => {
@@ -3431,6 +3415,24 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           </Tooltip>
         )}
 
+        {isMarkdown && getMdViewMode() === 'preview' && (
+          withTooltip(t('filesView.editor.toggleToc'),
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleToc}
+              className={cn(
+                'size-6 p-0 transition-opacity hover:bg-transparent focus-visible:bg-transparent active:bg-transparent',
+                tocVisible ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-65 hover:opacity-100'
+              )}
+              title={t('filesView.editor.toggleToc')}
+              aria-label={t('filesView.editor.toggleToc')}
+            >
+              <Icon name="list-unordered" className="size-4" />
+            </Button>
+          )
+        )}
+
         {isDrawio && (
           <>
             <PreviewToggleButton
@@ -3545,27 +3547,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
               ) : (
                 <Icon name="file-copy-2" className="size-4" />
               )}
-            </Button>
-          )
-        )}
-
-        {files.downloadFile && (
-          withTooltip(t('filesView.editor.saveFile'),
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                const fn = files.downloadFile;
-                if (fn) void fn(selectedFile.path).catch((error) => {
-                  console.error('Download failed:', error);
-                  toast.error(t('sidebarFilesTree.toast.operationFailed'));
-                });
-              }}
-              className="size-6 p-0 hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-              title={t('filesView.editor.saveFile')}
-              aria-label={t('filesView.editor.saveFile')}
-            >
-              <Icon name="download" className="size-4" />
             </Button>
           )
         )}
@@ -3779,8 +3760,8 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
         </div>
         ) : null}
 
-        {/* Row 2: Docked editor toolbar (expanded). Desktop-only opt-in. */}
-        {settingsExpandedEditorToolbar && !isMobile && selectedFile ? (
+        {/* Row 2: Docked editor toolbar. Always-on for the desktop inline viewer. */}
+        {!isMobile && selectedFile ? (
           <div className="flex min-w-0 items-center gap-3 border-t border-border/40 bg-[var(--surface-subtle)] px-3 py-1">
             {displaySelectedPath ? (
               <span
@@ -3799,39 +3780,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       </div>
 
       <div className="flex-1 min-h-0 min-w-0 relative">
-        {selectedFile && !isSearchOpen && !(settingsExpandedEditorToolbar && !isMobile) && (
-          <div
-            ref={floatingToolbarRef}
-            className="absolute right-3 top-3 z-30"
-            onMouseEnter={() => setIsFloatingToolbarOpen(true)}
-            onMouseLeave={() => {
-              if (toolbarDropdownOpenCountRef.current > 0) return;
-              setIsFloatingToolbarOpen(false);
-            }}
-          >
-            {isFloatingToolbarOpen ? (
-              renderFloatingFileControls()
-            ) : (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setIsFloatingToolbarOpen(true)}
-                      className="size-8 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-0 text-muted-foreground shadow-sm hover:text-foreground"
-                      aria-label={t('filesView.editor.showControlsAria')}
-                      title={t('filesView.editor.controlsTitle')}
-                    >
-                      <Icon name="more-2-fill" className="size-4" />
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={6}>{t('filesView.editor.controlsTitle')}</TooltipContent>
-              </Tooltip>
-            )}
-          </div>
-        )}
         <ScrollableOverlay outerClassName="h-full min-w-0" className="h-full min-w-0">
           {!selectedFile ? (
             <div className="p-3 typography-ui text-muted-foreground">{t('filesView.editor.pickFileFromTree')}</div>
@@ -4202,11 +4150,22 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   // Fullscreen file viewer overlay
   const fullscreenViewer = mode === 'full' && isFullscreen && selectedFile && (
     <div className="absolute inset-0 z-50 flex flex-col bg-background">
+      {/* Docked toolbar. Always-on for the fullscreen viewer. */}
+      <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-[var(--surface-subtle)] px-3 py-1">
+        {displaySelectedPath ? (
+          <span
+            className="min-w-0 flex-1 truncate typography-meta text-muted-foreground"
+            title={displaySelectedPath}
+          >
+            {displaySelectedPath}
+          </span>
+        ) : null}
+        <div className="ml-auto min-w-0 shrink-0 overflow-x-auto">
+          {renderFloatingFileControls({ layout: 'docked', exitFullscreenOnly: true })}
+        </div>
+      </div>
       {/* Fullscreen content */}
       <div className="flex-1 min-h-0 min-w-0 relative">
-        <div className="absolute right-4 top-4 z-30">
-          {renderFloatingFileControls({ exitFullscreenOnly: true })}
-        </div>
         <ScrollableOverlay outerClassName="h-full min-w-0" className="h-full min-w-0">
           {(fileLoading || isImageAssetAuthLoading || isPdfAssetAuthLoading) ? (
             suppressFileLoadingIndicator

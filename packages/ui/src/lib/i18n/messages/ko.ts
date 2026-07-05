@@ -1118,6 +1118,7 @@ export const dict: Record<I18nKey, string> = {
   'filesView.editor.saveFile': '파일 저장',
   'filesView.editor.exitFullscreen': '전체 화면 종료',
   'filesView.editor.fullscreen': '전체 화면',
+  'filesView.editor.toggleToc': '목차 표시/숨기기',
   'filesView.unsaved.title': '저장하지 않은 변경 사항',
   'filesView.unsaved.description': '계속하기 전에 편집 내용을 저장할까요?',
   'filesView.unsaved.saveChanges': '변경 사항 저장',

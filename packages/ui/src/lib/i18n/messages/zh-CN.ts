@@ -1081,6 +1081,7 @@ export const dict: Record<I18nKey, string> = {
   'filesView.editor.saveFile': '保存文件',
   'filesView.editor.exitFullscreen': '退出全屏',
   'filesView.editor.fullscreen': '全屏',
+  'filesView.editor.toggleToc': '切换目录',
   'filesView.unsaved.title': '未保存的更改',
   'filesView.unsaved.description': '继续前是否保存你的编辑？',
   'filesView.unsaved.saveChanges': '保存更改',
