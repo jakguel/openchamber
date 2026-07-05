@@ -58,6 +58,7 @@ import { DiagramEditor } from '@/components/diagram';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { EditorView } from '@codemirror/view';
 import type { Extension } from '@codemirror/state';
+import { EditorSelection } from '@codemirror/state';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useUIStore } from '@/stores/useUIStore';
 import { useFilesViewTabsStore } from '@/stores/useFilesViewTabsStore';
@@ -74,8 +75,6 @@ import { Icon } from "@/components/icon/Icon";
 import { useMessageTTS } from '@/hooks/useMessageTTS';
 import { ensurePierreThemeRegistered } from '@/lib/shiki/appThemeRegistry';
 import { getDefaultTheme } from '@/lib/theme/themes';
-import { openDesktopFileInApp, openDesktopPath } from '@/lib/desktop';
-import { useOpenInAppsStore } from '@/stores/useOpenInAppsStore';
 import { eventMatchesShortcut, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { useI18n } from '@/lib/i18n';
 
@@ -96,55 +95,6 @@ type FileStatSnapshot = {
 type SelectedLineRange = {
   start: number;
   end: number;
-};
-
-const getParentDirectoryPath = (path: string): string => {
-  const normalized = normalizePath(path);
-  if (!normalized) return '';
-  if (normalized === '/' || /^[A-Za-z]:\/$/.test(normalized)) {
-    return normalized;
-  }
-
-  const lastSlash = normalized.lastIndexOf('/');
-  if (lastSlash < 0) {
-    return normalized;
-  }
-  if (lastSlash === 0) {
-    return '/';
-  }
-
-  const parent = normalized.slice(0, lastSlash);
-  if (/^[A-Za-z]:$/.test(parent)) {
-    return `${parent}/`;
-  }
-  return parent;
-};
-
-const OpenInAppListIcon = ({ label, iconDataUrl }: { label: string; iconDataUrl?: string }) => {
-  const [failed, setFailed] = React.useState(false);
-  const initial = label.trim().slice(0, 1).toUpperCase() || '?';
-
-  if (iconDataUrl && !failed) {
-    return (
-      <img
-        src={iconDataUrl}
-        alt=""
-        className="size-4 rounded-sm"
-        onError={() => setFailed(true)}
-      />
-    );
-  }
-
-  return (
-    <span
-      className={cn(
-        'size-4 rounded-sm flex items-center justify-center',
-        'bg-[var(--surface-muted)] text-[9px] font-medium text-muted-foreground'
-      )}
-    >
-      {initial}
-    </span>
-  );
 };
 
 const sortNodes = (items: FileNode[]) =>
@@ -777,14 +727,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const fullscreenTocCommit = React.useMemo(() => createCommitSignal(), []);
   const getInlinePreviewScroller = React.useCallback(() => inlinePreviewScrollerRef.current, []);
   const getFullscreenPreviewScroller = React.useCallback(() => fullscreenPreviewScrollerRef.current, []);
-  const toolbarDropdownOpenCountRef = React.useRef(0);
-
-  const handleToolbarDropdownOpenChange = React.useCallback((open: boolean) => {
-    toolbarDropdownOpenCountRef.current = Math.max(
-      0,
-      toolbarDropdownOpenCountRef.current + (open ? 1 : -1),
-    );
-  }, []);
   type TextViewMode = 'view' | 'edit';
   type PreviewViewMode = 'preview' | 'edit';
 
@@ -942,8 +884,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const pendingClosePathRef = React.useRef<string | null>(null);
   const pendingExternalClosePath = React.useRef<string | null>(null);
   const skipDirtyOnceRef = React.useRef(false);
-  const copiedContentTimeoutRef = React.useRef<number | null>(null);
-  const copiedPathTimeoutRef = React.useRef<number | null>(null);
   const editorViewRef = React.useRef<EditorView | null>(null);
   const editorWrapperRef = React.useRef<HTMLDivElement | null>(null);
   const [editorViewReadyNonce, setEditorViewReadyNonce] = React.useState(0);
@@ -965,8 +905,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const [isDialogSubmitting, setIsDialogSubmitting] = React.useState(false);
   const [contextMenuPath, setContextMenuPath] = React.useState<string | null>(null);
   const [rightClickMenuPath, setRightClickMenuPath] = React.useState<string | null>(null);
-  const [copiedContent, setCopiedContent] = React.useState(false);
-  const [copiedPath, setCopiedPath] = React.useState(false);
   const [isGoToLineOpen, setIsGoToLineOpen] = React.useState(false);
 
   const canCreateFile = Boolean(files.writeFile);
@@ -974,14 +912,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const canRename = Boolean(files.rename);
   const canDelete = Boolean(files.delete);
   const canReveal = Boolean(files.revealPath);
-  const openInApps = useOpenInAppsStore((state) => state.availableApps);
-  const openInCacheStale = useOpenInAppsStore((state) => state.isCacheStale);
-  const initializeOpenInApps = useOpenInAppsStore((state) => state.initialize);
-  const loadOpenInApps = useOpenInAppsStore((state) => state.loadInstalledApps);
-
-  React.useEffect(() => {
-    initializeOpenInApps();
-  }, [initializeOpenInApps]);
 
   const handleRevealPath = React.useCallback((targetPath: string) => {
     if (!files.revealPath) return;
@@ -989,31 +919,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       toast.error(t('sidebarFilesTree.toast.revealFailed'));
     });
   }, [files, t]);
-
-  const handleOpenInApp = React.useCallback(async (app: { id: string; appName: string }) => {
-    if (!selectedFile?.path) {
-      return;
-    }
-
-    const openedInApp = await openDesktopFileInApp(selectedFile.path, app.id, app.appName);
-    if (openedInApp) {
-      return;
-    }
-
-    const openedFile = await openDesktopPath(selectedFile.path, app.appName);
-    if (openedFile) {
-      return;
-    }
-
-    const fileDirectory = getParentDirectoryPath(selectedFile.path) || root;
-    if (fileDirectory) {
-      const openedDirectory = await openDesktopPath(fileDirectory, app.appName);
-      if (openedDirectory) {
-        return;
-      }
-    }
-    toast.error(t('filesView.toast.openInAppFailed', { app: app.appName }));
-  }, [root, selectedFile?.path, t]);
 
   const handleOpenDialog = React.useCallback((type: 'createFile' | 'createFolder' | 'rename' | 'delete', data: { path: string; name?: string; type?: 'file' | 'directory' }) => {
     setActiveDialog(type);
@@ -1048,17 +953,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     };
     document.addEventListener('mouseup', handleGlobalMouseUp);
     return () => document.removeEventListener('mouseup', handleGlobalMouseUp);
-  }, []);
-
-  React.useEffect(() => {
-    return () => {
-      if (copiedContentTimeoutRef.current !== null) {
-        window.clearTimeout(copiedContentTimeoutRef.current);
-      }
-      if (copiedPathTimeoutRef.current !== null) {
-        window.clearTimeout(copiedPathTimeoutRef.current);
-      }
-    };
   }, []);
 
   // Extract selected code
@@ -2399,12 +2293,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       && !isSelectedPdf,
   );
 
-  const displaySelectedPath = React.useMemo(() => {
-    return getDisplayPath(root, selectedFilePath);
-  }, [selectedFilePath, root]);
-
-  const canCopy = Boolean(selectedFile && (!isSelectedImage || isSelectedSvg) && !isSelectedPdf && fileContent.length > 0);
-  const canCopyPath = Boolean(selectedFile && displaySelectedPath.length > 0);
   const canEdit = Boolean(selectedFile && !selectedFileIsOutsideWorkspace && !isSelectedImage && !isSelectedPdf && files.writeFile && fileContent.length <= MAX_VIEW_CHARS);
   const isMarkdown = Boolean(selectedFile?.path && isMarkdownFile(selectedFile.path));
   // Ordered H1–H3 ToC model for the markdown preview. Empty for non-markdown or
@@ -2414,6 +2302,19 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     () => (isMarkdown ? extractToc(fileContent, { stripFrontmatter: true }) : []),
     [isMarkdown, fileContent],
   );
+  const scrollEditorToHeading = React.useCallback((slug: string) => {
+    const entry = tocEntries.find((candidate) => candidate.slug === slug);
+    const view = editorViewRef.current;
+    if (!entry || !view) {
+      return;
+    }
+    const target = Math.max(1, Math.min(entry.line, view.state.doc.lines));
+    const line = view.state.doc.line(target);
+    view.dispatch({
+      selection: EditorSelection.cursor(line.from),
+      effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+    });
+  }, [tocEntries]);
   const isJson = Boolean(selectedFile?.path && isJsonFile(selectedFile.path));
   const isHtml = Boolean(selectedFile?.path && isHtmlFile(selectedFile.path));
   const isDrawio = Boolean(selectedFile?.path && isDrawioFile(selectedFile.path));
@@ -2462,7 +2363,10 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
       return;
     }
 
-    const defaultMode: TextViewMode = settingsDefaultFileViewerPreview ? 'view' : 'edit';
+    // Editable code files open in 'edit'; the force-set effect above clamps
+    // read-only files back to shiki 'view'. Markdown/HTML/JSON keep their own
+    // settings-derived defaults below.
+    const defaultMode: TextViewMode = 'edit';
     setTextViewMode(textViewModeByPathRef.current[selectedPath] ?? defaultMode);
 
     // Respect per-type localStorage preference when available,
@@ -2501,14 +2405,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     }
     setJsonViewMode(jsonDefault);
   }, [selectedFile?.path, settingsDefaultFileViewerPreview]);
-
-  const saveTextViewMode = React.useCallback((mode: TextViewMode) => {
-    const selectedPath = selectedFile?.path;
-    if (selectedPath) {
-      textViewModeByPathRef.current[selectedPath] = mode;
-    }
-    setTextViewMode(mode);
-  }, [selectedFile?.path]);
 
   const saveMdViewMode = React.useCallback((mode: PreviewViewMode) => {
     const selectedPath = selectedFile?.path;
@@ -3217,6 +3113,36 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
     );
   }, [currentTheme.metadata.variant, pierreTheme, wrapLines]);
 
+  // ToC toggle for the docked bar — always at the LEFT, visible in preview AND
+  // code/edit mode for any markdown file with headings (independent of view mode).
+  const renderTocToggle = () => {
+    if (!isMarkdown || tocEntries.length === 0) {
+      return null;
+    }
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleToc}
+              className={cn(
+                'size-6 p-0 transition-opacity hover:bg-transparent focus-visible:bg-transparent active:bg-transparent',
+                tocVisible ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-65 hover:opacity-100'
+              )}
+              title={t('filesView.editor.toggleToc')}
+              aria-label={t('filesView.editor.toggleToc')}
+            >
+              <Icon name="list-unordered" className="size-4" />
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6}>{t('filesView.editor.toggleToc')}</TooltipContent>
+      </Tooltip>
+    );
+  };
+
   const renderFloatingFileControls = ({
     exitFullscreenOnly = false,
     layout = 'floating',
@@ -3285,48 +3211,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           </>
         )}
 
-        <DropdownMenu onOpenChange={handleToolbarDropdownOpenChange}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex">
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="size-6 p-0 text-foreground opacity-100 hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-                    title={t('filesView.editor.openInDesktopApp')}
-                    aria-label={t('filesView.editor.openInDesktopApp')}
-                  >
-                    <Icon name="file-transfer" className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" sideOffset={6}>{t('filesView.editor.openInDesktopApp')}</TooltipContent>
-          </Tooltip>
-          <DropdownMenuContent align="end" className="w-56 max-h-[70vh] overflow-y-auto">
-            {openInApps.map((app) => (
-              <DropdownMenuItem
-                key={app.id}
-                className="flex items-center gap-2"
-                onClick={() => void handleOpenInApp(app)}
-              >
-                <OpenInAppListIcon label={app.label} iconDataUrl={app.iconDataUrl} />
-                <span className="typography-ui-label text-foreground">{app.label}</span>
-              </DropdownMenuItem>
-            ))}
-            {openInCacheStale ? (
-              <DropdownMenuItem
-                className="flex items-center gap-2"
-                onClick={() => void loadOpenInApps(true)}
-              >
-                <Icon name="refresh" className="size-4" />
-                <span className="typography-ui-label text-foreground">{t('filesView.editor.refreshApps')}</span>
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
         {!isSelectedImage && !isSelectedPdf && (
           <>
             {withTooltip(wrapLines ? t('filesView.editor.disableLineWrap') : t('filesView.editor.enableLineWrap'),
@@ -3384,15 +3268,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           </>
         )}
 
-        {canUseShikiFileView && canEdit && !isJson && !isHtml && (
-          <PreviewToggleButton
-            currentMode={textViewMode === 'view' ? 'preview' : 'edit'}
-            onToggle={() => {
-              saveTextViewMode(textViewMode === 'view' ? 'edit' : 'view');
-            }}
-          />
-        )}
-
         {(isMarkdown || isHtmlFile(selectedFile?.path ?? '')) && (
           <PreviewToggleButton
             currentMode={isMarkdown ? getMdViewMode() : getHtmlViewMode()}
@@ -3433,24 +3308,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
               {isTTSPlaying ? t('filesView.tts.stopSpeaking') : t('filesView.tts.readAloud')}
             </TooltipContent>
           </Tooltip>
-        )}
-
-        {isMarkdown && getMdViewMode() === 'preview' && tocEntries.length > 0 && (
-          withTooltip(t('filesView.editor.toggleToc'),
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleToggleToc}
-              className={cn(
-                'size-6 p-0 transition-opacity hover:bg-transparent focus-visible:bg-transparent active:bg-transparent',
-                tocVisible ? 'text-foreground opacity-100' : 'text-muted-foreground opacity-65 hover:opacity-100'
-              )}
-              title={t('filesView.editor.toggleToc')}
-              aria-label={t('filesView.editor.toggleToc')}
-            >
-              <Icon name="list-unordered" className="size-4" />
-            </Button>
-          )
         )}
 
         {isDrawio && (
@@ -3502,70 +3359,6 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                 <Icon name="code-sslash" className="size-4" />
               ) : (
                 <Icon name="node-tree" className="size-4" />
-              )}
-            </Button>
-          )
-        )}
-
-        {canCopy && (
-          withTooltip(t('filesView.editor.copyFileContents'),
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={async () => {
-                const result = await copyTextToClipboard(fileContent);
-                if (result.ok) {
-                  setCopiedContent(true);
-                  if (copiedContentTimeoutRef.current !== null) {
-                    window.clearTimeout(copiedContentTimeoutRef.current);
-                  }
-                  copiedContentTimeoutRef.current = window.setTimeout(() => {
-                    setCopiedContent(false);
-                  }, 1200);
-                } else {
-                  toast.error(t('filesView.toast.copyFailed'));
-                }
-              }}
-              className="size-6 p-0 hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-              title={t('filesView.editor.copyFileContents')}
-              aria-label={t('filesView.editor.copyFileContents')}
-            >
-              {copiedContent ? (
-                <Icon name="check" className="size-4 text-[color:var(--status-success)]" />
-              ) : (
-                <Icon name="clipboard" className="size-4" />
-              )}
-            </Button>
-          )
-        )}
-
-        {canCopyPath && (
-          withTooltip(t('filesView.editor.copyFilePathTitle', { path: displaySelectedPath }),
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={async () => {
-                const result = await copyTextToClipboard(displaySelectedPath);
-                if (result.ok) {
-                  setCopiedPath(true);
-                  if (copiedPathTimeoutRef.current !== null) {
-                    window.clearTimeout(copiedPathTimeoutRef.current);
-                  }
-                  copiedPathTimeoutRef.current = window.setTimeout(() => {
-                    setCopiedPath(false);
-                  }, 1200);
-                } else {
-                  toast.error(t('filesView.toast.copyFailed'));
-                }
-              }}
-              className="size-6 p-0 hover:bg-transparent focus-visible:bg-transparent active:bg-transparent"
-              title={t('filesView.editor.copyFilePathTitle', { path: displaySelectedPath })}
-              aria-label={t('filesView.editor.copyFilePathTitle', { path: displaySelectedPath })}
-            >
-              {copiedPath ? (
-                <Icon name="check" className="size-4 text-[color:var(--status-success)]" />
-              ) : (
-                <Icon name="file-copy-2" className="size-4" />
               )}
             </Button>
           )
@@ -3782,15 +3575,8 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
 
         {/* Row 2: Docked editor toolbar. Always-on for the desktop inline viewer. */}
         {!isMobile && selectedFile ? (
-          <div className="flex min-w-0 items-center gap-3 border-t border-border/40 bg-[var(--surface-subtle)] px-3 py-1">
-            {displaySelectedPath ? (
-              <span
-                className="min-w-0 flex-1 truncate typography-meta text-muted-foreground"
-                title={displaySelectedPath}
-              >
-                {displaySelectedPath}
-              </span>
-            ) : null}
+          <div className="flex min-w-0 items-center gap-3 border-t border-border/40 bg-background px-3 py-1">
+            {renderTocToggle()}
             <div className="ml-auto min-w-0 shrink-0 overflow-x-auto">
               {renderFloatingFileControls({ layout: 'docked' })}
             </div>
@@ -3920,10 +3706,16 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           ) : selectedFile && canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)
           ) : (
-            <div
-              className={cn('relative h-full', shouldMaskEditorForPendingNavigation && 'overflow-hidden')}
-              ref={editorWrapperRef}
-            >
+            <div className="flex h-full min-h-0">
+              {isMarkdown && getMdViewMode() === 'edit' && tocVisible && tocEntries.length > 0 && (
+                <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
+                  <TocTree entries={tocEntries} onScrollToHeading={scrollEditorToHeading} />
+                </aside>
+              )}
+              <div
+                className={cn('relative h-full min-w-0 flex-1', shouldMaskEditorForPendingNavigation && 'overflow-hidden')}
+                ref={editorWrapperRef}
+              >
               <div className={cn('h-full', shouldMaskEditorForPendingNavigation && 'invisible')}>
                 <CodeMirrorEditor
                   value={draftContent}
@@ -4044,6 +3836,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
         </ScrollableOverlay>
@@ -4185,15 +3978,8 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
   const fullscreenViewer = mode === 'full' && isFullscreen && selectedFile && (
     <div className="absolute inset-0 z-50 flex flex-col bg-background">
       {/* Docked toolbar. Always-on for the fullscreen viewer. */}
-      <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-[var(--surface-subtle)] px-3 py-1">
-        {displaySelectedPath ? (
-          <span
-            className="min-w-0 flex-1 truncate typography-meta text-muted-foreground"
-            title={displaySelectedPath}
-          >
-            {displaySelectedPath}
-          </span>
-        ) : null}
+      <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-background px-3 py-1">
+        {renderTocToggle()}
         <div className="ml-auto min-w-0 shrink-0 overflow-x-auto">
           {renderFloatingFileControls({ layout: 'docked', exitFullscreenOnly: true })}
         </div>
@@ -4275,7 +4061,13 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
           ) : canUseShikiFileView && textViewMode === 'view' ? (
             renderShikiFileView(selectedFile, draftContent)
           ) : (
-            <div className={cn('relative h-full', shouldMaskEditorForPendingNavigation && 'overflow-hidden')}>
+            <div className="flex h-full min-h-0">
+              {isMarkdown && getMdViewMode() === 'edit' && tocVisible && tocEntries.length > 0 && (
+                <aside className="h-full w-64 shrink-0 overflow-auto border-r border-border/60 bg-[var(--surface-muted)] py-2">
+                  <TocTree entries={tocEntries} onScrollToHeading={scrollEditorToHeading} />
+                </aside>
+              )}
+              <div className={cn('relative h-full min-w-0 flex-1', shouldMaskEditorForPendingNavigation && 'overflow-hidden')}>
               <div className={cn('h-full', shouldMaskEditorForPendingNavigation && 'invisible')}>
               <CodeMirrorEditor
                 value={draftContent}
@@ -4306,6 +4098,7 @@ export const FilesView = React.forwardRef<FilesViewRef, FilesViewProps>(
                   </div>
                 </div>
               )}
+              </div>
             </div>
           )}
           </ScrollableOverlay>
