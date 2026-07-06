@@ -1596,6 +1596,22 @@ html:not(.dark) .chat-scroll {
   background: var(--surface-background);
 }
 
+/* Fullscreen host-scale neutralization (task openchamber-5ki.41). applyDiagramHostBodyScale
+   (diagramScale.ts) stamps an inline transform:scale() on the [data-md-diagram] host for inline
+   body-text legibility. In the fullscreen viewer that host nests INSIDE DiagramPanZoomViewport's
+   own translate+scale, which measures the untransformed offsetWidth and multiplies computeFitScale
+   (center-center) on top — so the diagram opens OVER-ZOOMED at net S_fit x S_body (a >1 body-scale
+   overflows the viewport). Neutralize the host body-scale ONLY in the fullscreen context so
+   computeFitScale is the single scale authority; the inline path (diagramScale.ts) is untouched.
+   !important overrides the inline style the JS writes; scoped to the fullscreen host classes (the
+   same element applyDiagramHostBodyScale scales), never a generic viewport-child selector. */
+.markdown-mermaid-fullscreen [data-md-diagram],
+.markdown-plantuml-fullscreen [data-md-diagram] {
+  transform: none !important;
+  transform-origin: 0 0 !important;
+  margin-bottom: 0 !important;
+}
+
 /* Terminal touch input is portaled to document.body; keep it fully non-painting across engines. */
 input[data-terminal-hidden-input="true"],
 textarea[data-terminal-hidden-input="true"] {
