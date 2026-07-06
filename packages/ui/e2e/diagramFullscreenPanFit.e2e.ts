@@ -351,6 +351,45 @@ async function waitForStableTransform(page: Page): Promise<void> {
     );
 }
 
+/**
+ * Resolve once the diagram's PAINTED bounding box (svg getBoundingClientRect) has held the same
+ * size across `stableFrames` consecutive animation frames. Unlike waitForStableTransform (which
+ * can plateau for two polls mid-settle), this only returns AFTER the cold @plantuml/core layout
+ * has stopped growing AND the auto-fit has re-converged — the exact window in which the ~4% cold
+ * over-fit is observable. Painted size is rounded to 0.1px so real subpixel jitter can't stall it.
+ */
+async function waitForStableBoundingBox(
+    page: Page,
+    kind: 'mermaid' | 'plantuml',
+    stableFrames = 8,
+): Promise<void> {
+    await page.evaluate(() => {
+        const store = window as unknown as { __bboxKey?: string; __bboxCount?: number };
+        store.__bboxKey = undefined;
+        store.__bboxCount = 0;
+    });
+    await page.waitForFunction(
+        ({ sel, need }) => {
+            const host = document.querySelector(sel) as HTMLElement | null;
+            const svg = host?.querySelector('svg') as SVGSVGElement | null;
+            if (!svg) return false;
+            const r = svg.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return false;
+            const key = `${Math.round(r.width * 10)}x${Math.round(r.height * 10)}`;
+            const store = window as unknown as { __bboxKey?: string; __bboxCount?: number };
+            if (store.__bboxKey === key) {
+                store.__bboxCount = (store.__bboxCount ?? 0) + 1;
+            } else {
+                store.__bboxKey = key;
+                store.__bboxCount = 1;
+            }
+            return (store.__bboxCount ?? 0) >= need;
+        },
+        { sel: hostSelector(kind), need: stableFrames },
+        { timeout: 20_000, polling: 'raf' },
+    );
+}
+
 /** Read real painted (getBoundingClientRect) + layout geometry and the applied transform. */
 function readGeometry(page: Page, kind: 'mermaid' | 'plantuml'): Promise<ContentGeom> {
     return page.evaluate((sel) => {
@@ -390,17 +429,10 @@ async function openRealDialog(
     const open = (k: 'mermaid' | 'plantuml', s: string) =>
         page.evaluate(({ ek, es }) => window.__openDialog?.(ek as 'mermaid' | 'plantuml', es), { ek: k, es: s });
 
-    if (kind === 'plantuml') {
-        // Warm the @plantuml/core WASM first: the very first (cold) plantuml render's async layout
-        // settles a few px AFTER the fit-once locks, which is a WASM-compile warmup artifact, not a
-        // contain-fit defect. A warm render is stable at fit time, so measuring the second open
-        // asserts the steady-state contain-fit AC1 actually guarantees.
-        await open('plantuml', source);
-        await page.waitForSelector(`${hostSelector('plantuml')} svg`, { timeout: RENDER_BOUND_MS });
-        await open('mermaid', 'graph TD\n  W1[warmup] --> W2[warmup]');
-        await page.waitForSelector(`${hostSelector('mermaid')} svg`, { timeout: 20_000 });
-    }
-
+    // COLD FIRST open — no renderer warmup. The very first (cold) @plantuml/core render's async
+    // layout settles ~4% larger a few frames after the initial fit; masking that with a warmup
+    // hid a real production over-fit. Callers that assert contain-fit must wait for the painted
+    // box to STABILISE (waitForStableBoundingBox), which only holds once the refit has converged.
     await open(kind, source);
     await page.waitForSelector(`${hostSelector(kind)} svg`, { timeout: RENDER_BOUND_MS });
     await waitForStableTransform(page);
@@ -455,9 +487,13 @@ test.describe('Task 5ki.41.17 — real MermaidPreviewDialog contain-fit + zoom b
     for (const kind of ['mermaid', 'plantuml'] as const) {
         const source = kind === 'mermaid' ? DIALOG_MERMAID_SOURCE : DIALOG_PLANTUML_SOURCE;
 
-        test(`AC5a ${kind}: opens contain-fit — real painted rect fits inside the viewport`, async ({ page }) => {
+        test(`AC5a ${kind}: cold open contain-fit — real painted rect fits inside the viewport (no warmup)`, async ({ page }) => {
             test.setTimeout(RENDER_BOUND_MS + 30_000);
             await openRealDialog(page, kind, source, { width: 800, height: 600 });
+            // Wait for the COLD painted box to stop changing (the ~4% late @plantuml/core settle +
+            // the production refit must have fully converged) BEFORE measuring. Without the refit
+            // fix this stabilises at the over-fit size and the assertions below go RED.
+            await waitForStableBoundingBox(page, kind);
 
             const g = await readGeometry(page, kind);
             // The diagram actually painted (non-vacuous) …

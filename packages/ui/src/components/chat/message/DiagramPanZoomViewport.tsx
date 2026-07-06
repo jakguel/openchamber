@@ -116,6 +116,19 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
     const onZoomStateChangeRef = React.useRef(onZoomStateChange);
     onZoomStateChangeRef.current = onZoomStateChange;
 
+    // Auto-fit-until-interaction lifecycle. A cold @plantuml/core WASM SVG can settle to its final
+    // intrinsic layout a few frames AFTER the first fit lands, so we keep re-fitting on every
+    // content-box change UNTIL the user takes manual control. `userInteractedRef` is a synchronous
+    // ref (not state) so an interaction firing in the same tick as a pending auto-fit frame reliably
+    // suppresses it; the reset effect publishes its cancel + (re)fit hooks below for the handlers.
+    const userInteractedRef = React.useRef(false);
+    const cancelAutoFitFrameRef = React.useRef<() => void>(() => {});
+    const scheduleAutoFitRef = React.useRef<((retryUntilReady?: boolean) => void) | null>(null);
+    const markUserInteracted = React.useCallback(() => {
+        userInteractedRef.current = true;
+        cancelAutoFitFrameRef.current();
+    }, []);
+
     const clampWithGeometry = React.useCallback((next: Offset, atScale: number): Offset => {
         const container = containerRef.current;
         const content = contentRef.current;
@@ -187,6 +200,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
         const contentHeight = content.offsetHeight;
         const viewportWidth = container.clientWidth;
         const viewportHeight = container.clientHeight;
+        markUserInteracted();
         setView((base) => {
             const nextScale = computeWheelScale(base.scale, deltaY);
             const focal = zoomAboutPoint(base.offset, base.scale, nextScale, IDENTITY_OFFSET, IDENTITY_OFFSET);
@@ -201,7 +215,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
             });
             return { scale: nextScale, offset: nextOffset };
         });
-    }, []);
+    }, [markUserInteracted]);
 
     // Bridge the context-free viewport to an app-context owner (the dialog with i18n/theme):
     // expose zoomIn/zoomOut (center focal) + resetFit through a ref so the dialog's +/- buttons
@@ -210,7 +224,10 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
         zoomIn: () => applyButtonZoom(-DIAGRAM_BUTTON_ZOOM_DELTA),
         zoomOut: () => applyButtonZoom(DIAGRAM_BUTTON_ZOOM_DELTA),
         resetFit: () => {
-            fitToViewport();
+            userInteractedRef.current = false;
+            if (!fitToViewport()) {
+                scheduleAutoFitRef.current?.(true);
+            }
         },
     }), [applyButtonZoom, fitToViewport]);
 
@@ -223,10 +240,13 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
         });
     }, [scale]);
 
-    // Reset when the diagram identity changes, then fit the content to the viewport. Because a
-    // diagram (notably a PlantUML SVG) can paint AFTER mount, the fit is measured across frames
-    // until the content has a non-zero layout size, and applied exactly ONCE per resetKey.
+    // Reset when the diagram identity changes, then fit the content to the viewport and KEEP
+    // re-fitting on late layout settle until the first user interaction. A cold @plantuml/core SVG
+    // can grow ~4% a few frames after the first fit, so a fit-once latch would leave it over-fit;
+    // instead the ResizeObserver stays connected and re-fits (rAF-coalesced) until the user zooms/
+    // pans. Transform-only scaling never changes the observed layout box, so this cannot self-loop.
     React.useEffect(() => {
+        userInteractedRef.current = false;
         setView(IDENTITY_VIEW);
         setCanPan(false);
         dragRef.current = null;
@@ -240,52 +260,58 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
             return;
         }
 
-        let applied = false;
+        let disposed = false;
         let rafId = 0;
         let observer: ResizeObserver | null = null;
 
-        const stop = () => {
+        const cancelFrame = () => {
             if (rafId) {
                 cancelAnimationFrame(rafId);
                 rafId = 0;
             }
-            if (observer) {
-                observer.disconnect();
-                observer = null;
-            }
         };
 
-        const tryApplyFit = (): boolean => {
-            if (applied) {
-                return true;
-            }
-            // Delegates to the shared fit; only marks applied + stops polling once layout is ready.
-            if (!fitToViewport()) {
-                return false;
-            }
-            applied = true;
-            stop();
-            return true;
-        };
-
-        // Poll across frames until the content lays out (handles async diagram paint).
-        const pump = () => {
-            if (tryApplyFit()) {
+        const scheduleAutoFit = (retryUntilReady = false) => {
+            if (disposed || userInteractedRef.current || rafId) {
                 return;
             }
-            rafId = requestAnimationFrame(pump);
+            rafId = requestAnimationFrame(() => {
+                rafId = 0;
+                if (disposed || userInteractedRef.current) {
+                    return;
+                }
+                const didFit = fitToViewport();
+                if (!didFit && retryUntilReady && !userInteractedRef.current) {
+                    scheduleAutoFit(true);
+                }
+            });
         };
-        rafId = requestAnimationFrame(pump);
 
-        // Backstop for very-late paint beyond the initial frames.
+        cancelAutoFitFrameRef.current = cancelFrame;
+        scheduleAutoFitRef.current = scheduleAutoFit;
+
+        // Cold-open pump: retry across frames until the content has a measurable layout size.
+        scheduleAutoFit(true);
+
         if (typeof ResizeObserver !== 'undefined') {
+            // Late (cold-WASM) intrinsic layout growth lands here and re-fits, UNTIL the user takes
+            // manual control. A transform-only scale never changes the observed layout box -> no loop.
             observer = new ResizeObserver(() => {
-                tryApplyFit();
+                scheduleAutoFit(false);
             });
             observer.observe(content);
         }
 
-        return stop;
+        return () => {
+            disposed = true;
+            cancelFrame();
+            observer?.disconnect();
+            observer = null;
+            cancelAutoFitFrameRef.current = () => {};
+            if (scheduleAutoFitRef.current === scheduleAutoFit) {
+                scheduleAutoFitRef.current = null;
+            }
+        };
     }, [resetKey, fitToViewport]);
 
     // Keep the cursor/pannability state in sync as the scale changes (wheel/pinch zoom).
@@ -316,6 +342,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
             const contentHeight = content.offsetHeight;
             const viewportWidth = container.clientWidth;
             const viewportHeight = container.clientHeight;
+            markUserInteracted();
             // ONE atomic update: derive nextScale AND the focal, per-axis-clamped nextOffset from
             // the SAME base snapshot. Never split into racing setScale + setOffset — a functional
             // update also lets rapid wheel events accumulate correctly off the true prior view.
@@ -336,7 +363,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
         };
         container.addEventListener('wheel', onWheel, { passive: false });
         return () => container.removeEventListener('wheel', onWheel);
-    }, []);
+    }, [markUserInteracted]);
 
     const handlePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -344,6 +371,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
 
         if (pointersRef.current.size === 2) {
             // Enter pinch: capture baseline distance + scale, cancel any single-pointer drag.
+            markUserInteracted();
             const [a, b] = Array.from(pointersRef.current.values());
             pinchRef.current = { baseScale: scaleRef.current, baseDistance: pointerDistance(a, b) };
             dragRef.current = null;
@@ -357,6 +385,9 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
             return;
         }
 
+        // A real pan starts here (past the pannability gate) — disable auto-fit so a late settle
+        // cannot yank the view out from under the drag. A plain non-pannable click never reaches this.
+        markUserInteracted();
         dragRef.current = {
             pointerId: event.pointerId,
             startX: event.clientX,
@@ -365,7 +396,7 @@ export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, Dia
             originY: offset.y,
         };
         setIsPanning(true);
-    }, [offset.x, offset.y, isPannableAtScale]);
+    }, [offset.x, offset.y, isPannableAtScale, markUserInteracted]);
 
     const handlePointerMove = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         if (pointersRef.current.has(event.pointerId)) {
