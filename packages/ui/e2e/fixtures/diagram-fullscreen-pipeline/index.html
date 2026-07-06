@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fullscreen diagram pipeline harness</title>
+    <style>
+        html, body { margin: 0; padding: 0; }
+        /* Fixed viewport host so the DiagramPanZoomViewport fit math is asserted against a
+           deterministic 600x400, and a body font-size large enough that the diagram's own
+           smaller intrinsic <text> font drives applyDiagramHostBodyScale above 1x (the over-zoom
+           the fullscreen viewer regresses on). */
+        #root { font-size: 18px; }
+        #viewport-host { position: absolute; top: 0; left: 0; width: 600px; height: 400px; }
+        /* Deterministic over-zoom trigger for diagramFullscreenContainFit.e2e.ts (same technique as
+           plantumlBoxLabelOverflow's WIDE_METRIC_CSS): force the REAL rendered diagram's intrinsic
+           <text> font below the host body font so the REAL applyDiagramHostBodyScale clamps to its
+           >1 upper bound (1.4). Static here (not injected) so it is present BEFORE decoration reads
+           the font — no race. It only sets the over-zoom CONDITION; the real body-scale, real fit
+           and the shipped neutralization rule are what the RED/GREEN assertions exercise. */
+        [data-md-diagram] svg text { font-size: 9px !important; }
+    </style>
+    <script>
+        window.global = window.global || window;
+        window.process = window.process || {
+            env: { NODE_ENV: 'production' },
+            platform: 'browser',
+            cwd: () => '/',
+            nextTick: (f) => { setTimeout(f, 0); },
+        };
+    </script>
+</head>
+<body>
+    <div id="root" data-fs-status="idle"></div>
+    <script type="module" src="/main.tsx"></script>
+</body>
+</html>

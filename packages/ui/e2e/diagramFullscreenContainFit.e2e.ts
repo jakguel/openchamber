@@ -1,34 +1,34 @@
 /**
  * Playwright real-Chromium proof — task openchamber-5ki.41.14 (Story 5ki.41 WI1, AC1).
  *
- * BUG: the fullscreen diagram viewer opens OVER-ZOOMED (too close) for BOTH plantuml and
- * mermaid because of NESTED transforms. `applyDiagramHostBodyScale` (diagramScale.ts) stamps a
- * `transform: scale(0.6..1.4)` (origin top-left) on the [data-md-diagram] host for body-text
- * legibility, while `DiagramPanZoomViewport` measures the UNTRANSFORMED `content.offsetWidth`
- * and multiplies `computeFitScale` (origin center-center) on top — net painted size is
- * S_fit x S_body, so a diagram whose body-scale is >1 overflows the viewport on open.
+ * BUG: the fullscreen diagram viewer opens OVER-ZOOMED (too close) for BOTH plantuml and mermaid.
+ * applyDiagramHostBodyScale (diagramScale.ts) stamps a transform:scale(0.6..1.4) (origin top-left)
+ * on the [data-md-diagram] host for inline body-text legibility, while DiagramPanZoomViewport
+ * measures the UNTRANSFORMED content.offsetWidth and multiplies computeFitScale (origin
+ * center-center) on top — net painted size is S_fit x S_body, so a diagram whose body-scale is >1
+ * overflows the viewport on open. FIX (committed): a scoped index.css rule neutralizes the host
+ * body-scale ONLY under the markdown-{mermaid,plantuml}-fullscreen classes so computeFitScale is
+ * the single scale authority.
  *
- * REPRODUCE-FIRST (the exact gap that let sibling 5ki.42 ship a passing-but-wrong fix): the
- * SIBLING harness (diagramFullscreenPanFit.e2e.ts) wraps a plain fixed DIV — no host, no
- * body-scale — so it CANNOT reproduce this. This spec instead wraps the REAL host DOM that
- * decorate.ts produces (data-md-diagram host inside the {mermaid,plantuml}-block/scroll,
- * under the real markdown-{kind}-fullscreen class) inside the REAL DiagramPanZoomViewport,
- * injects the REAL shipped index.css fullscreen rules, and applies the REAL
- * applyDiagramHostBodyScale — i.e. the real nested body-scale transform. Every bug-relevant
- * code path is production code; only the SVG markup is a fixture (the bug is geometric, not
- * content-dependent — mermaid/plantuml merely emit an <svg>).
+ * This spec drives the REAL fullscreen render path — the exact composition MermaidPreviewDialog
+ * uses (a real DiagramPanZoomViewport wrapping a real SimpleMarkdownRenderer with the
+ * markdown-{kind}-fullscreen class, see fixtures/diagram-fullscreen-pipeline) — with REAL ```mermaid
+ * and ```plantuml sources rendered through decorate.ts -> mermaid / @plantuml/core and the REAL
+ * applyDiagramHostBodyScale. NOTHING under src/ is mocked.
  *
- * AC1a: on open the painted content rect (getBoundingClientRect) is within viewport+eps on
- *       BOTH axes, for BOTH renderers (contain-fit).
- * AC1b: the nested body-scale IS active (host data-md-diagram-scale > 1) — proving the
- *       reproduction is faithful and, before the index.css neutralization, this over-zoomed.
- * AC1c: neutralization is scoped to the fullscreen host classes in index.css (this spec fails
- *       RED without that rule and passes GREEN with it — no viewport-child querySelector).
+ * MACHINE-VERIFIABLE RED/GREEN (proves the CSS rule, not the harness, is the fix): the REAL shipped
+ * CSS (packages/web/dist/assets/*.css) is injected TWICE —
+ *   RED  : the neutralization rule regex-STRIPPED  -> the real rendered diagram OVERFLOWS the
+ *          viewport (painted content rect exceeds it) and the host keeps its body-scale transform.
+ *   GREEN: the full shipped CSS (rule present)     -> contain-fit (paintedW<=viewportW+eps AND
+ *          paintedH<=viewportH+eps) and the host computed transform is none.
+ * Both mermaid AND plantuml.
  *
- * WHY real Chromium (not jsdom): the fit + painted rect depend on measured geometry
- * (offsetWidth / getBoundingClientRect with folded transforms); jsdom reports 0.
+ * WHY real Chromium: @plantuml/core needs a real layout engine (getBBox is 0 in jsdom) and the fit
+ * + painted rect depend on measured geometry with folded transforms.
  *
- * NO internal mocks — the REAL DiagramPanZoomViewport + REAL applyDiagramHostBodyScale run.
+ * REQUIRES: packages/web/dist built (`bun run build`) AFTER the index.css fix so the shipped CSS
+ * carries the neutralization rule the GREEN case asserts.
  *
  * RUN (workspace-local runner — do NOT use bunx playwright):
  *   packages/ui/node_modules/.bin/playwright test --config playwright.config.ts \
@@ -36,219 +36,198 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { build } from 'vite';
+import { createServer, type ViteDevServer } from 'vite';
 import * as path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const currentDir = path.dirname(fileURLToPath(import.meta.url));
-const uiRoot = path.resolve(currentDir, '..');
-const uiSrc = path.resolve(uiRoot, 'src');
-const indexCssPath = path.resolve(uiSrc, 'index.css');
+const fixtureRoot = path.resolve(currentDir, 'fixtures', 'diagram-fullscreen-pipeline');
+const fixtureConfig = path.resolve(fixtureRoot, 'vite.config.ts');
+const webAssets = path.resolve(currentDir, '..', '..', 'web', 'dist', 'assets');
 
-// Fixed viewport host — the fit + contain-fit math is asserted against these dimensions.
-const VIEWPORT_W = 600;
-const VIEWPORT_H = 400;
+// Generous but BOUNDED — the first @plantuml/core load compiles ~8.6MB of WASM.
+const RENDER_BOUND_MS = 90_000;
+const EPS = 2;
 
-// Body-text px the host inherits from .markdown-content — the applyDiagramHostBodyScale target.
-const CONTAINER_BODY_PX = 16;
-
-// Fixture SVG: intrinsic 240x180 with a small <text font-size="10">. Against the 16px body
-// target that yields ratio 1.6 -> clamped to DIAGRAM_SCALE_MAX (1.4): a deterministic
-// body-scale > 1 that over-zooms the fit. Kept aspect < viewport aspect so the height axis is
-// the fit constraint (fit = 400/180 = 2.222) and BOTH axes over-zoom at 1.4x.
-const FIXTURE_SVG =
-    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180" viewBox="0 0 240 180">'
-    + '<rect x="0" y="0" width="240" height="180" fill="#22304a"></rect>'
-    + '<text x="12" y="34" font-size="10" fill="#dfe7f5">Alpha Node</text>'
-    + '<text x="12" y="66" font-size="10" fill="#dfe7f5">Beta Node</text>'
-    + '</svg>';
+// Real sources rendered through the real engines. The fixture's static index.html forces the
+// diagram <text> font below the host body font (WIDE_METRIC_CSS technique) so the REAL
+// applyDiagramHostBodyScale deterministically clamps to its >1 upper bound (1.4) — the over-zoom
+// CONDITION — leaving the shipped neutralization rule as the ONLY RED/GREEN difference.
+const MERMAID_SOURCE = 'graph TD\n  A[Alpha] --> B[Beta]\n  B --> C[Gamma]';
+const PLANTUML_SOURCE = '@startuml\nAlpha -> Beta : hello\nBeta -> Gamma : world\n@enduml';
 
 /**
- * Bundle the REAL DiagramPanZoomViewport + REAL applyDiagramHostBodyScale (+ React) into an
- * IIFE exposed as window.__containFitTest. `mount(container, kind)` renders the real viewport
- * wrapping the real decorate-shaped host DOM under the real markdown-{kind}-fullscreen class;
- * `applyBodyScale(kind)` then runs the real body-scale on that host.
+ * Matches the shipped neutralization rule (grouped or minifier-split) so it can be stripped to
+ * simulate the pre-fix state. Captures a fullscreen [data-md-diagram] selector run up to and
+ * including its declaration block.
  */
-async function bundleViewport(): Promise<string> {
-    const virtualId = '\0contain-fit-e2e-entry';
-    const result = await build({
-        root: uiRoot,
+const NEUTRALIZE_RE = /\.markdown-(?:mermaid|plantuml)-fullscreen\s*\[data-md-diagram\][^{}]*\{[^{}]*\}/g;
+
+let shippingCss = '';
+let strippedCss = '';
+let server: ViteDevServer | null = null;
+let baseUrl = '';
+
+test.beforeAll(async () => {
+    expect(
+        existsSync(webAssets),
+        'packages/web/dist/assets missing — run `bun run build` (AFTER the index.css fix) before this e2e',
+    ).toBe(true);
+
+    const cssFiles = readdirSync(webAssets).filter((f) => f.endsWith('.css'));
+    expect(cssFiles.length, 'no compiled .css in packages/web/dist/assets').toBeGreaterThan(0);
+    shippingCss = cssFiles.map((f) => readFileSync(path.join(webAssets, f), 'utf-8')).join('\n');
+
+    // The shipped CSS MUST contain the neutralization rule (else GREEN is vacuous / build is stale).
+    expect(
+        new RegExp(NEUTRALIZE_RE.source).test(shippingCss),
+        'shipped CSS has no fullscreen [data-md-diagram] neutralization rule — rebuild web after the index.css fix',
+    ).toBe(true);
+
+    strippedCss = shippingCss.replace(NEUTRALIZE_RE, '');
+    // The strip MUST have removed the rule — otherwise RED reproduces nothing.
+    expect(strippedCss.length, 'strip removed nothing').toBeLessThan(shippingCss.length);
+    expect(new RegExp(NEUTRALIZE_RE.source).test(strippedCss), 'neutralization rule survived the strip').toBe(false);
+
+    server = await createServer({
+        root: fixtureRoot,
+        configFile: fixtureConfig,
         logLevel: 'error',
-        configFile: false,
-        resolve: { alias: { '@': uiSrc } },
-        define: { 'process.env.NODE_ENV': '"production"' },
-        plugins: [
-            {
-                name: 'contain-fit-e2e-virtual-entry',
-                resolveId(id) {
-                    return id === 'contain-fit-e2e-entry' || id.endsWith('contain-fit-e2e-entry') ? virtualId : null;
-                },
-                load(id) {
-                    if (id !== virtualId) return null;
-                    return [
-                        "import * as React from 'react';",
-                        "import { createRoot } from 'react-dom/client';",
-                        "import { DiagramPanZoomViewport } from '@/components/chat/message/DiagramPanZoomViewport';",
-                        "import { applyDiagramHostBodyScale } from '@/components/chat/markdown/diagramScale';",
-                        `const SVG = ${JSON.stringify(FIXTURE_SVG)};`,
-                        'function blockHtml(kind) {',
-                        "  return '<div data-markdown=\"' + kind + '-block\" class=\"group relative\">'",
-                        "    + '<div data-markdown=\"' + kind + '-scroll\">'",
-                        "    + '<div data-markdown=\"' + kind + '\" data-md-diagram=\"' + kind + '\">' + SVG + '</div>'",
-                        "    + '</div></div>';",
-                        '}',
-                        'export function mount(container, kind) {',
-                        "  const child = React.createElement('div', {",
-                        "    className: 'markdown-' + kind + '-fullscreen markdown-content',",
-                        '    dangerouslySetInnerHTML: { __html: blockHtml(kind) },',
-                        '  });',
-                        "  const el = React.createElement(DiagramPanZoomViewport, { 'data-testid': 'viewport', resetKey: kind }, child);",
-                        '  const root = createRoot(container);',
-                        '  root.render(el);',
-                        '}',
-                        'export function applyBodyScale(kind) {',
-                        "  const host = document.querySelector('[data-md-diagram=\"' + kind + '\"]');",
-                        '  if (host) applyDiagramHostBodyScale(host);',
-                        "  return host ? host.getAttribute('data-md-diagram-scale') : null;",
-                        '}',
-                    ].join('\n');
-                },
-            },
-        ],
-        build: {
-            write: false,
-            lib: { entry: 'contain-fit-e2e-entry', formats: ['iife'], name: '__containFitTest' },
-            rollupOptions: { output: { inlineDynamicImports: true } },
-            minify: false,
-        },
+        server: { port: 5301, strictPort: true },
     });
-    const outputs = (Array.isArray(result) ? result[0].output : (result as { output: unknown[] }).output) as Array<{
-        type: string;
-        code?: string;
-    }>;
-    const chunk = outputs.find((o) => o.type === 'chunk' && typeof o.code === 'string');
-    if (!chunk || !chunk.code) throw new Error('contain-fit-e2e bundle produced no JS chunk');
-    return chunk.code;
+    await server.listen();
+    const url = server.resolvedUrls?.local?.[0];
+    if (!url) throw new Error('vite dev server produced no local url');
+    baseUrl = url;
+});
+
+test.afterAll(async () => {
+    if (server) {
+        await server.close();
+        server = null;
+    }
+});
+
+interface Measurement {
+    viewportW: number;
+    viewportH: number;
+    paintedW: number;
+    paintedH: number;
+    hostTransform: string;
+    scaleAttr: number;
+    hostFontPx: number;
+    textFontPx: number;
+    contentW: number;
+    contentH: number;
+    fitScale: number;
 }
 
 /**
- * Extract the REAL contiguous diagram CSS section (inline mermaid block + both fullscreen
- * blocks, INCLUDING the fullscreen host-scale neutralization rule under test) from the shipped
- * index.css. Injecting the actual source text (not a hand copy) means the assertions track
- * exactly what ships — and this spec fails RED until that neutralization rule exists.
+ * Load the fixture with the given CSS variant, render the real fullscreen diagram, wait for the
+ * real body-scale + fit to settle, and measure the painted content rect vs the viewport.
  */
-function extractDiagramCss(): string {
-    const css = readFileSync(indexCssPath, 'utf-8');
-    const start = css.indexOf('[data-markdown="mermaid-block"] {');
-    if (start === -1) throw new Error('mermaid-block rule not found in index.css');
-    const end = css.indexOf('input[data-terminal-hidden-input', start);
-    if (end === -1) throw new Error('terminal-input terminator not found after diagram CSS');
-    return css.slice(start, end).trim();
-}
-
-let bundlePromise: Promise<string> | null = null;
-let cssCache: string | null = null;
-function getBundle(): Promise<string> {
-    if (!bundlePromise) bundlePromise = bundleViewport();
-    return bundlePromise;
-}
-function getCss(): string {
-    if (cssCache == null) cssCache = extractDiagramCss();
-    return cssCache;
-}
-
-async function mountHarness(page: Page, kind: 'mermaid' | 'plantuml'): Promise<string | null> {
-    const [bundle, css] = [await getBundle(), getCss()];
-    await page.setContent(
-        `<!doctype html><html><head><style>
-           html, body { margin: 0; padding: 0; }
-           .markdown-content { font-size: ${CONTAINER_BODY_PX}px; }
-           #host { position: absolute; top: 0; left: 0; width: ${VIEWPORT_W}px; height: ${VIEWPORT_H}px; }
-           ${css}
-         </style></head>
-         <body><div id="host"></div></body></html>`,
-        { waitUntil: 'domcontentloaded' },
-    );
-    await page.addScriptTag({ content: bundle });
-    await page.waitForFunction(() => typeof (window as unknown as { __containFitTest?: unknown }).__containFitTest !== 'undefined');
+async function renderAndMeasure(
+    page: Page,
+    kind: 'mermaid' | 'plantuml',
+    source: string,
+    css: string,
+): Promise<Measurement> {
+    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__ready === true, { timeout: 20_000 });
+    await page.addStyleTag({ content: css });
     await page.evaluate(
-        (k) => {
-            const host = document.getElementById('host') as HTMLElement;
-            (window as unknown as { __containFitTest: { mount: (c: HTMLElement, k: string) => void } }).__containFitTest.mount(host, k);
-        },
-        kind,
+        ({ k, s }) => window.__setDiagram?.(k as 'mermaid' | 'plantuml', s),
+        { k: kind, s: source },
     );
-    await page.waitForSelector('[data-testid="viewport"]');
-    await page.waitForSelector(`[data-md-diagram="${kind}"] svg`);
-    // Apply the REAL body-scale transform on the real host (decorate does this post-paint).
-    const appliedScale = await page.evaluate(
-        (k) => (window as unknown as { __containFitTest: { applyBodyScale: (k: string) => string | null } }).__containFitTest.applyBodyScale(k),
-        kind,
-    );
-    return appliedScale;
-}
 
-/** Wait until the fit-to-viewport scale has been applied to the panzoom content transform. */
-async function waitForFitApplied(page: Page): Promise<void> {
+    const hostSel = `[data-md-diagram="${kind}"]`;
+    await page.waitForSelector(`${hostSel} svg`, { timeout: RENDER_BOUND_MS });
+    // applyDiagramHostBodyScale has run (it stamps this attr) — the real nested body-scale exists.
+    await page.waitForFunction(
+        (sel) => {
+            const host = document.querySelector(sel) as HTMLElement | null;
+            return !!host?.getAttribute('data-md-diagram-scale');
+        },
+        hostSel,
+        { timeout: RENDER_BOUND_MS },
+    );
+    // The DiagramPanZoomViewport fit effect has applied a content transform.
     await page.waitForFunction(
         () => {
             const c = document.querySelector('[data-diagram-panzoom-content]') as HTMLElement | null;
-            if (!c) return false;
-            const m = c.style.transform.match(/scale\(\s*(-?[\d.]+)\s*\)/);
-            return !!m && Number.parseFloat(m[1]) > 1.1;
+            return !!c && /scale\(/.test(c.style.transform);
         },
         undefined,
         { timeout: 10_000 },
     );
-}
 
-async function measurePaintedVsViewport(page: Page, kind: 'mermaid' | 'plantuml') {
-    return page.evaluate((k) => {
-        const viewport = document.querySelector('[data-diagram-panzoom]') as HTMLElement | null;
-        const svg = document.querySelector(`[data-md-diagram="${k}"] svg`) as SVGSVGElement | null;
-        const host = document.querySelector(`[data-md-diagram="${k}"]`) as HTMLElement | null;
-        if (!viewport || !svg || !host) return null;
-        const vpRect = viewport.getBoundingClientRect();
-        const paintedRect = svg.getBoundingClientRect();
+    return page.evaluate((sel) => {
+        const vp = document.querySelector('[data-diagram-panzoom]') as HTMLElement;
+        const content = document.querySelector('[data-diagram-panzoom-content]') as HTMLElement;
+        const host = document.querySelector(sel) as HTMLElement;
+        const svg = host.querySelector('svg') as SVGSVGElement;
+        const text = svg.querySelector('text');
+        const vpRect = vp.getBoundingClientRect();
+        const svgRect = svg.getBoundingClientRect();
+        const fitMatch = content.style.transform.match(/scale\(\s*([\d.]+)\s*\)/);
         return {
             viewportW: vpRect.width,
             viewportH: vpRect.height,
-            paintedW: paintedRect.width,
-            paintedH: paintedRect.height,
-            // Computed transform on the host proves whether the body-scale is neutralized.
+            paintedW: svgRect.width,
+            paintedH: svgRect.height,
             hostTransform: getComputedStyle(host).transform,
+            scaleAttr: Number.parseFloat(host.getAttribute('data-md-diagram-scale') ?? 'NaN'),
+            hostFontPx: Number.parseFloat(getComputedStyle(host).fontSize),
+            textFontPx: text ? Number.parseFloat(getComputedStyle(text).fontSize) : NaN,
+            contentW: content.offsetWidth,
+            contentH: content.offsetHeight,
+            fitScale: fitMatch ? Number.parseFloat(fitMatch[1]) : NaN,
         };
-    }, kind);
+    }, hostSel);
 }
 
-const EPS = 2;
-
 for (const kind of ['mermaid', 'plantuml'] as const) {
-    test.describe(`Task 5ki.41.14 — fullscreen contain-fit, ${kind} (real Chromium)`, () => {
-        test(`${kind}: real nested body-scale is active (>1) AND painted content contain-fits the viewport on open`, async ({ page }) => {
-            const appliedScale = await mountHarness(page, kind);
+    const source = kind === 'mermaid' ? MERMAID_SOURCE : PLANTUML_SOURCE;
 
-            // AC1b: the reproduction is faithful — the REAL applyDiagramHostBodyScale stamped a
-            // body-scale > 1 (the over-zoom source). Without this, the test would be vacuous.
-            expect(appliedScale).not.toBeNull();
-            expect(Number.parseFloat(appliedScale as string)).toBeGreaterThan(1);
+    test.describe(`Task 5ki.41.14 — fullscreen contain-fit, ${kind} (real renderer, real Chromium)`, () => {
+        test(`${kind} RED: with the neutralization rule STRIPPED the real fullscreen diagram over-zooms (painted overflows viewport)`, async ({
+            page,
+        }) => {
+            test.setTimeout(RENDER_BOUND_MS + 30_000);
+            const m = await renderAndMeasure(page, kind, source, strippedCss);
 
-            await waitForFitApplied(page);
+            // Non-vacuous: the REAL applyDiagramHostBodyScale produced a body-scale > 1 (over-zoom source).
+            expect(m.scaleAttr, `body-scale must be >1 to be a real over-zoom (got scale=${m.scaleAttr} hostFont=${m.hostFontPx} textFont=${m.textFontPx})`).toBeGreaterThan(1);
+            // The host still carries its body-scale transform (not neutralized in the stripped CSS).
+            expect(m.hostTransform).not.toBe('none');
+            // Over-zoom: the painted content rect exceeds the viewport on at least one axis.
+            const overflow = Math.max(m.paintedW - m.viewportW, m.paintedH - m.viewportH);
+            expect(
+                overflow,
+                `expected over-zoom overflow >${EPS}px (painted ${m.paintedW.toFixed(1)}x${m.paintedH.toFixed(1)} vs viewport ${m.viewportW}x${m.viewportH}; content ${m.contentW}x${m.contentH} fit ${m.fitScale} scaleAttr ${m.scaleAttr})`,
+            ).toBeGreaterThan(EPS);
+        });
 
-            const m = await measurePaintedVsViewport(page, kind);
-            expect(m).not.toBeNull();
-            const { viewportW, viewportH, paintedW, paintedH, hostTransform } = m!;
+        test(`${kind} GREEN: with the shipped neutralization rule the real fullscreen diagram contain-fits the viewport`, async ({
+            page,
+        }) => {
+            test.setTimeout(RENDER_BOUND_MS + 30_000);
+            const m = await renderAndMeasure(page, kind, source, shippingCss);
 
-            // AC1a: neither axis overflows the viewport (contain-fit). BEFORE the index.css
-            // neutralization the nested body-scale over-zoomed this to ~1.4x and both axes
-            // exceeded the viewport (RED); the neutralization makes computeFitScale authoritative.
-            expect(paintedW, `paintedW ${paintedW} vs viewportW ${viewportW}`).toBeLessThanOrEqual(viewportW + EPS);
-            expect(paintedH, `paintedH ${paintedH} vs viewportH ${viewportH}`).toBeLessThanOrEqual(viewportH + EPS);
-
-            // AC1c: the fullscreen host-scale is neutralized in index.css, so the painted host
-            // carries NO body-scale transform (computeFitScale is the single scale authority).
-            expect(hostTransform === 'none' || hostTransform === '').toBe(true);
+            // Same real body-scale is still computed (attr present) — the fix neutralizes it visually.
+            expect(m.scaleAttr, `body-scale must be >1 (same over-zoom source as RED, got ${m.scaleAttr})`).toBeGreaterThan(1);
+            // AC1c: the host body-scale transform is neutralized in the fullscreen context.
+            expect(m.hostTransform).toBe('none');
+            // AC1a: neither axis overflows the viewport (contain-fit) — computeFitScale is authoritative.
+            expect(
+                m.paintedW,
+                `paintedW ${m.paintedW.toFixed(1)} vs viewportW ${m.viewportW}`,
+            ).toBeLessThanOrEqual(m.viewportW + EPS);
+            expect(
+                m.paintedH,
+                `paintedH ${m.paintedH.toFixed(1)} vs viewportH ${m.viewportH}`,
+            ).toBeLessThanOrEqual(m.viewportH + EPS);
         });
     });
 }
