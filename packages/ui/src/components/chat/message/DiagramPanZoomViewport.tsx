@@ -16,6 +16,8 @@ import * as React from 'react';
 
 import { cn } from '@/lib/utils';
 import {
+    DIAGRAM_MAX_SCALE,
+    DIAGRAM_MIN_SCALE,
     DIAGRAM_PINCH_WHEEL_STEP,
     clampPanOffset,
     computeFitScale,
@@ -26,11 +28,44 @@ import {
     zoomAboutPoint,
 } from '../markdown/diagramPanZoom';
 
+/**
+ * Synthetic wheel delta a single +/- button press feeds into `computeWheelScale`, so the
+ * button zoom reuses the EXACT same multiplicative step + clamp as the wheel path — one press
+ * ≈ a 28% zoom change (exp(250 * DIAGRAM_WHEEL_STEP)). Zoom-in feeds a negative delta (wheel-up
+ * semantics), zoom-out a positive one.
+ */
+const DIAGRAM_BUTTON_ZOOM_DELTA = 250;
+
+/** Tolerance for treating a scale as "at the clamp" when reporting can-zoom state. */
+const ZOOM_CLAMP_EPSILON = 1e-3;
+
+/**
+ * Imperative API exposed via ref so an app-context owner (the dialog, which has i18n/theme)
+ * can drive the context-free viewport's zoom with its own +/- buttons. `zoomIn`/`zoomOut`
+ * zoom about the VIEWPORT CENTER (focal d=0); `resetFit` re-runs the contain-fit.
+ */
+export interface DiagramPanZoomHandle {
+    zoomIn: () => void;
+    zoomOut: () => void;
+    resetFit: () => void;
+}
+
+/** Zoom-state snapshot pushed to `onZoomStateChange` so the dialog can disable buttons at clamp. */
+export interface DiagramZoomState {
+    canZoomIn: boolean;
+    canZoomOut: boolean;
+}
+
 interface DiagramPanZoomViewportProps {
     children: React.ReactNode;
     className?: string;
     /** Changing this resets pan/zoom (e.g. a new diagram source or a fresh popup open). */
     resetKey?: string;
+    /**
+     * Fired whenever the zoom scale changes (wheel/pinch/button) AND once after the initial
+     * contain-fit, so an owner can reflect the [min,max] clamp in its button `disabled` state.
+     */
+    onZoomStateChange?: (state: DiagramZoomState) => void;
     'data-testid'?: string;
 }
 
@@ -52,12 +87,10 @@ interface ViewState {
 const IDENTITY_OFFSET: Offset = { x: 0, y: 0 };
 const IDENTITY_VIEW: ViewState = { scale: 1, offset: IDENTITY_OFFSET };
 
-export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
-    children,
-    className,
-    resetKey,
-    ...rest
-}) => {
+export const DiagramPanZoomViewport = React.forwardRef<DiagramPanZoomHandle, DiagramPanZoomViewportProps>(function DiagramPanZoomViewport(
+    { children, className, resetKey, onZoomStateChange, ...rest },
+    ref,
+) {
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const contentRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -77,6 +110,11 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
     // Keep the latest scale readable inside imperative handlers without re-binding them.
     const scaleRef = React.useRef(scale);
     scaleRef.current = scale;
+
+    // Latest zoom-state callback kept in a ref so the scale-watch effect can fire it without
+    // re-subscribing on every render (the dialog re-creates the callback freely).
+    const onZoomStateChangeRef = React.useRef(onZoomStateChange);
+    onZoomStateChangeRef.current = onZoomStateChange;
 
     const clampWithGeometry = React.useCallback((next: Offset, atScale: number): Offset => {
         const container = containerRef.current;
@@ -111,6 +149,79 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             container.clientHeight,
         );
     }, []);
+
+    // Measure the content + viewport NOW and apply the contain-fit (scale + recentered offset).
+    // Returns false when layout isn't ready yet (0-size), so the reset effect can keep polling.
+    // Shared by the mount/resetKey fit and the imperative `resetFit` so both use one code path.
+    const fitToViewport = React.useCallback((): boolean => {
+        const container = containerRef.current;
+        const content = contentRef.current;
+        if (!container || !content) {
+            return false;
+        }
+        const contentWidth = content.offsetWidth;
+        const contentHeight = content.offsetHeight;
+        const viewportWidth = container.clientWidth;
+        const viewportHeight = container.clientHeight;
+        // Wait for real layout — offsetWidth/clientWidth are 0 before the diagram paints.
+        if (contentWidth <= 0 || contentHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            return false;
+        }
+        const fitScale = computeFitScale(contentWidth, contentHeight, viewportWidth, viewportHeight);
+        setView({ scale: fitScale, offset: IDENTITY_OFFSET });
+        setCanPan(isContentPannable(contentWidth * fitScale, contentHeight * fitScale, viewportWidth, viewportHeight));
+        return true;
+    }, []);
+
+    // Zoom about the viewport CENTER by feeding a synthetic wheel delta through the same
+    // `computeWheelScale` + `zoomAboutPoint` + per-axis clamp the wheel path uses. Passing the
+    // same anchor for cursor and viewportCenter makes the focal distance d = 0 (center zoom),
+    // committed as ONE atomic {scale, offset} update. At a clamp the scale is unchanged (no-op).
+    const applyButtonZoom = React.useCallback((deltaY: number) => {
+        const container = containerRef.current;
+        const content = contentRef.current;
+        if (!container || !content) {
+            return;
+        }
+        const contentWidth = content.offsetWidth;
+        const contentHeight = content.offsetHeight;
+        const viewportWidth = container.clientWidth;
+        const viewportHeight = container.clientHeight;
+        setView((base) => {
+            const nextScale = computeWheelScale(base.scale, deltaY);
+            const focal = zoomAboutPoint(base.offset, base.scale, nextScale, IDENTITY_OFFSET, IDENTITY_OFFSET);
+            const nextOffset = clampPanOffset({
+                offsetX: focal.x,
+                offsetY: focal.y,
+                scale: nextScale,
+                contentWidth,
+                contentHeight,
+                viewportWidth,
+                viewportHeight,
+            });
+            return { scale: nextScale, offset: nextOffset };
+        });
+    }, []);
+
+    // Bridge the context-free viewport to an app-context owner (the dialog with i18n/theme):
+    // expose zoomIn/zoomOut (center focal) + resetFit through a ref so the dialog's +/- buttons
+    // drive this viewport without the viewport importing any app context.
+    React.useImperativeHandle(ref, () => ({
+        zoomIn: () => applyButtonZoom(-DIAGRAM_BUTTON_ZOOM_DELTA),
+        zoomOut: () => applyButtonZoom(DIAGRAM_BUTTON_ZOOM_DELTA),
+        resetFit: () => {
+            fitToViewport();
+        },
+    }), [applyButtonZoom, fitToViewport]);
+
+    // Report can-zoom state on every scale change AND after the initial fit (fit sets scale,
+    // re-running this) so the dialog can disable each button at the [min, max] clamp.
+    React.useEffect(() => {
+        onZoomStateChangeRef.current?.({
+            canZoomIn: scale < DIAGRAM_MAX_SCALE - ZOOM_CLAMP_EPSILON,
+            canZoomOut: scale > DIAGRAM_MIN_SCALE + ZOOM_CLAMP_EPSILON,
+        });
+    }, [scale]);
 
     // Reset when the diagram identity changes, then fit the content to the viewport. Because a
     // diagram (notably a PlantUML SVG) can paint AFTER mount, the fit is measured across frames
@@ -148,25 +259,11 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             if (applied) {
                 return true;
             }
-            const contentWidth = content.offsetWidth;
-            const contentHeight = content.offsetHeight;
-            const viewportWidth = container.clientWidth;
-            const viewportHeight = container.clientHeight;
-            // Wait for real layout — offsetWidth/clientWidth are 0 before the diagram paints.
-            if (contentWidth <= 0 || contentHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
+            // Delegates to the shared fit; only marks applied + stops polling once layout is ready.
+            if (!fitToViewport()) {
                 return false;
             }
             applied = true;
-            const fitScale = computeFitScale(contentWidth, contentHeight, viewportWidth, viewportHeight);
-            setView({ scale: fitScale, offset: IDENTITY_OFFSET });
-            setCanPan(
-                isContentPannable(
-                    contentWidth * fitScale,
-                    contentHeight * fitScale,
-                    viewportWidth,
-                    viewportHeight,
-                ),
-            );
             stop();
             return true;
         };
@@ -189,7 +286,7 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
         }
 
         return stop;
-    }, [resetKey]);
+    }, [resetKey, fitToViewport]);
 
     // Keep the cursor/pannability state in sync as the scale changes (wheel/pinch zoom).
     React.useEffect(() => {
@@ -357,6 +454,6 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             </div>
         </div>
     );
-};
+});
 
 DiagramPanZoomViewport.displayName = 'DiagramPanZoomViewport';

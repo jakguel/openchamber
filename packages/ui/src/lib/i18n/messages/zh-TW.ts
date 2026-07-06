@@ -1858,6 +1858,8 @@ export const dict: Record<I18nKey, string> = {
   'chat.toolOutputDialog.mermaid.missingSource': '缺少 Mermaid 來源 URL。',
   'chat.toolOutputDialog.mermaid.loadFailed': '無法載入 Mermaid 圖表。',
   'chat.toolOutputDialog.mermaid.closeAria': '關閉圖表預覽',
+  'chat.toolOutputDialog.mermaid.zoomInAria': '放大',
+  'chat.toolOutputDialog.mermaid.zoomOutAria': '縮小',
   'chat.toolOutputDialog.mermaid.loading': '正在載入圖表...',
   'chat.toolOutputDialog.mermaid.renderFailed': '無法渲染 Mermaid 圖表。',
   'chat.toolOutputDialog.mermaid.retry': '重試',

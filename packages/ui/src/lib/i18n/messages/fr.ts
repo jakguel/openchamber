@@ -1715,6 +1715,8 @@ export const dict = {
   'chat.toolOutputDialog.mermaid.missingSource': 'URL de source Mermaid manquante.',
   'chat.toolOutputDialog.mermaid.loadFailed': 'Impossible de charger le diagramme Mermaid.',
   'chat.toolOutputDialog.mermaid.closeAria': 'Fermer l\'aperçu du diagramme',
+  'chat.toolOutputDialog.mermaid.zoomInAria': 'Zoom avant',
+  'chat.toolOutputDialog.mermaid.zoomOutAria': 'Zoom arrière',
   'chat.toolOutputDialog.mermaid.loading': 'Diagramme de chargement...',
   'chat.toolOutputDialog.mermaid.renderFailed': 'Impossible d\'afficher le diagramme Mermaid.',
   'chat.toolOutputDialog.mermaid.retry': 'Réessayer',

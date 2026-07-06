@@ -23,7 +23,7 @@ import {
 } from './toolRenderers';
 import type { ToolPopupContent, DiffViewMode } from './types';
 import { DiffViewToggle } from './DiffViewToggle';
-import { DiagramPanZoomViewport } from './DiagramPanZoomViewport';
+import { DiagramPanZoomViewport, type DiagramPanZoomHandle, type DiagramZoomState } from './DiagramPanZoomViewport';
 import { VirtualizedCodeBlock, type CodeLine } from './parts/VirtualizedCodeBlock';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
 import { Icon } from "@/components/icon/Icon";
@@ -569,6 +569,10 @@ const MermaidPreviewDialog: React.FC<{
     const [errorMessage, setErrorMessage] = React.useState<string>('');
     const { isRendered, isVisible, isTransitioning } = usePreviewOverlayState(popup.open);
     const requestIdRef = React.useRef(0);
+    // Imperative handle to the context-free viewport so the +/- buttons (which need i18n/theme
+    // context that lives here, not in the viewport) can drive its zoom.
+    const viewportRef = React.useRef<DiagramPanZoomHandle | null>(null);
+    const [zoomState, setZoomState] = React.useState<DiagramZoomState>({ canZoomIn: true, canZoomOut: true });
 
     const normalizeFilePath = React.useCallback((rawPath: string): string | null => {
         const input = rawPath.trim();
@@ -760,15 +764,41 @@ const MermaidPreviewDialog: React.FC<{
                     data-testid="mermaid-preview-panel"
                     onMouseDown={(event) => event.stopPropagation()}
                 >
-                    <button
-                        type="button"
-                        className="absolute top-4 right-4 z-10 h-11 w-11 flex items-center justify-center rounded-lg bg-[var(--surface-elevated)] text-muted-foreground/80 hover:text-foreground hover:bg-[var(--interactive-hover)] focus:outline-none focus:ring-2 focus:ring-primary/60"
-                        data-testid="mermaid-preview-close"
-                        onClick={() => onOpenChange(false)}
-                        aria-label={t('chat.toolOutputDialog.mermaid.closeAria')}
-                    >
-                        <Icon name="close" className="h-6 w-6" />
-                    </button>
+                    <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+                        <button
+                            type="button"
+                            className="h-11 w-11 flex items-center justify-center rounded-lg bg-[var(--surface-elevated)] text-muted-foreground/80 hover:text-foreground hover:bg-[var(--interactive-hover)] focus:outline-none focus:ring-2 focus:ring-primary/60"
+                            data-testid="mermaid-preview-close"
+                            onClick={() => onOpenChange(false)}
+                            aria-label={t('chat.toolOutputDialog.mermaid.closeAria')}
+                        >
+                            <Icon name="close" className="h-6 w-6" />
+                        </button>
+                        {status === 'ready' && (
+                            <>
+                                <button
+                                    type="button"
+                                    className="h-11 w-11 flex items-center justify-center rounded-lg bg-[var(--surface-elevated)] text-muted-foreground/80 hover:text-foreground hover:bg-[var(--interactive-hover)] focus:outline-none focus:ring-2 focus:ring-primary/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    data-testid="mermaid-preview-zoom-out"
+                                    onClick={() => viewportRef.current?.zoomOut()}
+                                    disabled={!zoomState.canZoomOut}
+                                    aria-label={t('chat.toolOutputDialog.mermaid.zoomOutAria')}
+                                >
+                                    <Icon name="subtract" className="h-6 w-6" />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="h-11 w-11 flex items-center justify-center rounded-lg bg-[var(--surface-elevated)] text-muted-foreground/80 hover:text-foreground hover:bg-[var(--interactive-hover)] focus:outline-none focus:ring-2 focus:ring-primary/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    data-testid="mermaid-preview-zoom-in"
+                                    onClick={() => viewportRef.current?.zoomIn()}
+                                    disabled={!zoomState.canZoomIn}
+                                    aria-label={t('chat.toolOutputDialog.mermaid.zoomInAria')}
+                                >
+                                    <Icon name="add" className="h-6 w-6" />
+                                </button>
+                            </>
+                        )}
+                    </div>
                     <div className="relative w-full h-full overflow-hidden">
                         <div className="h-full overflow-hidden">
                             {status === 'loading' && (
@@ -801,7 +831,12 @@ const MermaidPreviewDialog: React.FC<{
 
                             {status === 'ready' && (
                                 <div className="h-full">
-                                    <DiagramPanZoomViewport resetKey={`${popup.open}:${source}`} data-testid="diagram-panzoom">
+                                    <DiagramPanZoomViewport
+                                        ref={viewportRef}
+                                        resetKey={source}
+                                        onZoomStateChange={setZoomState}
+                                        data-testid="diagram-panzoom"
+                                    >
                                         <SimpleMarkdownRenderer
                                             content={diagramMarkdown}
                                             variant="tool"

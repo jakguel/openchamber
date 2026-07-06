@@ -1222,6 +1222,8 @@ export const dict: Record<I18nKey, string> = {
   'chat.toolOutputDialog.image.nextAria': 'Następny obraz',
   'chat.toolOutputDialog.image.previousAria': 'Poprzedni obraz',
   'chat.toolOutputDialog.mermaid.closeAria': 'Zamknij podgląd diagramu',
+  'chat.toolOutputDialog.mermaid.zoomInAria': 'Powiększ',
+  'chat.toolOutputDialog.mermaid.zoomOutAria': 'Pomniejsz',
   'chat.toolOutputDialog.mermaid.loadFailed': 'Nie udało się wczytać diagramu Mermaid.',
   'chat.toolOutputDialog.mermaid.loading': 'Ładowanie diagramu...',
   'chat.toolOutputDialog.mermaid.missingSource': 'Brakuje adresu URL źródła Mermaid.',

@@ -1888,6 +1888,8 @@ export const dict: Record<I18nKey, string> = {
   'chat.toolOutputDialog.mermaid.missingSource': 'Mermaid 소스 URL이 없습니다.',
   'chat.toolOutputDialog.mermaid.loadFailed': 'Mermaid 다이어그램을 불러올 수 없습니다',
   'chat.toolOutputDialog.mermaid.closeAria': '다이어그램 미리보기 닫기',
+  'chat.toolOutputDialog.mermaid.zoomInAria': '확대',
+  'chat.toolOutputDialog.mermaid.zoomOutAria': '축소',
   'chat.toolOutputDialog.mermaid.loading': '다이어그램 로드 중…',
   'chat.toolOutputDialog.mermaid.renderFailed': 'Mermaid 다이어그램을 렌더링할 수 없습니다.',
   'chat.toolOutputDialog.mermaid.retry': '다시 시도',

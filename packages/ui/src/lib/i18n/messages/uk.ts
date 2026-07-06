@@ -1854,6 +1854,8 @@ export const dict: Record<I18nKey, string> = {
   "chat.toolOutputDialog.mermaid.missingSource": "Відсутнє джерело Mermaid URL.",
   "chat.toolOutputDialog.mermaid.loadFailed": "Не вдалося завантажити діаграму Mermaid.",
   "chat.toolOutputDialog.mermaid.closeAria": "Закрити попередній перегляд діаграми",
+  "chat.toolOutputDialog.mermaid.zoomInAria": "Збільшити",
+  "chat.toolOutputDialog.mermaid.zoomOutAria": "Зменшити",
   "chat.toolOutputDialog.mermaid.loading": "Завантаження діаграми...",
   "chat.toolOutputDialog.mermaid.renderFailed": "Неможливо відобразити діаграму Mermaid.",
   "chat.toolOutputDialog.mermaid.retry": "Повторити спробу",
