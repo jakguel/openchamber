@@ -23,6 +23,7 @@ import {
     computeWheelScale,
     isContentPannable,
     pointerDistance,
+    zoomAboutPoint,
 } from '../markdown/diagramPanZoom';
 
 interface DiagramPanZoomViewportProps {
@@ -38,7 +39,18 @@ interface Offset {
     y: number;
 }
 
+/**
+ * Combined pan/zoom view. Scale and offset live in ONE state object so the wheel handler can
+ * commit a focal zoom (new scale + cursor-anchored offset) as a single atomic update derived
+ * from one base snapshot — never as two racing setState calls.
+ */
+interface ViewState {
+    scale: number;
+    offset: Offset;
+}
+
 const IDENTITY_OFFSET: Offset = { x: 0, y: 0 };
+const IDENTITY_VIEW: ViewState = { scale: 1, offset: IDENTITY_OFFSET };
 
 export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
     children,
@@ -49,8 +61,8 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
     const containerRef = React.useRef<HTMLDivElement | null>(null);
     const contentRef = React.useRef<HTMLDivElement | null>(null);
 
-    const [scale, setScale] = React.useState(1);
-    const [offset, setOffset] = React.useState<Offset>(IDENTITY_OFFSET);
+    const [view, setView] = React.useState<ViewState>(IDENTITY_VIEW);
+    const { scale, offset } = view;
     const [isPanning, setIsPanning] = React.useState(false);
     // Whether the (scaled) content currently overflows the viewport — gates pan + cursor.
     const [canPan, setCanPan] = React.useState(false);
@@ -104,8 +116,7 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
     // diagram (notably a PlantUML SVG) can paint AFTER mount, the fit is measured across frames
     // until the content has a non-zero layout size, and applied exactly ONCE per resetKey.
     React.useEffect(() => {
-        setScale(1);
-        setOffset(IDENTITY_OFFSET);
+        setView(IDENTITY_VIEW);
         setCanPan(false);
         dragRef.current = null;
         pinchRef.current = null;
@@ -147,8 +158,7 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             }
             applied = true;
             const fitScale = computeFitScale(contentWidth, contentHeight, viewportWidth, viewportHeight);
-            setScale(fitScale);
-            setOffset(IDENTITY_OFFSET);
+            setView({ scale: fitScale, offset: IDENTITY_OFFSET });
             setCanPan(
                 isContentPannable(
                     contentWidth * fitScale,
@@ -194,16 +204,42 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
         }
         const onWheel = (event: WheelEvent) => {
             event.preventDefault();
-            // macOS trackpad pinch arrives as a wheel event with ctrlKey=true.
-            // Use a larger step so pinch feels responsive instead of crawling.
+            const content = contentRef.current;
+            if (!content) {
+                return;
+            }
+            // macOS trackpad pinch arrives as a wheel event with ctrlKey=true. Both the desktop
+            // wheel and the trackpad-pinch path zoom FOCALLY about the cursor; pinch just uses a
+            // larger step so it feels responsive instead of crawling.
             const pinchOpts = event.ctrlKey ? { step: DIAGRAM_PINCH_WHEEL_STEP } : undefined;
-            const nextScale = computeWheelScale(scaleRef.current, event.deltaY, pinchOpts);
-            setScale(nextScale);
-            setOffset((current) => clampWithGeometry(current, nextScale));
+            const rect = container.getBoundingClientRect();
+            const cursor = { x: event.clientX, y: event.clientY };
+            const viewportCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            const contentWidth = content.offsetWidth;
+            const contentHeight = content.offsetHeight;
+            const viewportWidth = container.clientWidth;
+            const viewportHeight = container.clientHeight;
+            // ONE atomic update: derive nextScale AND the focal, per-axis-clamped nextOffset from
+            // the SAME base snapshot. Never split into racing setScale + setOffset — a functional
+            // update also lets rapid wheel events accumulate correctly off the true prior view.
+            setView((base) => {
+                const nextScale = computeWheelScale(base.scale, event.deltaY, pinchOpts);
+                const focal = zoomAboutPoint(base.offset, base.scale, nextScale, cursor, viewportCenter);
+                const nextOffset = clampPanOffset({
+                    offsetX: focal.x,
+                    offsetY: focal.y,
+                    scale: nextScale,
+                    contentWidth,
+                    contentHeight,
+                    viewportWidth,
+                    viewportHeight,
+                });
+                return { scale: nextScale, offset: nextOffset };
+            });
         };
         container.addEventListener('wheel', onWheel, { passive: false });
         return () => container.removeEventListener('wheel', onWheel);
-    }, [clampWithGeometry]);
+    }, []);
 
     const handlePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
         pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
@@ -245,8 +281,10 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             const distance = pointerDistance(a, b);
             const ratio = distance / pinchRef.current.baseDistance;
             const nextScale = computePinchScale(pinchRef.current.baseScale, ratio);
-            setScale(nextScale);
-            setOffset((current) => clampWithGeometry(current, nextScale));
+            setView((base) => ({
+                scale: nextScale,
+                offset: clampWithGeometry(base.offset, nextScale),
+            }));
             return;
         }
 
@@ -261,7 +299,7 @@ export const DiagramPanZoomViewport: React.FC<DiagramPanZoomViewportProps> = ({
             },
             scaleRef.current,
         );
-        setOffset(nextOffset);
+        setView((base) => ({ scale: base.scale, offset: nextOffset }));
     }, [clampWithGeometry]);
 
     const endPointer = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {

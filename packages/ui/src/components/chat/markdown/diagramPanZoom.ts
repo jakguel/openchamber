@@ -44,28 +44,80 @@ export interface PanClampInput {
 }
 
 /**
- * Clamp a pan offset so the (scaled) diagram stays within the viewport plus `padding` slack.
+ * Clamp a single axis pan offset.
  *
- * The content is centered (transform-origin: center), so at offset 0 it sits centered in the
- * viewport. The maximum absolute offset on an axis is:
+ * - When the scaled content OVERFLOWS the viewport on this axis (scaledSize > viewportSize),
+ *   the offset is bounded to ±((scaledSize - viewportSize) / 2 + padding): you can pan far
+ *   enough to reveal every edge, plus `padding` extra slack.
+ * - When it does NOT overflow (scaledSize <= viewportSize), the content fits on this axis and
+ *   must stay centered, so the offset is FORCED to 0 (re-center). This is what re-centers an
+ *   axis after a focal zoom shrinks the content back inside the viewport.
+ */
+function clampPanAxis(offset: number, scaledSize: number, viewportSize: number, padding: number): number {
+    if (scaledSize <= viewportSize) {
+        return 0;
+    }
+    const max = (scaledSize - viewportSize) / 2 + padding;
+    return clamp(offset, -max, max);
+}
+
+/**
+ * Clamp a pan offset so the (scaled) diagram stays within the viewport plus `padding` slack,
+ * PER AXIS and independently. The content is centered (transform-origin: center), so at offset
+ * 0 it sits centered in the viewport.
  *
- *   max(0, (scaledSize - viewportSize) / 2) + padding
+ * Each axis is clamped on its own:
+ * - Overflowing axis  → bounded to ±((scaledSize - viewportSize) / 2 + padding).
+ * - Non-overflow axis → forced to 0 (the content fits, so it re-centers).
  *
- * - When the scaled diagram is LARGER than the viewport, you can pan far enough to reveal
- *   every edge, plus `padding` extra slack.
- * - When it is smaller, you can still nudge it up to `padding` from center.
+ * A focal zoom can leave one axis overflowing and the other fitting; this keeps the fitting
+ * axis centered while still allowing full pan on the overflowing one.
  */
 export function clampPanOffset(input: PanClampInput): { x: number; y: number } {
     const padding = input.padding ?? DIAGRAM_PAN_PADDING;
     const scaledWidth = input.contentWidth * input.scale;
     const scaledHeight = input.contentHeight * input.scale;
 
-    const maxX = Math.max(0, (scaledWidth - input.viewportWidth) / 2) + padding;
-    const maxY = Math.max(0, (scaledHeight - input.viewportHeight) / 2) + padding;
-
     return {
-        x: clamp(input.offsetX, -maxX, maxX),
-        y: clamp(input.offsetY, -maxY, maxY),
+        x: clampPanAxis(input.offsetX, scaledWidth, input.viewportWidth, padding),
+        y: clampPanAxis(input.offsetY, scaledHeight, input.viewportHeight, padding),
+    };
+}
+
+/**
+ * Focal (zoom-to-cursor) pan offset: scaling the content from `scale` to `nextScale` while
+ * keeping the content point currently under `cursor` fixed on screen.
+ *
+ * With a center-origin transform (`translate(offset) scale(s)`, transform-origin center), the
+ * offset that keeps the cursor's content point stationary is:
+ *
+ *   offset' = offset * (s'/s) + d * (1 - s'/s),   d = cursor - viewportCenter
+ *
+ * where `s'` is the CLAMPED next scale (clamped to [DIAGRAM_MIN_SCALE, DIAGRAM_MAX_SCALE]).
+ * Clamping the scale here is what keeps the focal point fixed even at the zoom bounds — using
+ * the raw (unclamped) next scale would drift the cursor point once a bound is hit.
+ *
+ * `d` and the returned offset are in the same screen-pixel units as the applied translate.
+ * When the effective scale is unchanged (ratio 1) the offset passes through unchanged, and a
+ * non-finite / non-positive current scale returns the offset untouched (never NaN).
+ */
+export function zoomAboutPoint(
+    offset: { x: number; y: number },
+    scale: number,
+    nextScale: number,
+    cursor: { x: number; y: number },
+    viewportCenter: { x: number; y: number },
+): { x: number; y: number } {
+    if (!Number.isFinite(scale) || scale <= 0) {
+        return { x: offset.x, y: offset.y };
+    }
+    const clampedNext = clamp(nextScale, DIAGRAM_MIN_SCALE, DIAGRAM_MAX_SCALE);
+    const ratio = clampedNext / scale;
+    const dx = cursor.x - viewportCenter.x;
+    const dy = cursor.y - viewportCenter.y;
+    return {
+        x: offset.x * ratio + dx * (1 - ratio),
+        y: offset.y * ratio + dy * (1 - ratio),
     };
 }
 
