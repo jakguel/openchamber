@@ -61,6 +61,55 @@ const DIAGRAM = [
     '@enduml',
 ].join('\n');
 
+/** Jiyan's EXACT failing diagram (openchamber-5ki.42). The truncated `DIAGRAM` above is only the
+ * isolated `package "Querschnitt"` block; Jiyan's real source adds `left to right direction`, 11
+ * standalone rectangles and ~16 arrows, so @plantuml/core lays the WHOLE graph out and sizes the
+ * boxes differently than the isolated package block. Verifying the anchor-aware fit against this
+ * verbatim source is what the reopened story (5ki.42.8) requires — the isolated block was a gap.
+ * The multi-line rectangle titles use `\n` inside the label (escaped `\\n` here, exactly like
+ * `DIAGRAM`); "AccessPolicy / SecretRecord /\nVulnerabilityRecord" is the longest and the prime
+ * overflow suspect. Source-of-truth: Serena memory markdown/plantuml-5ki42-jiyan-real-source. */
+const QUERSCHNITT_FULL_DIAGRAM = [
+    '@startuml',
+    'left to right direction',
+    '',
+    'package "Querschnitt" {',
+    '  rectangle "Observability /\\nMonitoringDefinition" as OBS',
+    '  rectangle "Change / Release" as CHG',
+    '  rectangle "BackupPolicy /\\nRestoreEvidence" as BKP',
+    '  rectangle "AccessPolicy / SecretRecord /\\nVulnerabilityRecord" as SEC',
+    '  rectangle "CapacityRecord" as CAP',
+    '}',
+    '',
+    'rectangle "Desired State" as DS',
+    'rectangle "Reconciliation" as REC',
+    'rectangle "Actual State" as AS',
+    'rectangle "Incident" as INC',
+    'rectangle "Problem / RCA" as PRB',
+    'rectangle "Impact Analysis" as IMP',
+    'rectangle "DependencyMap" as DEP',
+    'rectangle "Service" as SVC',
+    'rectangle "Workload" as WL',
+    'rectangle "Platform" as PLT',
+    '',
+    'DS --> REC',
+    'REC --> AS',
+    'AS --> OBS',
+    'OBS --> INC',
+    'INC --> PRB',
+    'PRB --> CHG',
+    'CHG --> IMP',
+    'IMP --> DEP',
+    'DEP --> SVC',
+    'SVC --> WL',
+    'WL --> PLT',
+    'PLT --> CAP',
+    'PLT --> BKP',
+    'SVC --> SEC',
+    'CHG --> DS',
+    '@enduml',
+].join('\n');
+
 /** PATH-boxed container title (openchamber-5ki.39.1). A `package` title is drawn inside a
  * `<g class="cluster">` whose background is a `<path>` (folder shape), NOT a `<rect>`. The long
  * package name makes the container size to its title, so — with the wide-metric override — the
@@ -254,6 +303,66 @@ test.describe('PlantUML box-label overflow — real Chromium (openchamber-f9d.26
 
         expect(reverted.boxedCount).toBeGreaterThan(0);
         // Without the fit pass, the wide-metric labels overflow their boxes (the bug returns).
+        expect(
+            reverted.overflows.length,
+            'expected >=1 box overflow once the fit attributes are stripped (RED-on-revert)',
+        ).toBeGreaterThan(0);
+    });
+});
+
+test.describe('PlantUML box-label overflow — Jiyan real source (openchamber-5ki.42)', () => {
+    test('AC2 GREEN: every boxed label in the full Querschnitt graph fits after the fit pass', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', QUERSCHNITT_FULL_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const result = await measureBoxOverflow(page, { stripFit: false });
+
+        expect(result.boxedCount, 'no boxed <text> found in the rendered diagram').toBeGreaterThan(0);
+        expect(
+            result.withTextLength,
+            'fitBoxText set no textLength — the overflow was not detected/condensed',
+        ).toBeGreaterThan(0);
+        expect(
+            result.overflows,
+            `boxed labels still overflow after fit: ${JSON.stringify(result.overflows.slice(0, 5))}`,
+        ).toEqual([]);
+
+        // Anchor-relative edge-containment across the WHOLE graph (openchamber-5ki.42): the
+        // width-only check above is anchor-blind, so it also passes under a full-width fit that
+        // ignores a label's anchor. This asserts each boxed label's painted left AND right edges
+        // sit within its box's anchor-aware padded bounds — the property Jiyan's real diagram needs
+        // and the one the committed anchor-aware fit (26667ec9) actually guarantees.
+        const rows = await measureAnchorRows(page);
+        const boxed = rows.filter((r) => r.hasBox);
+        expect(boxed.length, 'no anchor-boxed <text> found in the rendered diagram').toBeGreaterThan(0);
+        const anchorOverflows = boxed
+            .filter(
+                (r) =>
+                    r.left < (r.padL as number) - CONTAIN_EPS_PX ||
+                    r.right > (r.padR as number) + CONTAIN_EPS_PX,
+            )
+            .map((r) => ({ t: r.text, left: r.left, right: r.right, padL: r.padL, padR: r.padR }));
+        expect(
+            anchorOverflows,
+            `boxed labels spill past their anchor-aware padded bounds: ${JSON.stringify(anchorOverflows.slice(0, 5))}`,
+        ).toEqual([]);
+    });
+
+    test('AC3 RED-on-revert: stripping the fit attributes reintroduces box overflow', async ({
+        page,
+    }) => {
+        test.setTimeout(RENDER_BOUND_MS + 60_000);
+        await mount(page);
+        await setMarkdown(page, fence('plantuml', QUERSCHNITT_FULL_DIAGRAM));
+        await waitForRenderedPlantuml(page);
+
+        const reverted = await measureBoxOverflow(page, { stripFit: true });
+
+        expect(reverted.boxedCount).toBeGreaterThan(0);
         expect(
             reverted.overflows.length,
             'expected >=1 box overflow once the fit attributes are stripped (RED-on-revert)',
