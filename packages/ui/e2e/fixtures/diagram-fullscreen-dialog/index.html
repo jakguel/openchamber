@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fullscreen diagram dialog harness</title>
+    <style>
+        html, body { margin: 0; padding: 0; }
+    </style>
+    <script>
+        window.global = window.global || window;
+        window.process = window.process || {
+            env: { NODE_ENV: 'production' },
+            platform: 'browser',
+            cwd: () => '/',
+            nextTick: (f) => { setTimeout(f, 0); },
+        };
+    </script>
+</head>
+<body>
+    <div id="root" data-fs-status="idle"></div>
+    <script type="module" src="/main.tsx"></script>
+</body>
+</html>
