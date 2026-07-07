@@ -76,8 +76,13 @@ function registerNerdFonts(): void {
 
   // If every family already resolves (OS-installed or a cached face), the gate
   // can be set synchronously without waiting on a network/disk round-trip.
+  // The sample text MUST be a Private-Use-Area glyph inside the declared
+  // unicode-range (U+E000-F8FF): document.fonts.check() with no/whitespace
+  // sample tests U+0020, which is outside the range, so it would report the
+  // icon faces as "available" before they have actually loaded.
+  const puaSampleGlyph = '\uE000';
   const alreadyAvailable = nerdFontSpecs.every(({ family }) =>
-    document.fonts.check(`16px '${family}'`),
+    document.fonts.check(`16px '${family}'`, puaSampleGlyph),
   );
   if (alreadyAvailable) {
     markFontsLoaded();
