@@ -3,10 +3,31 @@ import { CODE_FONT_OPTION_MAP, UI_FONT_OPTION_MAP, type FontFaceSource, type Mon
 const loadedFaces = new Set<string>();
 const pendingFaces = new Map<string, Promise<void>>();
 
-const buildFontUrl = (source: FontFaceSource, weight: number) => {
-  const packageName = encodeURIComponent(source.packageName).replace('%40', '@').replace('%2F', '/');
-  return `https://cdn.jsdelivr.net/npm/${packageName}/files/${source.filePrefix}-latin-${weight}-normal.woff2`;
-};
+/* The catalog woff2 are vendored under src/assets/fonts and were previously
+   fetched at runtime from a public CDN, which broke offline use. `eager`
+   here materializes only the hashed, base-aware asset URL STRINGS at module
+   load (Vite emits them for both the web and vscode builds); it does NOT fetch
+   the font bytes. The per-family byte download stays deferred to the
+   FontFace.load() call in loadFace, so selection remains lazy and on-demand.
+   A static `?url` glob is the only Vite-analyzable form — a template-literal
+   `new URL(`...${var}`)` specifier would not be emitted and would ship a broken
+   offline URL. */
+const vendoredFontUrls = import.meta.glob<string>('../assets/fonts/**/*.woff2', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+});
+
+const fontUrlByFileName = new Map<string, string>();
+for (const [modulePath, url] of Object.entries(vendoredFontUrls)) {
+  const fileName = modulePath.split('/').pop();
+  if (fileName) {
+    fontUrlByFileName.set(fileName, url);
+  }
+}
+
+const buildFontUrl = (source: FontFaceSource, weight: number): string | undefined =>
+  fontUrlByFileName.get(`${source.filePrefix}-latin-${weight}-normal.woff2`);
 
 const loadFace = (source: FontFaceSource, weight: number) => {
   const key = `${source.family}:${weight}`;
@@ -23,7 +44,13 @@ const loadFace = (source: FontFaceSource, weight: number) => {
     return Promise.resolve();
   }
 
-  const face = new FontFace(source.family, `url(${buildFontUrl(source, weight)}) format('woff2')`, {
+  const url = buildFontUrl(source, weight);
+  if (!url) {
+    console.warn(`No vendored font asset for: ${source.family} ${weight}`);
+    return Promise.resolve();
+  }
+
+  const face = new FontFace(source.family, `url(${url}) format('woff2')`, {
     style: 'normal',
     weight: String(weight),
     display: 'swap',
