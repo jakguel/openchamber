@@ -1,0 +1,20 @@
+/* KaTeX theme overrides for light/dark mode.
+   Imported from styles/fonts.ts immediately AFTER katex.min.css so these
+   color rules win the cascade regardless of entrypoint import order. */
+.katex {
+  color: var(--foreground);
+}
+.katex .mord,
+.katex .mopen,
+.katex .mclose,
+.katex .mbin,
+.katex .mrel,
+.katex .mpunct,
+.katex .mord,
+.katex .mop,
+.katex .minner {
+  color: inherit;
+}
+.katex-error {
+  color: var(--destructive);
+}
