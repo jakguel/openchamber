@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe('forwardDiagnosticToServer', () => {
-  test('posts the diagnostic to /api/log through runtimeFetch', async () => {
+  test('posts the diagnostic to /api/log through runtimeFetch, defaulting level to log (stdout)', async () => {
     const previous = getRuntimeUrlResolver();
     const calls: Array<{ url: string; method: string; body: string }> = [];
     try {
@@ -24,14 +24,16 @@ describe('forwardDiagnosticToServer', () => {
         return new Response(null, { status: 204 });
       }) as typeof fetch;
 
-      forwardDiagnosticToServer('plantuml', 'syntax error at line 3', 'warn');
+      // No explicit level: the caller (renderPlantuml) relies on the default,
+      // which MUST be 'log' so the server writes to stdout (fd 1), not stderr.
+      forwardDiagnosticToServer('plantuml', 'syntax error at line 3');
       await flush();
 
       expect(calls).toHaveLength(1);
       expect(calls[0].url).toBe('https://api.example/api/log');
       expect(calls[0].method).toBe('POST');
       expect(JSON.parse(calls[0].body)).toEqual({
-        level: 'warn',
+        level: 'log',
         tag: 'plantuml',
         message: 'syntax error at line 3',
       });

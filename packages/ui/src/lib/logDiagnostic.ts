@@ -19,7 +19,7 @@ const TRUNCATION_SUFFIX = '…[truncated]';
 export function forwardDiagnosticToServer(
   tag: string,
   message: string,
-  level: DiagnosticLevel = 'warn',
+  level: DiagnosticLevel = 'log',
 ): void {
   try {
     const boundedMessage =
