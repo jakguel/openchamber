@@ -5,6 +5,7 @@ import { spliceTheme } from './applyTheme';
 import { rewriteLinetypeForLabels } from './rewriteLinetype';
 import { extractPlantumlError } from './extractPlantumlError';
 import { resolveThemeLineMapping } from './themeLineOffset';
+import { forwardDiagnosticToServer } from '@/lib/logDiagnostic';
 
 export type PlantUmlRenderResult = { svg?: string; error?: string };
 
@@ -87,6 +88,9 @@ export async function renderPlantuml(source: string, dark: boolean, themeBody: s
                 const ex = extractPlantumlError(raw, extractOpts);
                 if (ex?.detail) {
                     console.warn('[plantuml]', ex.fullText ?? ex.detail);
+                    // Fire-and-forget forward to server stdout (→ logfile); the swallow
+                    // lives in the helper, so a failure here never enters the render path.
+                    forwardDiagnosticToServer('plantuml', ex.fullText ?? ex.detail);
                     return { error: ex.detail };
                 }
             } catch {

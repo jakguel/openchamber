@@ -1208,6 +1208,7 @@ async function main(options = {}) {
   const { tunnelService, startTunnelWithNormalizedRequest } = tunnelRuntimeContext;
 
   await featureRoutesRuntime.registerRoutes(app, {
+    express,
     crypto,
     fs,
     os,

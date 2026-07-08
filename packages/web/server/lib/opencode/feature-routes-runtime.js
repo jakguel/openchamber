@@ -13,6 +13,7 @@ import { registerPluginRoutes } from './plugin-routes.js';
 import { getNpmInfo, clearCache as clearNpmCache } from './npm-registry.js';
 import { parseNpmSpec, parsePathSpec, isExactSemver } from './plugin-spec.js';
 import { registerOpenCodeRoutes } from './routes.js';
+import { registerLogRoutes } from './log-routes.js';
 
 export const createFeatureRoutesRuntime = (dependencies) => {
   const {
@@ -29,6 +30,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
   const registerRoutes = async (app, routeDependencies) => {
     const {
+      express,
       crypto,
       fs,
       os,
@@ -64,6 +66,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     } = routeDependencies;
 
     const { getProviderSources, removeProviderConfig } = await import('./index.js');
+
+    registerLogRoutes(app, { express });
 
     registerSettingsUtilityRoutes(app, {
       readCustomThemesFromDisk,
