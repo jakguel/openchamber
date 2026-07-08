@@ -279,6 +279,46 @@ test.describe('AC-D1 — eager fonts render offline against the real built dist'
         }, JETBRAINS_NERD_FAMILY);
         expect(nerdFaceLoaded, 'the Nerd PUA FontFace must be registered by styles/fonts.ts AND loaded offline').toBe(true);
 
+        // Render proof: PUA icon fonts are MONOSPACE, so a glyph-width probe compares equal to the
+        // .notdef fallback cell even when the icon loaded — hence a pixel-diff of the painted bitmap
+        // instead. A = U+E000 with the Nerd family in the stack; B = U+E000 with only generic
+        // `monospace`. A real icon render makes A differ from B and gives A non-background pixels;
+        // when the Nerd woff2 is blocked the family is unavailable, A collapses onto B (diff -> 0)
+        // and this fails — the behavioral signal the negative control exercises.
+        const iconRender = await page.evaluate(
+            async ({ family, sample }) => {
+                await document.fonts.load(`24px "${family}"`, sample);
+                const paint = (fontStack: string): Uint8ClampedArray => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 48;
+                    canvas.height = 48;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(0, 0, 48, 48);
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textBaseline = 'top';
+                    ctx.font = fontStack;
+                    ctx.fillText(sample, 8, 8);
+                    return ctx.getImageData(0, 0, 48, 48).data;
+                };
+                const a = paint(`24px "${family}", monospace`);
+                const b = paint('24px monospace');
+                let paintedA = 0;
+                let diff = 0;
+                for (let i = 0; i < a.length; i += 4) {
+                    if (a[i] > 8 || a[i + 1] > 8 || a[i + 2] > 8) paintedA++;
+                    if (a[i] !== b[i] || a[i + 1] !== b[i + 1] || a[i + 2] !== b[i + 2]) diff++;
+                }
+                return { paintedA, diff, totalPixels: a.length / 4 };
+            },
+            { family: JETBRAINS_NERD_FAMILY, sample: PUA_SAMPLE },
+        );
+        expect(iconRender.paintedA, 'the Nerd PUA icon glyph must paint non-background pixels').toBeGreaterThan(30);
+        expect(
+            iconRender.diff,
+            'the rendered Nerd PUA glyph must differ from the generic monospace fallback',
+        ).toBeGreaterThan(30);
+
         // The vendored Nerd woff2 is genuinely present and fetchable same-origin while jsdelivr is
         // blocked — the offline asset exists regardless of whether an OS-installed local() copy won
         // the render on this machine.
