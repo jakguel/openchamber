@@ -1559,7 +1559,6 @@ export const useUIStore = create<UIStore>()(
             sessionFileTabs: get().sessionFileTabs,
             activeSessionFileTabId: get().activeSessionFileTabId,
           };
-          console.debug('[sessionWindowState] prepareForSessionSwitch', sessionId.slice(-8), JSON.stringify(state));
           sessionWindowStateBySession.set(sessionId, state);
         },
 
@@ -1578,7 +1577,6 @@ export const useUIStore = create<UIStore>()(
           ) {
             activeSessionFileTabId = restored.sessionFileTabs[restored.sessionFileTabs.length - 1] ?? 'chat';
           }
-          console.debug('[sessionWindowState] restoreForSessionSwitch', sessionId?.slice(-8), saved ? 'from-map' : 'DEFAULT', JSON.stringify(restored));
           // Track the now-live session so persist writes fold its live window state
           // back into the snapshot (FIX #2), keeping the persisted list fresh.
           currentSnapshotSessionId = sessionId;
