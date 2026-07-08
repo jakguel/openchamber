@@ -3,6 +3,8 @@ import { ensurePlantumlStdlib } from './stdlib/injectStdlib';
 import { sanitizeSvg } from './sanitizeSvg';
 import { spliceTheme } from './applyTheme';
 import { rewriteLinetypeForLabels } from './rewriteLinetype';
+import { extractPlantumlError } from './extractPlantumlError';
+import { resolveThemeLineMapping } from './themeLineOffset';
 
 export type PlantUmlRenderResult = { svg?: string; error?: string };
 
@@ -74,6 +76,23 @@ export async function renderPlantuml(source: string, dark: boolean, themeBody: s
         const effectiveDark = themeBody.trim().length > 0 ? false : dark;
         const raw = await renderToStringOnce(engine, themed, effectiveDark, RENDER_TIMEOUT_MS);
         if (isPlantumlError(raw)) {
+            try {
+                const mapping = resolveThemeLineMapping(source, themeBody);
+                const extractOpts =
+                    mapping.active && mapping.trusted
+                        ? { themeInsertedLines: mapping.insertedLines }
+                        : mapping.active
+                          ? { themeLineUncertain: true }
+                          : {};
+                const ex = extractPlantumlError(raw, extractOpts);
+                if (ex?.detail) {
+                    console.warn('[plantuml]', ex.fullText ?? ex.detail);
+                    return { error: ex.detail };
+                }
+            } catch {
+                // Extractor threw on a format drift / false positive — fall through to the generic
+                // constant below rather than surface a stack trace or an empty detail.
+            }
             return { error: 'Invalid PlantUML diagram source' };
         }
         return { svg: sanitizeSvg(raw) };

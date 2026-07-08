@@ -14,6 +14,10 @@ export type PlantumlErrorInfo = {
     line?: number;
     token?: string;
     detail: string;
+    // The complete concatenated <text> node content (entity-decoded) the parser worked from — the
+    // FULL engine diagnostic, for console logging. `detail` stays the concise line/token summary for
+    // the UI; `fullText` carries everything the error diagram rendered. Purely additive.
+    fullText?: string;
 };
 
 export type ExtractPlantumlErrorOptions = {
@@ -101,7 +105,7 @@ function parseErrorFromText(
     const line = resolveOriginalLine(citedLine, opts);
     const detail = buildDetail(line, token);
 
-    const info: PlantumlErrorInfo = { detail };
+    const info: PlantumlErrorInfo = { detail, fullText: decoded };
     if (line !== undefined) info.line = line;
     if (token !== undefined) info.token = token;
     return info;
