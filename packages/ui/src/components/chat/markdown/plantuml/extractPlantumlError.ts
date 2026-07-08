@@ -18,10 +18,15 @@ export type PlantumlErrorInfo = {
 
 export type ExtractPlantumlErrorOptions = {
     // spliceTheme (applyTheme.ts) inserts the theme body after the `@start` opener, so the engine
-    // cites a theme-offset line. When provided, subtract it to map the themed line back to the
-    // user's original source line. DERIVING this count is a separate downstream task (T3); this
-    // module only consumes it.
+    // cites a theme-offset line. When provided (> 0), subtract it to map the themed line back to the
+    // user's original source line. The count is DERIVED read-only from the real theme body by
+    // themeInsertedLineCount (themeLineOffset.ts); this module only consumes it.
     themeInsertedLines?: number;
+    // Set by the caller when a theme is active but the themed → original line mapping is NOT
+    // trustworthy (e.g. a non-@startuml opener, or an untrusted inserted-line count — see
+    // resolveThemeLineMapping in themeLineOffset.ts). The line is OMITTED (token-only) rather than
+    // surfacing a possibly-wrong line. Takes precedence over themeInsertedLines.
+    themeLineUncertain?: boolean;
     // Boundary override for tests / non-DOM runtimes. Receives the raw SVG, returns the concatenated
     // <text> node textContent (entity-decoded, tspans reassembled). Defaults to a real DOMParser.
     parseSvgText?: (svg: string) => string;
@@ -63,7 +68,10 @@ function defaultParseSvgText(svg: string): string {
 // Pure logic: given the concatenated <text> textContent, locate the citation (→ line) and the
 // offending token (the echoed source line immediately before the trailing error marker). Returns
 // null when there is no citation (a valid render, or a non-PlantUML/citation-less SVG).
-function parseErrorFromText(text: string, themeInsertedLines?: number): PlantumlErrorInfo | null {
+function parseErrorFromText(
+    text: string,
+    opts: { themeInsertedLines?: number; themeLineUncertain?: boolean } = {},
+): PlantumlErrorInfo | null {
     const decoded = decodeXmlEntities(text);
     const lines = decoded.split('\n');
 
@@ -90,14 +98,36 @@ function parseErrorFromText(text: string, themeInsertedLines?: number): Plantuml
     // Guard degenerate diagrams where the citation itself is the line before the marker.
     if (token !== undefined && (token.length === 0 || CITATION_RE.test(token))) token = undefined;
 
-    const line =
-        themeInsertedLines !== undefined && themeInsertedLines > 0
-            ? Math.max(1, citedLine - themeInsertedLines)
-            : citedLine;
+    const line = resolveOriginalLine(citedLine, opts);
+    const detail = buildDetail(line, token);
 
-    const detail = token ? `Syntax error on line ${line}: ${token}` : `Syntax error on line ${line}`;
+    const info: PlantumlErrorInfo = { detail };
+    if (line !== undefined) info.line = line;
+    if (token !== undefined) info.token = token;
+    return info;
+}
 
-    return token !== undefined ? { line, token, detail } : { line, detail };
+// Map the engine-cited (possibly theme-offset) line back to the user's original source line, or
+// OMIT it (return undefined) when the mapping can't be trusted — never surface a wrong line:
+//   - themeLineUncertain: a theme is active but the mapping is untrustworthy (non-@startuml opener).
+//   - underflow (cited line at/below the spliced theme block): the count doesn't map to real source.
+// With no active theme the cited line passes through unchanged.
+function resolveOriginalLine(
+    citedLine: number,
+    opts: { themeInsertedLines?: number; themeLineUncertain?: boolean },
+): number | undefined {
+    if (opts.themeLineUncertain) return undefined;
+    const inserted = opts.themeInsertedLines;
+    if (inserted === undefined || inserted <= 0) return citedLine;
+    const mapped = citedLine - inserted;
+    return mapped >= 1 ? mapped : undefined;
+}
+
+function buildDetail(line: number | undefined, token: string | undefined): string {
+    if (line !== undefined) {
+        return token ? `Syntax error on line ${line}: ${token}` : `Syntax error on line ${line}`;
+    }
+    return token ? `Syntax error near: ${token}` : 'Syntax error';
 }
 
 /**
@@ -122,7 +152,10 @@ export function extractPlantumlError(
     if (typeof text !== 'string' || text.trim().length === 0) return null;
 
     try {
-        return parseErrorFromText(text, opts.themeInsertedLines);
+        return parseErrorFromText(text, {
+            themeInsertedLines: opts.themeInsertedLines,
+            themeLineUncertain: opts.themeLineUncertain,
+        });
     } catch {
         return null;
     }
