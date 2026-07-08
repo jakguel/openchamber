@@ -374,7 +374,7 @@ const buildPlantumlError = (title: string, detail?: string): HTMLElement => {
   if (detail && detail.trim().length > 0) {
     const sub = document.createElement('div');
     sub.className = 'mt-1 text-xs text-muted-foreground';
-    sub.textContent = detail;
+    sub.textContent = detail.length > 240 ? detail.slice(0, 240) + '\u2026' : detail;
     wrap.appendChild(sub);
   }
   return wrap;
