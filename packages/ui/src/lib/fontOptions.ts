@@ -1,6 +1,6 @@
 export type UiFontOption = 'ibm-plex-sans' | 'inter' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system';
 
-export type MonoFontOption = 'ibm-plex-mono' | 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono';
+export type MonoFontOption = 'ibm-plex-mono' | 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'hack-nerd-font' | 'system-mono';
 
 export interface FontFaceSource {
     family: string;
@@ -151,6 +151,14 @@ export const CODE_FONT_OPTIONS: FontOptionDefinition<MonoFontOption>[] = [
         description: 'Compact monospace for dense code and terminal layouts.',
         stack: '"Iosevka", "SFMono-Regular", "Menlo", monospace',
         source: { family: 'Iosevka', packageName: '@fontsource/iosevka', filePrefix: 'iosevka', weights: [400, 500, 600] }
+    },
+    {
+        id: 'hack-nerd-font',
+        label: 'Hack Nerd Font',
+        description: 'Hack monospace patched with Nerd Fonts icon glyphs for terminals.',
+        stack: '"Hack Nerd Font", "Hack", "SFMono-Regular", "Menlo", monospace',
+        notes: 'Vendored Hack Nerd Font ships Regular (400) + Bold (700) only. Catalog weight requests resolve via native CSS font-weight matching: 400->400, 500->400 (nearest below), 600->700 (nearest at/above).',
+        source: { family: 'Hack Nerd Font', packageName: 'mshaugh/nerdfont-webfonts', filePrefix: 'hack', weights: [400, 700] }
     },
     {
         id: 'system-mono',

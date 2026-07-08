@@ -222,3 +222,86 @@ ce7027efa5c894e8b244b0ca05ec121b6a85655957afd9c76c59b56910de7d4e  roboto-mono-la
 3b3a8b8e4a422ff71c9ffb0836a4d48ff337a4419b878214f65d6ebe0f59fa51  source-sans-3-latin-500-normal.woff2
 14527d193b0e30bc32ef931549a246cdfd286573bb12869b7e052b8101a39d38  source-sans-3-latin-600-normal.woff2
 ```
+
+---
+
+# Vendored Hack Nerd Font — provenance & license
+
+These woff2 supply the opt-in `Hack Nerd Font` catalog monospace: the Hack
+typeface patched with Nerd Fonts icon glyphs (Private-Use-Area). It is a
+user-selectable catalog font only — never a default — and loads same-origin,
+lazily on selection via `lib/fontLoader.ts` (same local glob-map loader as the
+@fontsource catalog above). Only Regular (400) and Bold (700) are vendored;
+catalog weight requests 500/600 resolve to the nearest available face via
+native CSS font-weight matching (500->400, 600->700).
+
+## Files
+
+| File | Family (`font-family`) | Base font | Nerd Fonts patch | Weight |
+|------|------------------------|-----------|------------------|--------|
+| `hack-latin-400-normal.woff2` | `Hack Nerd Font` | Hack | Nerd Fonts v3.3.0 | 400 (Regular) |
+| `hack-latin-700-normal.woff2` | `Hack Nerd Font` | Hack | Nerd Fonts v3.3.0 | 700 (Bold) |
+
+The files are renamed from the upstream `HackNerdFont-Regular.woff2` /
+`HackNerdFont-Bold.woff2` to the `<prefix>-latin-<weight>-normal.woff2`
+convention required by the local font loader's glob-map key derivation.
+
+## Provenance (pinned)
+
+- Nerd Fonts release: `ryanoasis/nerd-fonts` v3.3.0
+  (https://github.com/ryanoasis/nerd-fonts/releases/tag/v3.3.0)
+- Web-font (woff2) build source: `mshaugh/nerdfont-webfonts` tag `v3.3.0`
+  (https://github.com/mshaugh/nerdfont-webfonts/tree/v3.3.0/build/fonts)
+  - `https://raw.githubusercontent.com/mshaugh/nerdfont-webfonts/v3.3.0/build/fonts/HackNerdFont-Regular.woff2`
+  - `https://raw.githubusercontent.com/mshaugh/nerdfont-webfonts/v3.3.0/build/fonts/HackNerdFont-Bold.woff2`
+
+## License
+
+The Hack typeface is licensed under the MIT License (with a bundled font
+license notice). Hack is a fork of, and derives its Latin glyph outlines from,
+Bitstream Vera Sans Mono and DejaVu Sans Mono, which carry the Bitstream Vera
+and DejaVu (Bitstream Vera-derived) font licenses. The Nerd Fonts icon-glyph
+patch (`Symbols Nerd Font`, Copyright (c) 2016, Ryan L McIntyre) is licensed
+under the SIL Open Font License, Version 1.1 (full text above).
+
+### Hack — MIT License
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2018 Source Foundry Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### Bitstream Vera / DejaVu heritage notice
+
+Hack's Latin glyphs derive from the Bitstream Vera Sans Mono and DejaVu Sans
+Mono families. The Bitstream Vera Fonts are Copyright (c) 2003 by Bitstream,
+Inc.; "Bitstream Vera" is a trademark of Bitstream, Inc. DejaVu changes are in
+the public domain. Both are distributed under permissive font licenses that
+permit redistribution, modification, and embedding; the reserved font names
+("Bitstream Vera", "DejaVu") are not used by this derivative.
+
+### SHA-256
+
+```
+80489a64799e725f4a40e0fc1cd50e949c1e50e9feee82b30cbf047b4658f7fa  hack-latin-400-normal.woff2
+bdf8f067d7b31db99b1818db5ad073b5d2dbb4bff1b13302335edcf38b775b42  hack-latin-700-normal.woff2
+```
