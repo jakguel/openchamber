@@ -19,6 +19,7 @@ import type { StreamPhase } from './message/types';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionParts } from '@/sync/sync-context';
 import type { ReviewTransferDirection } from '@/lib/reviewFlow';
+import { type TurnUiState, createTurnUiStates, resolveTurnUiState, toggleTurnUiState } from './turnUiState';
 
 const MESSAGE_LIST_VIRTUALIZE_THRESHOLD = 5;
 const EMPTY_STATIC_ENTRY_MESSAGES: ChatMessageEntry[] = [];
@@ -389,9 +390,6 @@ type RenderEntry =
     }
     | { kind: 'turn'; key: string; turn: TurnRecord; isLastTurn: boolean };
 
-type TurnUiState = { isExpanded: boolean };
-
-
 
 interface MessageRowProps {
     message: ChatMessageEntry;
@@ -505,7 +503,7 @@ const TurnBlock = React.memo(({
     activeStreamingPhase,
     reviewTransferDirection,
 }: TurnBlockProps) => {
-    const turnUiState = turnUiStates.get(turn.turnId) ?? { isExpanded: defaultActivityExpanded };
+    const turnUiState = resolveTurnUiState(turnUiStates, turn.turnId, defaultActivityExpanded);
     const handleToggleTurnGroup = React.useCallback(() => {
         onToggleTurnGroup(turn.turnId);
     }, [onToggleTurnGroup, turn.turnId]);
@@ -1090,7 +1088,7 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     const reviewTransferDirection = useGlobalSessionsStore((state) => {
         return state.reviewTransferBySessionId.get(sessionKey) ?? null;
     });
-    const [turnUiStates, setTurnUiStates] = React.useState<Map<string, TurnUiState>>(() => new Map());
+    const [turnUiStates, setTurnUiStates] = React.useState<Map<string, TurnUiState>>(createTurnUiStates);
     const userAnimationRef = React.useRef<{
         sessionKey: string | undefined;
         previousOrder: string[];
@@ -1102,16 +1100,11 @@ const MessageList = React.forwardRef<MessageListHandle, MessageListProps>(({
     });
 
     React.useEffect(() => {
-        setTurnUiStates(new Map());
-    }, [activityRenderMode]);
+        setTurnUiStates(createTurnUiStates());
+    }, [activityRenderMode, sessionKey]);
 
     const toggleTurnGroup = React.useCallback((turnId: string) => {
-        setTurnUiStates((previous) => {
-            const next = new Map(previous);
-            const current = next.get(turnId) ?? { isExpanded: defaultActivityExpanded };
-            next.set(turnId, { isExpanded: !current.isExpanded });
-            return next;
-        });
+        setTurnUiStates((previous) => toggleTurnUiState(previous, turnId, defaultActivityExpanded));
     }, [defaultActivityExpanded]);
 
 

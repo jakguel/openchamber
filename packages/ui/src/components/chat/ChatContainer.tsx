@@ -898,7 +898,6 @@ export const ChatContainer: React.FC<ChatContainerProps> = ({ autoOpenDraft = tr
 		<div className="relative flex flex-col h-full bg-background">
 			{returnToParentButton}
 			<ChatViewport
-				key={currentSessionId}
 				currentSessionId={currentSessionId}
                 isDesktopExpandedInput={isDesktopExpandedInput}
                 isMobile={isMobile}
