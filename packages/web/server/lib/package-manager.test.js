@@ -12,7 +12,7 @@ const { checkForUpdates } = await import('./package-manager.js');
 function createFetchMock() {
   const handlers = new Map();
 
-  const mock = vi.fn((url, options) => {
+  const mock = vi.fn((url) => {
     const urlStr = typeof url === 'string' ? url : url.toString();
 
     for (const [pattern, response] of handlers) {
