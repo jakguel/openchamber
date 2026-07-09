@@ -1,5 +1,4 @@
 import React from 'react';
-import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
@@ -9,9 +8,7 @@ type Props = {
   onOpenSettings: () => void;
   onOpenShortcuts: () => void;
   onOpenAbout: () => void;
-  onOpenUpdate: () => void;
   showRuntimeButtons?: boolean;
-  showUpdateButton?: boolean;
   mobileVariant?: boolean;
 };
 
@@ -21,9 +18,7 @@ export function SidebarFooter({
   onOpenSettings,
   onOpenShortcuts,
   onOpenAbout,
-  onOpenUpdate,
   showRuntimeButtons = true,
-  showUpdateButton = true,
   mobileVariant = false,
 }: Props): React.ReactNode {
   const { t } = useI18n();
@@ -62,17 +57,6 @@ export function SidebarFooter({
         <div className="ml-auto flex items-center">
           <FooterServicesMenu />
         </div>
-      ) : null}
-      {showUpdateButton ? (
-        <Button
-          type="button"
-          variant="default"
-          size="xs"
-          className="ml-auto border-[var(--status-info-border)] bg-[var(--status-info-background)] text-[var(--status-info)] hover:bg-[var(--status-info-background)]/80 hover:text-[var(--status-info)] dark:border-[var(--status-info-border)] dark:bg-[var(--status-info-background)] dark:hover:bg-[var(--status-info-background)]/80"
-          onClick={onOpenUpdate}
-        >
-          {t('sessions.sidebar.footer.actions.update')}
-        </Button>
       ) : null}
     </div>
   );

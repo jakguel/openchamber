@@ -1,6 +1,5 @@
 import React from 'react';
 import type { Session } from '@opencode-ai/sdk/v2';
-import { toast } from '@/components/ui';
 import { useI18n } from '@/lib/i18n';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopShell } from '@/lib/desktop';
@@ -34,7 +33,6 @@ import { useSessionFolderCleanup } from './sidebar/hooks/useSessionFolderCleanup
 import { useStickyProjectHeaders } from './sidebar/hooks/useStickyProjectHeaders';
 import { getGitHubPrStatusKey, usePrVisualSummaryByKeys, useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
 import { ProjectEditDialog } from '@/components/layout/ProjectEditDialog';
-import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { SessionGroupSection } from './sidebar/SessionGroupSection';
 import { SidebarHeader } from './sidebar/SidebarHeader';
 import { SidebarActivitySections } from './sidebar/SidebarActivitySections';
@@ -42,8 +40,6 @@ import { SidebarFooter } from './sidebar/SidebarFooter';
 import { SidebarProjectsList } from './sidebar/SidebarProjectsList';
 import { SessionNodeItem } from './sidebar/SessionNodeItem';
 import type { SessionNodeRenderExtras } from './sidebar/sessionNodeItemUtils';
-import { useUpdateStore } from '@/stores/useUpdateStore';
-import { useShallow } from 'zustand/react/shallow';
 import { listProjectWorktrees } from '@/lib/worktrees/worktreeManager';
 import { checkIsGitRepository } from '@/lib/gitApi';
 import type { WorktreeMetadata } from '@/types/worktree';
@@ -195,7 +191,6 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
   const [visibleSessionCountByGroup, setVisibleSessionCountByGroup] = React.useState<Map<string, number>>(new Map());
   const newWorktreeDialogOpen = useUIStore((state) => state.isNewWorktreeDialogOpen);
   const setNewWorktreeDialogOpen = useUIStore((state) => state.setNewWorktreeDialogOpen);
-  const [updateDialogOpen, setUpdateDialogOpen] = React.useState(false);
   const [openSidebarMenuKey, setOpenSidebarMenuKey] = React.useState<string | null>(null);
   const [renamingFolderId, setRenamingFolderId] = React.useState<string | null>(null);
   const [renameFolderDraft, setRenameFolderDraft] = React.useState('');
@@ -339,19 +334,6 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
       window.dispatchEvent(new CustomEvent('openchamber:navigate', { detail: { view: 'chat' } }));
     }
   }, [isVSCode, openNewSessionDraft]);
-  const updateStore = useUpdateStore(useShallow((s) => ({
-    checkForUpdates: s.checkForUpdates,
-    available: s.available,
-    runtimeType: s.runtimeType,
-    info: s.info,
-    downloading: s.downloading,
-    downloaded: s.downloaded,
-    progress: s.progress,
-    error: s.error,
-    downloadUpdate: s.downloadUpdate,
-    restartToUpdate: s.restartToUpdate,
-  })));
-
   const knownSessionDirectories = React.useMemo(
     () => buildKnownSessionDirectories(projects, availableWorktreesByProject, { includeWorktrees: !isVSCode }),
     [availableWorktreesByProject, isVSCode, projects],
@@ -614,37 +596,12 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
     setNewWorktreeDialogOpen(true);
   }, [setNewWorktreeDialogOpen]);
 
-  const handleOpenUpdateDialog = React.useCallback(() => {
-    const current = useUpdateStore.getState();
-    if (current.available && current.info) {
-      setUpdateDialogOpen(true);
-      return;
-    }
-
-    void updateStore.checkForUpdates().then(() => {
-      const { available, error } = useUpdateStore.getState();
-      if (error) {
-        toast.error(t('sessions.sidebar.updateCheck.errorTitle'), { description: error });
-        return;
-      }
-      if (!available) {
-        toast.success(t('sessions.sidebar.updateCheck.latestVersion'));
-        return;
-      }
-      setUpdateDialogOpen(true);
-    });
-  }, [t, updateStore]);
-
   const handleOpenSettings = React.useCallback(() => {
     if (mobileVariant) {
       setSessionSwitcherOpen(false);
     }
     setSettingsDialogOpen(true);
   }, [mobileVariant, setSessionSwitcherOpen, setSettingsDialogOpen]);
-
-  const showSidebarUpdateButton =
-    updateStore.available &&
-    (updateStore.runtimeType === 'desktop' || updateStore.runtimeType === 'web');
 
   const deleteSession = useSessionUIStore((state) => state.deleteSession);
   const deleteSessions = useSessionUIStore((state) => state.deleteSessions);
@@ -1618,23 +1575,8 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
         onOpenSettings={handleOpenSettings}
         onOpenShortcuts={toggleHelpDialog}
         onOpenAbout={() => setAboutDialogOpen(true)}
-        onOpenUpdate={handleOpenUpdateDialog}
         showRuntimeButtons={!isVSCode}
-        showUpdateButton={showSidebarUpdateButton}
         mobileVariant={mobileVariant}
-      />
-
-      <UpdateDialog
-        open={updateDialogOpen}
-        onOpenChange={setUpdateDialogOpen}
-        info={updateStore.info}
-        downloading={updateStore.downloading}
-        downloaded={updateStore.downloaded}
-        progress={updateStore.progress}
-        error={updateStore.error}
-        onDownload={updateStore.downloadUpdate}
-        onRestart={updateStore.restartToUpdate}
-        runtimeType={updateStore.runtimeType}
       />
 
       {editingProject ? (
