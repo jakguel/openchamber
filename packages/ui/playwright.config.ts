@@ -44,5 +44,13 @@ export default defineConfig({
                 },
             },
         },
+        {
+            // Desktop Firefox — the browser where the session-switch chat-text flicker
+            // reproduced; sessionSwitchFlicker.e2e.ts must run here, not only Chromium.
+            name: 'firefox',
+            use: {
+                ...devices['Desktop Firefox'],
+            },
+        },
     ],
 });
