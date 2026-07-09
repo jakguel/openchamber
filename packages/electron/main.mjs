@@ -2469,7 +2469,17 @@ const parseGithubRepo = () => {
   return { owner: 'openchamber', repo: 'openchamber' };
 };
 
+const isOpenChamberUpdateDisabled = () => {
+  const raw = process.env.OPENCHAMBER_NO_UPDATE;
+  if (typeof raw !== 'string') return false;
+  const value = raw.trim().toLowerCase();
+  return value !== '' && value !== '0' && value !== 'false';
+};
+
 const setupAutoUpdater = () => {
+  if (isOpenChamberUpdateDisabled()) {
+    return;
+  }
   if (!app.isPackaged) {
     return;
   }
@@ -3504,6 +3514,16 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
     case 'desktop_check_for_updates': {
       const currentVersion = APP_VERSION;
+      if (isOpenChamberUpdateDisabled()) {
+        state.pendingUpdate = null;
+        return {
+          available: false,
+          currentVersion,
+          version: null,
+          body: null,
+          date: null,
+        };
+      }
       let updateResult = null;
       try {
         updateResult = await autoUpdater.checkForUpdates();

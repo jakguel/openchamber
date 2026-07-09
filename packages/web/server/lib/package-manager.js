@@ -19,6 +19,13 @@ function getSpawnSyncBaseOptions() {
 }
 const UPDATE_CHECK_URL = process.env.OPENCHAMBER_UPDATE_API_URL || 'https://api.openchamber.dev/v1/update/check';
 
+export function isOpenChamberUpdateDisabled() {
+  const raw = process.env.OPENCHAMBER_NO_UPDATE;
+  if (typeof raw !== 'string') return false;
+  const value = raw.trim().toLowerCase();
+  return value !== '' && value !== '0' && value !== 'false';
+}
+
 function getOpenChamberConfigDir() {
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA;
@@ -721,6 +728,15 @@ export async function checkForUpdates(options = {}) {
   const currentVersion = options.currentVersion || getCurrentVersion();
   const pm = detectPackageManager();
   const appType = normalizeAppType(options.appType);
+
+  if (isOpenChamberUpdateDisabled()) {
+    return {
+      available: false,
+      currentVersion,
+      packageManager: pm,
+      updateCommand: 'openchamber update',
+    };
+  }
 
   if (currentVersion !== 'unknown') {
     const remote = await checkForUpdatesFromApi(currentVersion, options);

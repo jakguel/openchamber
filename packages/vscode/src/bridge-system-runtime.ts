@@ -81,6 +81,13 @@ const mapNodePlatformToApiPlatform = (value: string): 'macos' | 'windows' | 'lin
   return 'web';
 };
 
+const isOpenChamberUpdateDisabled = (): boolean => {
+  const raw = process.env.OPENCHAMBER_NO_UPDATE;
+  if (typeof raw !== 'string') return false;
+  const value = raw.trim().toLowerCase();
+  return value !== '' && value !== '0' && value !== 'false';
+};
+
 const mapNodeArchToApiArch = (value: string): 'arm64' | 'x64' | 'unknown' => {
   if (value === 'arm64' || value === 'aarch64') return 'arm64';
   if (value === 'x64' || value === 'amd64') return 'x64';
@@ -289,6 +296,9 @@ export async function handleSystemBridgeMessage(
         const currentVersion = typeof body.currentVersion === 'string' && body.currentVersion.trim().length > 0
           ? body.currentVersion.trim()
           : String(ctx?.context?.extension?.packageJSON?.version || 'unknown');
+        if (isOpenChamberUpdateDisabled()) {
+          return { id, type, success: true, data: { updateAvailable: false, latestVersion: currentVersion } };
+        }
         const instanceMode = typeof body.instanceMode === 'string' && body.instanceMode.trim().length > 0
           ? body.instanceMode.trim()
           : 'local';

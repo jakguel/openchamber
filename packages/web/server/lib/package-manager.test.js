@@ -244,3 +244,77 @@ describe('checkForUpdates', () => {
     expect(result.available).toBe(false);
   });
 });
+
+describe('checkForUpdates OPENCHAMBER_NO_UPDATE gate', () => {
+  let fetchMock;
+  let originalFetch;
+  let originalNoUpdate;
+
+  beforeEach(() => {
+    fetchMock = createFetchMock();
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchMock;
+    originalNoUpdate = process.env.OPENCHAMBER_NO_UPDATE;
+    delete process.env.OPENCHAMBER_NO_UPDATE;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    if (originalNoUpdate === undefined) {
+      delete process.env.OPENCHAMBER_NO_UPDATE;
+    } else {
+      process.env.OPENCHAMBER_NO_UPDATE = originalNoUpdate;
+    }
+  });
+
+  // --- Gated: truthy flag short-circuits BEFORE any network call ---
+
+  it('short-circuits to available=false with ZERO network calls when set to "1"', async () => {
+    process.env.OPENCHAMBER_NO_UPDATE = '1';
+
+    const result = await checkForUpdates({ currentVersion: '1.9.10' });
+
+    expect(result.available).toBe(false);
+    expect(result.currentVersion).toBe('1.9.10');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('treats an arbitrary truthy value as disabled (no network call)', async () => {
+    process.env.OPENCHAMBER_NO_UPDATE = 'yes';
+
+    const result = await checkForUpdates({ currentVersion: '1.9.10' });
+
+    expect(result.available).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+
+  // --- Negative: sentinel/empty values are treated as UNSET (updates run) ---
+
+  it.each(['0', 'false', 'FALSE', 'False', ''])(
+    'treats %o as unset and reaches the network path',
+    async (value) => {
+      process.env.OPENCHAMBER_NO_UPDATE = value;
+      fetchMock.when('api.openchamber.dev', {
+        ok: true,
+        json: async () => ({ latestVersion: '1.9.10', updateAvailable: false }),
+      });
+
+      const result = await checkForUpdates({ currentVersion: '1.9.10' });
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(result.available).toBe(false);
+    },
+  );
+
+  it('does not throw and reaches the network path when the env var is absent', async () => {
+    fetchMock.when('api.openchamber.dev', {
+      ok: true,
+      json: async () => ({ latestVersion: '1.9.10', updateAvailable: false }),
+    });
+
+    const result = await checkForUpdates({ currentVersion: '1.9.10' });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result.available).toBe(false);
+  });
+});
