@@ -14,10 +14,10 @@ import { formatDirectoryName, cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { SidebarFilesTree } from './SidebarFilesTree';
 
-type RightTab = 'git' | 'files' | 'context';
+type RightTab = 'git' | 'files';
 
 const isRightTab = (value: string): value is RightTab =>
-  value === 'git' || value === 'files' || value === 'context';
+  value === 'git' || value === 'files';
 
 const RIGHT_TAB_FALLBACK: RightTab = 'files';
 
@@ -43,7 +43,7 @@ const isBrowserActive = (): boolean => {
 function useRightSidebarGitSync(
   directory: string | undefined,
   isSidebarOpen: boolean,
-  rightTab: RightTab | undefined,
+  rightTab: string | undefined,
   mainTab: string | undefined
 ) {
   const { git } = useRuntimeAPIs();
@@ -134,11 +134,7 @@ export const RightSidebarTabs: React.FC = () => {
   // effects. The map is small and stable; expand it if more shared
   // secondary/right views are added.
   const hiddenRightTab: RightTab | null =
-    activeMainTab === 'git'
-      ? 'git'
-      : activeMainTab === 'context'
-        ? 'context'
-        : null;
+    activeMainTab === 'git' ? 'git' : null;
 
   // Persisted right sidebar tab can be stale across main-tab switches (e.g.
   // user opened main 'git' while right tab was 'git'). Snap to the fallback
@@ -151,19 +147,14 @@ export const RightSidebarTabs: React.FC = () => {
 
   const tabItems = React.useMemo(() => [
     {
-      id: 'git',
-      label: t('layout.rightSidebar.git'),
-      icon: <Icon name="git-branch" className="h-3.5 w-3.5" />,
-    },
-    {
       id: 'files',
       label: t('layout.rightSidebar.files'),
       icon: <Icon name="folder-3" className="h-3.5 w-3.5" />,
     },
     {
-      id: 'context',
-      label: t('layout.rightSidebar.context'),
-      icon: <Icon name="file-list-2" className="h-3.5 w-3.5" />,
+      id: 'git',
+      label: t('layout.rightSidebar.git'),
+      icon: <Icon name="git-branch" className="h-3.5 w-3.5" />,
     },
   ], [t]);
 
@@ -201,9 +192,6 @@ export const RightSidebarTabs: React.FC = () => {
         </div>
         <div className={cn('h-full', rightSidebarTab !== 'files' && 'hidden')}>
           <SidebarFilesTree />
-        </div>
-        <div className={cn('h-full', rightSidebarTab !== 'context' && 'hidden')}>
-          <ProjectContextPanel />
         </div>
       </div>
     </div>
