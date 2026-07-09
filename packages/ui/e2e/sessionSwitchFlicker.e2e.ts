@@ -1,5 +1,5 @@
 /**
- * Playwright real-browser regression — Firefox session-switch chat-text flicker (Phase 2b)
+ * Playwright real-browser regression — Firefox session-switch chat-text flicker (Phase 3)
  *
  * Story: openchamber-5ki.45  Task: openchamber-5ki.45.17
  * Commit under test: 09cdefa1 (Phase 2b)
@@ -12,22 +12,38 @@
  *     viewport no longer remounts, that effect is now the SOLE guard against session A's
  *     expand/collapse state bleeding into session B.
  *
- * WHY a self-contained in-memory-bundled harness (no live server / no agent):
- *   The reviewer requires a COMMITTED, DETERMINISTIC harness that mounts the REAL React
- *   chat render path with NO internal-module mocks. This bundles the REAL modules with
- *   Vite (same technique as streamingScrollPin.e2e.ts) and mounts the REAL default-export
- *   MessageList inside the REAL provider stack (I18n / RuntimeAPI / ThemeSystem / Sync).
- *   ChatViewport is not exported, so MessageList is mounted in ChatViewport's EXACT
- *   structural position — inside a `[data-scrollbar="chat"]` scroll root wrapped by a
- *   "viewport-like" unit that is keyed on the session id ONLY in the negative-control
- *   run, faithfully reproducing the `key={currentSessionId}` React reconciliation the fix
- *   removed. The only injected values are the RuntimeAPIs external-I/O stub and no-op
- *   callback props at the component boundary — no `src/` module is mocked.
+ * WHY this mounts the REAL exported ChatContainer (Phase 3 rework):
+ *   The Phase 2b harness proved no-remount against a test-local `ViewportLike` wrapper and
+ *   drove switches via harness-local React state — so it never exercised the production
+ *   ChatContainer -> ChatViewport boundary that actually owns the removed
+ *   `key={currentSessionId}`, and it would still pass if production re-introduced the key.
+ *   This rework mounts the REAL exported <ChatContainer autoOpenDraft={false} readOnly/>
+ *   inside the REAL provider stack (I18n / RuntimeAPI / ThemeSystem / Sync), seeds the REAL
+ *   per-directory sync child stores that ChatContainer reads, and drives every session
+ *   switch through the PRODUCTION action `useSessionUIStore.getState().setCurrentSession`.
+ *   The no-remount proof is DOM-node identity of the production `[data-scrollbar="chat"]`
+ *   node across the switch: if `key={currentSessionId}` were reintroduced on the real
+ *   ChatViewport, that node would be replaced and AC1 would fail. `readOnly` renders the
+ *   ReadOnly banner instead of the heavy ChatInput while keeping the real
+ *   ChatViewport / MessageList / StatusRowContainer / scroll-root render path intact.
  *
- * WHY real Firefox: this is the browser where the flash reproduced. The no-remount
- *   proof is DOM-node identity across the switch (a remount creates a NEW node; a
- *   reconcile reuses it), which only exists in a real layout/paint engine. The suite is
- *   registered under BOTH the chromium and firefox Playwright projects.
+ * NEGATIVE CONTROL (non-vacuous proof): the same REAL ChatContainer is wrapped in an
+ *   element keyed on the current session id. Keying the wrapper forces React to remount the
+ *   whole ChatContainer subtree on switch — the exact failure mode `key={currentSessionId}`
+ *   caused — and the node-identity assertion then observes a DIFFERENT node, proving the
+ *   assertion can actually detect a remount.
+ *
+ * WHY a self-contained in-memory-bundled harness (no live server / no agent): the modules
+ *   are bundled with Vite (same technique as streamingScrollPin.e2e.ts) and mounted with
+ *   React.createElement (no JSX, so the extension-less virtual entry compiles under Vite's
+ *   default loader). The ONLY injected values are the RuntimeAPIs external-I/O stub and the
+ *   SyncProvider sdk stub — no `src/` module is mocked; all chat render + session-switch
+ *   logic is the real production code.
+ *
+ * WHY real Firefox: this is the browser where the flash reproduced. Node identity across a
+ *   switch (a remount creates a NEW node; a reconcile reuses it) only exists in a real
+ *   layout/paint engine. The suite is registered under BOTH the chromium and firefox
+ *   Playwright projects.
  *
  * RUN:
  *   packages/ui/node_modules/.bin/playwright install firefox   # one-time
@@ -50,102 +66,112 @@ const MORE_BUTTON_RE = /\+\d+ more/;
 
 type SsGlobals = {
     __ssTest: { mount: (container: HTMLElement, opts: { keyed: boolean }) => void };
-    __ss: { setSession: (id: string, directory?: string) => void };
+    /** `id === ''` selects null (delete/archive/fork reselect); `dir === ''` clears the directory hint. */
+    __ss: { set: (id: string, directory?: string) => void };
 };
 
-// The virtual entry mounts the REAL chat subtree with React.createElement (no JSX, so the
-// extension-less virtual module compiles under Vite's default loader — mirrors
-// streamingScrollPin.e2e.ts). Two sessions ('A' and 'B') carry an assistant turn with the
-// SAME turnId 'u1' and >7 `bash` tool parts, so a collapsible "Activity" group renders in
-// sorted mode and the colliding turnId makes the no-bleed assertion strict: if the reset
-// effect did NOT fire, session A's expanded state would survive into B via the shared id.
+// The virtual entry mounts the REAL exported ChatContainer inside the REAL provider stack and
+// seeds the REAL per-directory sync child stores it reads. Two directories ('/dir-a' holding
+// session 'A', '/dir-b' holding session 'B') each carry an assistant turn with >7 `bash` tool
+// parts, so a collapsible "Activity" group renders in sorted mode. Session switching goes
+// EXCLUSIVELY through the production action useSessionUIStore.getState().setCurrentSession.
 const VIRTUAL_ENTRY = [
     "import * as React from 'react';",
     "import { createRoot } from 'react-dom/client';",
     "import { I18nProvider } from '@/lib/i18n';",
     "import { RuntimeAPIProvider } from '@/contexts/RuntimeAPIProvider';",
     "import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';",
-    "import { SyncProvider } from '@/sync/sync-context';",
-    "import MessageList from '@/components/chat/MessageList';",
+    "import { SyncProvider, useChildStoreManager } from '@/sync/sync-context';",
+    "import { ChatContainer } from '@/components/chat/ChatContainer';",
+    "import { useSessionUIStore } from '@/sync/session-ui-store';",
     "import { useUIStore } from '@/stores/useUIStore';",
     "",
     "const apis = { files: {}, editor: {}, runtime: { isVSCode: false } };",
     "const noopResult = function () { return Promise.resolve({ data: undefined, error: undefined }); };",
     "const sdk = new Proxy({}, { get: function () { return new Proxy(noopResult, { get: function () { return noopResult; } }); } });",
-    "const noop = function () {};",
     "",
-    "function toolPart(id, tool) { return { id: id, type: 'tool', tool: tool, state: { status: 'completed' } }; }",
+    "function toolPart(id) { return { id: id, type: 'tool', tool: 'bash', state: { status: 'completed' } }; }",
     "function textPart(id, text) { return { id: id, type: 'text', text: text }; }",
-    "function msg(id, role, parentID, parts, created, finish) {",
-    "  var info = { id: id, role: role, sessionID: 'ses', time: { created: created } };",
-    "  if (parentID) info.parentID = parentID;",
-    "  if (finish) info.finish = finish;",
-    "  return { info: info, parts: parts };",
-    "}",
     "",
-    "// Turn u1: 10 `bash` tool parts (each its own expandable row => >7 rows => a '+N more...'",
-    "// collapse affordance) plus a reply text. Turn u2: a trivial trailing turn. Same ids in",
-    "// both sessions; only the marker text differs so a completed A->B switch is observable.",
-    "function buildSession(marker) {",
+    "// Raw child-store message INFOS (state.message[sessionId]) + a parts map keyed by message id",
+    "// (state.part[messageId]). getSessionMaterializationStatus requires every ASSISTANT message to",
+    "// have non-empty parts or the session renders as hydrating/empty instead of the chat viewport.",
+    "// Turn u1: 10 `bash` tool parts (>7 rows => a '+N more...' collapse affordance) + a reply.",
+    "function buildSession(marker, sessionId) {",
     "  var tools = [];",
-    "  for (var i = 0; i < 10; i++) { tools.push(toolPart('u1-tool-' + i, 'bash')); }",
-    "  var a1Parts = tools.concat([textPart('u1-reply', 'Assistant reply for ' + marker)]);",
-    "  var u1 = msg('u1', 'user', undefined, [textPart('u1-text', 'User prompt ' + marker)], 1);",
-    "  var a1 = msg('a1', 'assistant', 'u1', a1Parts, 2, 'stop');",
-    "  var u2 = msg('u2', 'user', undefined, [textPart('u2-text', 'Follow up ' + marker)], 3);",
-    "  var a2 = msg('a2', 'assistant', 'u2', [textPart('u2-reply', 'Trailing reply ' + marker)], 4, 'stop');",
-    "  return [u1, a1, u2, a2];",
-    "}",
-    "const SESSIONS = { A: buildSession('SESSION-A'), B: buildSession('SESSION-B') };",
-    "",
-    "function ViewportLike(props) {",
-    "  // Mirrors ChatViewport's structural role: it renders the `[data-scrollbar=chat]` scroll",
-    "  // root that holds MessageList. In the negative-control run the Harness keys THIS unit on",
-    "  // the session id (what the fix removed), remounting the scroll root on switch.",
-    "  return React.createElement('div', { style: { position: 'relative', flex: 1, minHeight: 0 } },",
-    "    React.createElement('div', {",
-    "      'data-scrollbar': 'chat',",
-    "      'data-testid': 'chat-scroll',",
-    "      ref: props.scrollRef,",
-    "      style: { position: 'absolute', inset: 0, overflowY: 'auto', height: '420px', background: '#111', color: '#eee', fontSize: '15px', padding: '8px' },",
-    "    },",
-    "      React.createElement('div', { style: { minHeight: '100%' } },",
-    "        React.createElement(MessageList, {",
-    "          sessionKey: props.sid,",
-    "          messages: props.messages,",
-    "          isLoadingOlder: false,",
-    "          onMessageContentChange: noop,",
-    "          getAnimationHandlers: function () { return { onChunk: noop, onComplete: noop }; },",
-    "          scrollToBottom: noop,",
-    "          scrollRef: props.scrollRef,",
-    "          directory: props.directory,",
-    "        })",
-    "      )",
-    "    )",
-    "  );",
+    "  for (var i = 0; i < 10; i++) { tools.push(toolPart('a1-tool-' + i)); }",
+    "  var infos = [",
+    "    { id: 'u1', role: 'user', sessionID: sessionId, time: { created: 1 } },",
+    "    { id: 'a1', role: 'assistant', sessionID: sessionId, parentID: 'u1', time: { created: 2, completed: 3 }, finish: 'stop' },",
+    "    { id: 'u2', role: 'user', sessionID: sessionId, time: { created: 4 } },",
+    "    { id: 'a2', role: 'assistant', sessionID: sessionId, parentID: 'u2', time: { created: 5, completed: 6 }, finish: 'stop' },",
+    "  ];",
+    "  var parts = {};",
+    "  parts['u1'] = [textPart('u1-text', 'User prompt ' + marker)];",
+    "  parts['a1'] = tools.concat([textPart('a1-reply', 'Assistant reply for ' + marker)]);",
+    "  parts['u2'] = [textPart('u2-text', 'Follow up ' + marker)];",
+    "  parts['a2'] = [textPart('a2-reply', 'Trailing reply ' + marker)];",
+    "  return { infos: infos, parts: parts };",
     "}",
     "",
-    "function Harness(props) {",
-    "  var sidState = React.useState('A');",
-    "  var sid = sidState[0]; var setSid = sidState[1];",
-    "  var dirState = React.useState('/dir-a');",
-    "  var dir = dirState[0]; var setDir = dirState[1];",
-    "  var scrollRef = React.useRef(null);",
-    "  React.useEffect(function () {",
+    "// Seed a REAL per-directory child store (the one ChatContainer's message hooks read via",
+    "// useDirectoryStore(directory)). status:'complete' + non-empty parts for every assistant =>",
+    "// getSessionMaterializationStatus(...).renderable === true, so fetchMessagesForSession short-",
+    "// circuits and never overwrites the seed, and ChatContainer renders the real ChatViewport.",
+    "function seedStore(childStores, directory, sessionId, marker) {",
+    "  var data = buildSession(marker, sessionId);",
+    "  var session = { id: sessionId, title: 'Session ' + sessionId, directory: directory, time: { created: 1, updated: 6 } };",
+    "  var store = childStores.ensureChild(directory, { bootstrap: false });",
+    "  var msgMap = {}; msgMap[sessionId] = data.infos;",
+    "  var statusMap = {}; statusMap[sessionId] = { type: 'idle' };",
+    "  store.getState().patch({",
+    "    status: 'complete',",
+    "    session: [session],",
+    "    sessionTotal: 1,",
+    "    limit: 50,",
+    "    message: msgMap,",
+    "    part: data.parts,",
+    "    session_status: statusMap,",
+    "    permission: {},",
+    "    question: {},",
+    "  });",
+    "}",
+    "",
+    "function SeededHarness(props) {",
+    "  var childStores = useChildStoreManager();",
+    "  var seededRef = React.useRef(false);",
+    "  var readyState = React.useState(false);",
+    "  var ready = readyState[0]; var setReady = readyState[1];",
+    "  // Subscribe to the PRODUCTION current session id so the negative-control wrapper re-keys",
+    "  // (and thus remounts the real ChatContainer) whenever setCurrentSession changes it.",
+    "  var sid = useSessionUIStore(function (s) { return s.currentSessionId; });",
+    "  React.useLayoutEffect(function () {",
+    "    if (seededRef.current) return;",
+    "    seededRef.current = true;",
+    "    seedStore(childStores, '/dir-a', 'A', 'SESSION-A');",
+    "    seedStore(childStores, '/dir-b', 'B', 'SESSION-B');",
     "    useUIStore.getState().setChatRenderMode('sorted');",
     "    useUIStore.getState().setActivityRenderMode('collapsed');",
     "    window.__ss = {",
-    "      setSession: function (id, directory) { setSid(id); if (directory !== undefined) setDir(directory); },",
+    "      set: function (id, directory) {",
+    "        var nextId = id === '' ? null : id;",
+    "        var nextDir = directory === undefined ? undefined : (directory === '' ? null : directory);",
+    "        useSessionUIStore.getState().setCurrentSession(nextId, nextDir);",
+    "      },",
     "    };",
+    "    // Establish session A through the production action too (not harness-local React state).",
+    "    useSessionUIStore.getState().setCurrentSession('A', '/dir-a');",
     "    var host = document.getElementById('host');",
     "    if (host) host.setAttribute('data-ss', 'ready');",
+    "    setReady(true);",
     "  }, []);",
-    "  var messages = SESSIONS[sid] || [];",
-    "  var viewport = React.createElement(ViewportLike, {",
-    "    key: props.keyed ? sid : undefined,",
-    "    sid: sid, messages: messages, directory: dir, scrollRef: scrollRef,",
-    "  });",
-    "  return React.createElement('div', { style: { display: 'flex', flexDirection: 'column', height: '480px', width: '640px' } }, viewport);",
+    "  if (!ready) return React.createElement('div', { style: { height: '480px' } });",
+    "  return React.createElement('div', {",
+    "    // Negative control: keying the wrapper on the session id remounts the whole real",
+    "    // ChatContainer subtree on switch (the failure mode key={currentSessionId} caused).",
+    "    key: props.keyed ? ('k-' + (sid || 'none')) : 'stable',",
+    "    style: { display: 'flex', flexDirection: 'column', height: '480px', width: '640px' },",
+    "  }, React.createElement(ChatContainer, { autoOpenDraft: false, readOnly: true }));",
     "}",
     "",
     "window.__ssTest = {",
@@ -154,7 +180,7 @@ const VIRTUAL_ENTRY = [
     "      React.createElement(RuntimeAPIProvider, { apis: apis },",
     "        React.createElement(ThemeSystemProvider, null,",
     "          React.createElement(SyncProvider, { sdk: sdk, directory: '/harness' },",
-    "            React.createElement(Harness, { keyed: !!(opts && opts.keyed) })))));",
+    "            React.createElement(SeededHarness, { keyed: !!(opts && opts.keyed) })))));",
     "    createRoot(container).render(tree);",
     "  },",
     "};",
@@ -254,9 +280,10 @@ async function mountHarness(page: Page, opts: { keyed: boolean }): Promise<void>
     await page.getByRole('button', { name: 'Activity' }).first().waitFor({ state: 'visible' });
 }
 
+/** Drive a session switch through the PRODUCTION action useSessionUIStore.setCurrentSession. */
 async function setSession(page: Page, id: string, directory?: string): Promise<void> {
     await page.evaluate(
-        ([sid, dir]) => (window as unknown as SsGlobals).__ss.setSession(sid, dir === null ? undefined : (dir as string)),
+        ([sid, dir]) => (window as unknown as SsGlobals).__ss.set(sid, dir === null ? undefined : (dir as string)),
         [id, directory ?? null] as [string, string | null],
     );
     // Let React commit + effects flush.
@@ -268,18 +295,18 @@ async function isCollapsed(page: Page): Promise<boolean> {
     return page.getByText(MORE_BUTTON_RE).first().isVisible().catch(() => false);
 }
 
-test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-bleed (Phase 2b)', () => {
+test.describe('Chat session-switch flicker fix — real ChatContainer, no remount + turnUiStates no-bleed (Phase 3)', () => {
     test.describe.configure({ mode: 'serial' });
 
-    test('AC1 — the chat scroll root keeps DOM-node identity across an A->B switch (no remount, no empty frame)', async ({ page }) => {
+    test('AC1 — the production chat scroll root keeps DOM-node identity across an A->B switch (no remount, no empty frame)', async ({ page }) => {
         await mountHarness(page, { keyed: false });
 
-        // Session A is rendered with its marker.
+        // Session A is rendered by the REAL ChatContainer.
         await expect(page.getByText('User prompt SESSION-A')).toBeVisible();
 
-        // Tag the live scroll-root node + start a per-rAF content-presence sampler BEFORE the
-        // switch. A remount replaces the node (tag lost, handle detached) and paints an empty
-        // subtree for a frame (the flash); a reconcile keeps the SAME node and never empties.
+        // Tag the live production scroll-root node + start a per-rAF content-presence sampler
+        // BEFORE the switch. A remount replaces the node (tag lost, handle detached) and paints an
+        // empty subtree for a frame (the flash); a reconcile keeps the SAME node and never empties.
         const rootHandle = await page.locator(CHAT_SCROLL).first().elementHandle();
         expect(rootHandle).not.toBeNull();
         await page.evaluate(() => {
@@ -296,21 +323,24 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
             requestAnimationFrame(loop);
         });
 
-        await setSession(page, 'B');
+        // Switch A->B through the PRODUCTION action setCurrentSession(id, directory).
+        await setSession(page, 'B', '/dir-b');
 
         // The switch actually happened: session B's marker is now on screen.
         await expect(page.getByText('User prompt SESSION-B')).toBeVisible();
 
         // Node identity: the ORIGINAL handle is still connected AND still carries the tag we set
-        // — i.e. React reconciled the same node in place; it was not unmounted+remounted.
+        // — i.e. the real ChatViewport reconciled the same node in place; it was not
+        // unmounted+remounted. Reintroducing key={currentSessionId} on the real ChatViewport
+        // would replace this node and fail here.
         const stillConnected = await rootHandle!.evaluate(
             (el: HTMLElement & { __ssTag?: string }) => el.isConnected && el.__ssTag === 'persist-node-A',
         );
         expect(
             stillConnected,
-            'REGRESSION: the [data-scrollbar="chat"] node was replaced across the session switch — the ' +
-            'viewport remounted (the `key={currentSessionId}` the Phase 2b fix removed is effectively back). ' +
-            'This is the Firefox text-flash mechanism.',
+            'REGRESSION: the production [data-scrollbar="chat"] node was replaced across the session ' +
+            'switch — the ChatViewport remounted (the `key={currentSessionId}` the Phase 2b fix removed ' +
+            'is effectively back). This is the Firefox text-flash mechanism.',
         ).toBe(true);
 
         // No transient empty viewport frame across the switch: message nodes never dropped to 0.
@@ -333,7 +363,7 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
         expect(band, `REGRESSION: scrollTop oscillated across idle settle frames after the switch (band=${band}px).`).toBeLessThanOrEqual(1);
     });
 
-    test('AC1 negative control — re-adding key={sessionId} DOES remount the scroll root (assertion is not vacuous)', async ({ page }) => {
+    test('AC1 negative control — keying the real ChatContainer on the session id DOES remount the scroll root (assertion is not vacuous)', async ({ page }) => {
         await mountHarness(page, { keyed: true });
         await expect(page.getByText('User prompt SESSION-A')).toBeVisible();
 
@@ -343,7 +373,7 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
             if (el) el.__ssTag = 'persist-node-A';
         });
 
-        await setSession(page, 'B');
+        await setSession(page, 'B', '/dir-b');
         await expect(page.getByText('User prompt SESSION-B')).toBeVisible();
 
         const stillConnected = await rootHandle!.evaluate(
@@ -352,7 +382,7 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
         expect(
             stillConnected,
             'The keyed negative control did NOT remount — the node-identity assertion in AC1 would be vacuous. ' +
-            'Keying the viewport on the session id must replace the scroll-root node.',
+            'Keying the ChatContainer subtree on the session id must replace the scroll-root node.',
         ).toBe(false);
     });
 
@@ -368,10 +398,10 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
         await expect(page.getByText(MORE_BUTTON_RE).first()).toBeHidden();
         expect(await isCollapsed(page), 'Session A activity group should be expanded after the click.').toBe(false);
 
-        // Switch to B. The turnUiStates reset effect (keyed on sessionKey) must fire in the live,
-        // NON-remounted MessageList, so B renders at its default collapsed state and does NOT
-        // inherit A's expanded state — even though both share turnId 'u1'.
-        await setSession(page, 'B');
+        // Switch to B via the production action. The turnUiStates reset effect (keyed on sessionKey)
+        // must fire in the live, NON-remounted MessageList, so B renders at its default collapsed
+        // state and does NOT inherit A's expanded state — even though both share turnId 'u1'.
+        await setSession(page, 'B', '/dir-b');
         await expect(page.getByText('User prompt SESSION-B')).toBeVisible();
         expect(
             await isCollapsed(page),
@@ -381,7 +411,7 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
 
         // Switch back to A. The reset fired again on the switch, so A is back to its default
         // collapsed state (A\'s earlier expand did not survive) — the round trip is clean.
-        await setSession(page, 'A');
+        await setSession(page, 'A', '/dir-a');
         await expect(page.getByText('User prompt SESSION-A')).toBeVisible();
         expect(
             await isCollapsed(page),
@@ -390,33 +420,32 @@ test.describe('Chat session-switch flicker fix — no remount + turnUiStates no-
         ).toBe(true);
     });
 
-    test('AC6 — worktree/directory switch + null->next reselect (delete/archive/fork) render without regression', async ({ page }) => {
+    test('AC6 — worktree/directory switch + null->next reselect (delete/archive/fork) via production setCurrentSession render without regression', async ({ page }) => {
         await mountHarness(page, { keyed: false });
         await expect(page.getByText('User prompt SESSION-A')).toBeVisible();
 
-        const rootHandle = await page.locator(CHAT_SCROLL).first().elementHandle();
-        await page.evaluate(() => {
-            const el = document.querySelector('[data-scrollbar="chat"]') as (HTMLElement & { __ssTag?: string }) | null;
-            if (el) el.__ssTag = 'persist-node-A';
-        });
-
-        // Worktree/directory switch: session + directory change together.
+        // Worktree/directory switch: session + directory change together, through setCurrentSession.
         await setSession(page, 'B', '/dir-b');
         await expect(page.getByText('User prompt SESSION-B')).toBeVisible();
 
         // delete/archive/fork transition the selection through null before a distinct next id.
+        // setCurrentSession(null) is the real production reselect path: ChatContainer drops to the
+        // empty state (no chat scroll root), then the next reselect must render cleanly.
         await setSession(page, '');
-        await expect(page.locator(CHAT_SCROLL).first()).toBeVisible();
+        await expect(page.locator(CHAT_SCROLL)).toHaveCount(0);
+
         await setSession(page, 'A', '/dir-a');
         await expect(page.getByText('User prompt SESSION-A')).toBeVisible();
+        await expect(page.locator(CHAT_SCROLL).first()).toBeVisible();
 
-        // The scroll root survived worktree switch + null->next reselect without a remount.
-        const stillConnected = await rootHandle!.evaluate(
-            (el: HTMLElement & { __ssTag?: string }) => el.isConnected && el.__ssTag === 'persist-node-A',
-        );
+        // No transient empty frame on the reselect: the reselected session's messages are present.
+        const nodeCount = await page.evaluate(() => {
+            const root = document.querySelector('[data-scrollbar="chat"]');
+            return root ? root.querySelectorAll('[data-message-id]').length : 0;
+        });
         expect(
-            stillConnected,
-            'REGRESSION: worktree/directory switch or null->next reselect remounted the chat scroll root.',
-        ).toBe(true);
+            nodeCount,
+            'REGRESSION: null->next reselect (delete/archive/fork path) rendered an empty chat viewport.',
+        ).toBeGreaterThan(0);
     });
 });
