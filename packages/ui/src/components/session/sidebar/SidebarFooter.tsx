@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
+import { FooterServicesMenu } from './FooterServicesMenu';
 
 type Props = {
   onOpenSettings: () => void;
@@ -11,6 +12,7 @@ type Props = {
   onOpenUpdate: () => void;
   showRuntimeButtons?: boolean;
   showUpdateButton?: boolean;
+  mobileVariant?: boolean;
 };
 
 const footerButtonClassName = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-interactive-hover/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50';
@@ -22,6 +24,7 @@ export function SidebarFooter({
   onOpenUpdate,
   showRuntimeButtons = true,
   showUpdateButton = true,
+  mobileVariant = false,
 }: Props): React.ReactNode {
   const { t } = useI18n();
 
@@ -54,6 +57,11 @@ export function SidebarFooter({
             <TooltipContent side="top" sideOffset={4}><p>{t('sessions.sidebar.footer.actions.aboutOpenChamber')}</p></TooltipContent>
           </Tooltip>
         </>
+      ) : null}
+      {!mobileVariant ? (
+        <div className="ml-auto flex items-center">
+          <FooterServicesMenu />
+        </div>
       ) : null}
       {showUpdateButton ? (
         <Button

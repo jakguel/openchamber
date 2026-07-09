@@ -1621,6 +1621,7 @@ export const SessionSidebar: React.FC<SessionSidebarProps> = ({
         onOpenUpdate={handleOpenUpdateDialog}
         showRuntimeButtons={!isVSCode}
         showUpdateButton={showSidebarUpdateButton}
+        mobileVariant={mobileVariant}
       />
 
       <UpdateDialog

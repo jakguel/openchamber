@@ -33,7 +33,6 @@ import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { ContextUsageDisplay } from '@/components/ui/ContextUsageDisplay';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
-import { UpdateDialog } from '@/components/ui/UpdateDialog';
 import { useDeviceInfo, useTabletStandalonePwaRuntime } from '@/lib/device';
 import { cn, hasModifier } from '@/lib/utils';
 import { McpDropdownContent } from '@/components/mcp/McpDropdown';
@@ -43,9 +42,8 @@ import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel, calcul
 import { UsageProgressBar } from '@/components/sections/usage/UsageProgressBar';
 import { PaceIndicator } from '@/components/sections/usage/PaceIndicator';
 import { formatTimeForPreference } from '@/lib/timeFormat';
-import { useServicesMenuModel, type RateLimitGroup } from '@/components/layout/useServicesMenuModel';
+import { useServicesMenuModel } from '@/components/layout/useServicesMenuModel';
 import { eventMatchesShortcut, formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
-import type { TimeFormatPreference } from '@/stores/useUIStore';
 import {
   getDisplayModelName,
 } from '@/lib/quota/model-families';
@@ -57,14 +55,10 @@ import {
 } from '@/components/ui/collapsible';
 import type { GitHubAuthStatus } from '@/lib/api/types';
 import type { SessionContextUsage } from '@/stores/types/sessionTypes';
-import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
 import { OpenInAppButton } from '@/components/desktop/OpenInAppButton';
-import { forceKillTerminal } from '@/lib/terminalApi';
-import { useTerminalStore } from '@/stores/useTerminalStore';
 import { ProjectActionsButton } from '@/components/layout/ProjectActionsButton';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
-import { canUseElectronDesktopIPC, invokeDesktop, isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag, type UpdateInfo } from '@/lib/desktop';
-import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
+import { canUseElectronDesktopIPC, invokeDesktop, isDesktopShell, isVSCodeRuntime, startDesktopWindowDrag } from '@/lib/desktop';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -250,363 +244,6 @@ const DesktopGitHubControl = React.memo(function DesktopGitHubControl({
   );
 });
 
-type DesktopServicesMenuProps = {
-  isDesktopApp: boolean;
-  currentInstanceLabel: string;
-  compactCurrentInstanceLabel: string;
-  currentInstanceIsLocal: boolean;
-  isDesktopServicesOpen: boolean;
-  setIsDesktopServicesOpen: React.Dispatch<React.SetStateAction<boolean>>;
-  refreshCurrentInstanceLabel: () => Promise<void>;
-  desktopServicesTab: 'instance' | 'usage' | 'mcp';
-  setDesktopServicesTab: React.Dispatch<React.SetStateAction<'instance' | 'usage' | 'mcp'>>;
-  quotaResultsLength: number;
-  fetchAllQuotas: () => Promise<unknown>;
-  servicesTabItems: SortableTabsStripItem[];
-  quotaLastUpdated: number | null;
-  quotaDisplayMode: 'usage' | 'remaining';
-  quotaDisplayTabItems: SortableTabsStripItem[];
-  handleDisplayModeChange: (mode: 'usage' | 'remaining') => Promise<void>;
-  handleUsageRefresh: () => void;
-  isQuotaLoading: boolean;
-  isUsageRefreshSpinning: boolean;
-  hasRateLimits: boolean;
-  rateLimitGroups: RateLimitGroup[];
-  expandedFamilies: Record<string, string[]>;
-  toggleFamilyExpanded: (providerId: string, familyId: string) => void;
-  shortcutLabel: (actionId: string) => string;
-  showDevShutdown: boolean;
-  isDevShutdownInFlight: boolean;
-  onDevShutdown: () => Promise<void>;
-  remoteUpdateInfo: UpdateInfo | null;
-  remoteUpdateChecking: boolean;
-  remoteUpdateError: string | null;
-  onOpenRemoteUpdate: () => void;
-  showPredValues: boolean;
-  timeFormatPreference: TimeFormatPreference;
-};
-
-const DesktopServicesMenu = React.memo(function DesktopServicesMenu({
-  isDesktopApp,
-  currentInstanceLabel,
-  compactCurrentInstanceLabel,
-  currentInstanceIsLocal,
-  isDesktopServicesOpen,
-  setIsDesktopServicesOpen,
-  refreshCurrentInstanceLabel,
-  desktopServicesTab,
-  setDesktopServicesTab,
-  quotaResultsLength,
-  fetchAllQuotas,
-  servicesTabItems,
-  quotaLastUpdated,
-  quotaDisplayMode,
-  quotaDisplayTabItems,
-  handleDisplayModeChange,
-  handleUsageRefresh,
-  isQuotaLoading,
-  isUsageRefreshSpinning,
-  hasRateLimits,
-  rateLimitGroups,
-  expandedFamilies,
-  toggleFamilyExpanded,
-  shortcutLabel,
-  showDevShutdown,
-  isDevShutdownInFlight,
-  onDevShutdown,
-  remoteUpdateInfo,
-  remoteUpdateChecking,
-  remoteUpdateError,
-  onOpenRemoteUpdate,
-  showPredValues,
-  timeFormatPreference,
-}: DesktopServicesMenuProps) {
-  const { t } = useI18n();
-  return (
-    <DropdownMenu
-      open={isDesktopServicesOpen}
-      onOpenChange={(open) => {
-        setIsDesktopServicesOpen(open);
-        if (open) {
-          void refreshCurrentInstanceLabel();
-          if (desktopServicesTab === 'usage' && quotaResultsLength === 0) {
-            void fetchAllQuotas();
-          }
-        }
-      }}
-    >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={isDesktopApp
-                ? t('header.services.openWithCurrent', { current: currentInstanceLabel })
-                : t('header.services.open')}
-              className={cn(
-                DESKTOP_HEADER_ICON_BUTTON_CLASS,
-                isDesktopApp ? 'w-auto max-w-[14rem] justify-start gap-1.5 px-2.5' : 'h-8 w-8'
-              )}
-            >
-              <Icon name="stack" className="h-[18px] w-[18px]" />
-              {isDesktopApp ? (
-                <span className="truncate typography-ui-label font-medium text-foreground">{compactCurrentInstanceLabel}</span>
-              ) : null}
-            </button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>
-            {isDesktopApp
-              ? t('header.services.tooltip.currentInstanceWithShortcuts', {
-                  current: currentInstanceLabel,
-                  toggle: shortcutLabel('toggle_services_menu'),
-                  nextTab: shortcutLabel('cycle_services_tab'),
-                })
-              : t('header.services.tooltip.servicesWithShortcuts', {
-                  toggle: shortcutLabel('toggle_services_menu'),
-                  nextTab: shortcutLabel('cycle_services_tab'),
-                })}
-          </p>
-        </TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent
-        align="end"
-        className="w-[min(27rem,calc(100vw-2rem))] max-h-[75vh] overflow-y-auto bg-[var(--surface-elevated)] p-0"
-      >
-        <div className="sticky top-0 z-20 px-2 pt-1.5 pb-px">
-          <div className="h-9">
-            <SortableTabsStrip
-              items={servicesTabItems}
-              activeId={desktopServicesTab}
-              onSelect={(tabID) => {
-                const value = tabID as 'instance' | 'usage' | 'mcp';
-                setDesktopServicesTab(value);
-                if (value === 'usage' && quotaResultsLength === 0) {
-                  void fetchAllQuotas();
-                }
-              }}
-              layoutMode="fit"
-              variant="active-pill"
-              activePillInsetClassName="gap-0.5 px-px py-0"
-              activePillButtonClassName="h-8"
-              className="h-full"
-            />
-          </div>
-        </div>
-
-        {isDesktopApp && desktopServicesTab === 'instance' ? (
-          <div>
-            {!currentInstanceIsLocal ? (
-              <div className="border-b border-[var(--interactive-border)] px-4 py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="typography-ui-label font-medium text-foreground">{t('header.services.remoteUpdate.title')}</div>
-                    <div className="typography-micro text-muted-foreground">
-                      {remoteUpdateInfo?.available
-                        ? t('header.services.remoteUpdate.available', { version: remoteUpdateInfo.version || '' })
-                        : remoteUpdateChecking
-                          ? t('header.services.remoteUpdate.checking')
-                          : remoteUpdateError || t('header.services.remoteUpdate.upToDate')}
-                    </div>
-                  </div>
-                  {remoteUpdateInfo?.available ? (
-                    <button
-                      type="button"
-                      className="shrink-0 rounded-md bg-[var(--primary-base)] px-3 py-1.5 typography-ui-label font-medium text-[var(--primary-foreground)] hover:opacity-90"
-                      onClick={onOpenRemoteUpdate}
-                    >
-                      {t('header.services.remoteUpdate.actions.open')}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            <DesktopHostSwitcherDialog
-              embedded
-              open={isDesktopServicesOpen && desktopServicesTab === 'instance'}
-              onOpenChange={() => {}}
-              onHostSwitched={() => setIsDesktopServicesOpen(false)}
-            />
-          </div>
-        ) : null}
-
-        {desktopServicesTab === 'mcp' ? (
-          <McpDropdownContent active={isDesktopServicesOpen && desktopServicesTab === 'mcp'} />
-        ) : null}
-
-        {desktopServicesTab === 'usage' ? (
-          <div className="overflow-x-hidden">
-            <div className="flex items-center justify-between gap-3 border-b border-[var(--interactive-border)] px-4 py-2.5">
-              <div className="flex min-w-0 items-baseline gap-2">
-                <span className="typography-ui-header font-semibold text-foreground">{t('header.services.rateLimits')}</span>
-                <span className="truncate typography-micro text-muted-foreground">{formatTime(quotaLastUpdated, timeFormatPreference)}</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="h-7 w-[10.5rem]">
-                  <SortableTabsStrip
-                    items={quotaDisplayTabItems}
-                    activeId={quotaDisplayMode}
-                    onSelect={(tabID) => void handleDisplayModeChange(tabID as 'usage' | 'remaining')}
-                    layoutMode="fit"
-                    variant="active-pill"
-                    activePillInsetClassName="gap-0.5 px-px py-0"
-                    className="h-full"
-                  />
-                </div>
-                <button
-                  type="button"
-                  className={cn(
-                    'inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors',
-                    'hover:text-foreground hover:bg-interactive-hover',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
-                  )}
-                  onClick={handleUsageRefresh}
-                  disabled={isQuotaLoading || isUsageRefreshSpinning}
-                  aria-label={t('header.services.refreshRateLimitsAria')}
-                >
-                  <Icon name="refresh" className={cn('h-4 w-4', isUsageRefreshSpinning && 'animate-spin')} />
-                </button>
-              </div>
-            </div>
-
-            {!hasRateLimits ? (
-              <div className="px-4 py-5 text-center">
-                <span className="typography-ui-label text-muted-foreground">{t('header.services.noRateLimits')}</span>
-              </div>
-            ) : null}
-
-            <div className="py-2">
-              {rateLimitGroups.map((group, index) => {
-                const providerExpandedFamilies = expandedFamilies[group.providerId] ?? [];
-                return (
-                  <React.Fragment key={group.providerId}>
-                    {index > 0 ? <div className="mx-4 my-2 border-t border-[var(--interactive-border)]" /> : null}
-                    <div className="flex items-center gap-2 px-4 py-2">
-                      <ProviderLogo providerId={group.providerId} className="h-4 w-4" />
-                      <span className="typography-ui-label font-medium text-foreground">{group.providerName}</span>
-                    </div>
-                    {group.entries.length === 0 && (!group.modelFamilies || group.modelFamilies.length === 0) ? (
-                      <div className="px-4 pb-2">
-              <span className="typography-ui-label text-muted-foreground">{group.error ?? t('header.services.noRateLimitsReported')}</span>
-                      </div>
-                    ) : (
-                      <div className="space-y-3 px-4 pb-2">
-                        {group.entries.map(([label, window]) => {
-                          const displayPercent = quotaDisplayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-                          const paceInfo = calculatePace(window.usedPercent, window.resetAt, window.windowSeconds, label);
-                          const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                            ? (quotaDisplayMode === 'remaining'
-                                ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                            : null;
-                          const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                          const resetLabel = formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference);
-                          return (
-                            <div key={`${group.providerId}-${label}`} className="flex flex-col gap-1.5">
-                              <div className="flex min-w-0 items-center justify-between gap-3">
-                                <div className="min-w-0 flex items-center gap-2">
-                                  <span className="truncate typography-ui-label text-foreground">{formatWindowLabel(label)}</span>
-                                  {resetLabel ? (
-                                    <span className="truncate typography-micro text-muted-foreground">
-                                      {resetLabel}
-                                    </span>
-                                  ) : null}
-                                </div>
-                                <span className="typography-ui-label tabular-nums text-foreground">
-                                  {metricLabel === '-' ? '' : metricLabel}
-                                </span>
-                              </div>
-                              <UsageProgressBar
-                                percent={displayPercent}
-                                tonePercent={window.usedPercent}
-                                className="h-1.5"
-                                expectedMarkerPercent={expectedMarker}
-                              />
-                              {paceInfo && showPredValues ? <PaceIndicator paceInfo={paceInfo} compact /> : null}
-                            </div>
-                          );
-                        })}
-                        {group.modelFamilies && group.modelFamilies.length > 0 ? (
-                          <div className="space-y-0.5">
-                            {group.modelFamilies.map((family) => {
-                              const familyKey = family.familyId ?? 'other';
-                              const isExpanded = providerExpandedFamilies.includes(familyKey);
-                              return (
-                                <Collapsible
-                                  key={familyKey}
-                                  open={isExpanded}
-                                  onOpenChange={() => toggleFamilyExpanded(group.providerId, familyKey)}
-                                >
-                                  <CollapsibleTrigger className="flex w-full items-center justify-between rounded-md px-1 py-1.5 text-left hover:bg-[var(--interactive-hover)]/50 transition-colors">
-                                    <span className="typography-ui-label font-medium text-foreground">{family.familyLabel}</span>
-                                    {isExpanded ? <Icon name="arrow-down-s" className="h-4 w-4 text-muted-foreground" /> : <Icon name="arrow-right-s" className="h-4 w-4 text-muted-foreground" />}
-                                  </CollapsibleTrigger>
-                                  <CollapsibleContent>
-                                    <div className="space-y-2.5 pb-1 pl-1 pt-1">
-                                      {family.models.map(([modelName, window]) => {
-                                        const displayPercent = quotaDisplayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-                                        const paceInfo = calculatePace(window.usedPercent, window.resetAt, window.windowSeconds);
-                                        const expectedMarker = paceInfo?.dailyAllocationPercent != null
-                                          ? (quotaDisplayMode === 'remaining'
-                                              ? 100 - calculateExpectedUsagePercent(paceInfo.elapsedRatio)
-                                              : calculateExpectedUsagePercent(paceInfo.elapsedRatio))
-                                          : null;
-                                        const metricLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
-                                        return (
-                                          <div key={`${group.providerId}-${modelName}`} className="flex flex-col gap-1.5">
-                                            <div className="flex min-w-0 items-center justify-between gap-3">
-                                              <span className="truncate typography-micro text-muted-foreground">{getDisplayModelName(modelName)}</span>
-                                              <span className="typography-ui-label tabular-nums text-foreground">
-                                                {metricLabel === '-' ? '' : metricLabel}
-                                              </span>
-                                            </div>
-                                            <UsageProgressBar
-                                              percent={displayPercent}
-                                              tonePercent={window.usedPercent}
-                                              className="h-1.5"
-                                              expectedMarkerPercent={expectedMarker}
-                                            />
-                                            {paceInfo && showPredValues ? <PaceIndicator paceInfo={paceInfo} compact /> : null}
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </CollapsibleContent>
-                                </Collapsible>
-                              );
-                            })}
-                          </div>
-                        ) : null}
-                      </div>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        {showDevShutdown ? (
-          <>
-            <div className="mx-4 my-2 border-t border-[var(--interactive-border)]" />
-            <div className="px-2 pb-2">
-              <DropdownMenuItem
-                disabled={isDevShutdownInFlight}
-                onSelect={() => {
-                  void onDevShutdown();
-                }}
-              >
-                {t('header.services.shutdownDev')}
-              </DropdownMenuItem>
-            </div>
-          </>
-        ) : null}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-});
-
 const isSameContextUsage = (
   a: SessionContextUsage | null,
   b: SessionContextUsage | null,
@@ -621,26 +258,6 @@ const isSameContextUsage = (
     && (a.normalizedOutput ?? 0) === (b.normalizedOutput ?? 0)
     && a.thresholdLimit === b.thresholdLimit
     && (a.lastMessageId ?? '') === (b.lastMessageId ?? '');
-};
-
-const formatCompactHeaderLabel = (value: string): string => {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return '';
-  }
-
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length >= 2) {
-    const first = words[0];
-    const second = words[1].slice(0, 3);
-    const shortTwoWord = `${first} ${second}`.trim();
-    if (words.length > 2 || shortTwoWord.length < trimmed.length) {
-      return `${shortTwoWord}...`;
-    }
-    return shortTwoWord;
-  }
-
-  return trimmed.length > 12 ? `${trimmed.slice(0, 9).trimEnd()}...` : trimmed;
 };
 
 const formatTime = (timestamp: number | null, timeFormatPreference: 'auto' | '12h' | '24h') => {
@@ -711,7 +328,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   const getCurrentModel = useConfigStore((state) => state.getCurrentModel);
   const runtimeApis = useRuntimeAPIs();
-  const [isDevShutdownInFlight, setIsDevShutdownInFlight] = React.useState(false);
 
   const getContextUsage = useSessionUIStore((state) => state.getContextUsage);
   const isNewSessionDraftOpen = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
@@ -842,23 +458,7 @@ export const Header: React.FC<HeaderProps> = ({
   const githubAccounts = githubAuthStatus?.accounts ?? [];
   const [isSwitchingGitHubAccount, setIsSwitchingGitHubAccount] = React.useState(false);
   const [isMobileRateLimitsOpen, setIsMobileRateLimitsOpen] = React.useState(false);
-  const [isDesktopServicesOpen, setIsDesktopServicesOpen] = React.useState(false);
-  const [currentInstanceLabel, setCurrentInstanceLabel] = React.useState('Local');
-  const [currentInstanceIsLocal, setCurrentInstanceIsLocal] = React.useState(true);
-  const [remoteUpdateDialogOpen, setRemoteUpdateDialogOpen] = React.useState(false);
-  const [remoteUpdateInfo, setRemoteUpdateInfo] = React.useState<UpdateInfo | null>(null);
-  const [remoteUpdateChecking, setRemoteUpdateChecking] = React.useState(false);
-  const [remoteUpdateError, setRemoteUpdateError] = React.useState<string | null>(null);
-  const compactCurrentInstanceLabel = React.useMemo(() => formatCompactHeaderLabel(currentInstanceLabel), [currentInstanceLabel]);
-  const [desktopServicesTab, setDesktopServicesTab] = React.useState<'instance' | 'usage' | 'mcp'>(
-    isDesktopApp ? 'instance' : 'usage'
-  );
   const [mobileServicesTab, setMobileServicesTab] = React.useState<'usage' | 'mcp'>('usage');
-  useEffect(() => {
-    if (!isDesktopApp && desktopServicesTab === 'instance') {
-      setDesktopServicesTab('usage');
-    }
-  }, [desktopServicesTab, isDesktopApp]);
 
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
   const showDesktopHeaderContextUsage = !isVSCode && activeMainTab === 'chat' && !!stableDesktopContextUsage && stableDesktopContextUsage.totalTokens > 0;
@@ -866,138 +466,8 @@ export const Header: React.FC<HeaderProps> = ({
     ? Math.min(999, (stableDesktopContextUsage.totalTokens / stableDesktopContextUsage.contextLimit) * 100)
     : 0;
 
-  const refreshCurrentInstanceLabel = React.useCallback(async () => {
-    if (typeof window === 'undefined' || !isDesktopApp) {
-      return;
-    }
-
-    try {
-      if (isDesktopLocalOriginActive()) {
-        setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
-        return;
-      }
-      setCurrentInstanceIsLocal(false);
-
-      const cfg = await desktopHostsGet();
-      const localOrigin = window.__OPENCHAMBER_LOCAL_ORIGIN__ || window.location.origin;
-      const runtimeApiBaseUrl = getRuntimeApiBaseUrl();
-
-      if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) {
-        setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
-        return;
-      }
-
-      const match = cfg.hosts.find((host) => {
-        return runtimeApiBaseUrl ? locationMatchesHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false;
-      });
-
-      if (match?.label?.trim()) {
-        setCurrentInstanceLabel(redactSensitiveUrl(match.label.trim()));
-        return;
-      }
-
-      setCurrentInstanceLabel('Instance');
-    } catch {
-      setCurrentInstanceLabel('Local');
-      setCurrentInstanceIsLocal(true);
-    }
-  }, [isDesktopApp]);
-
-  useEffect(() => {
-    void refreshCurrentInstanceLabel();
-  }, [refreshCurrentInstanceLabel]);
-
-  const checkRemoteInstanceUpdate = React.useCallback(async () => {
-    if (currentInstanceIsLocal) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(null);
-      return;
-    }
-
-    setRemoteUpdateChecking(true);
-    setRemoteUpdateError(null);
-    try {
-      const params = new URLSearchParams({ appType: 'web', instanceMode: 'remote' });
-      const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
-      }
-      const data = await response.json();
-      setRemoteUpdateInfo({
-        available: data.available ?? false,
-        version: data.version,
-        currentVersion: data.currentVersion ?? 'unknown',
-        body: data.body,
-        nextSuggestedCheckInSec: typeof data.nextSuggestedCheckInSec === 'number' ? data.nextSuggestedCheckInSec : undefined,
-        packageManager: data.packageManager,
-        updateCommand: data.updateCommand,
-      });
-    } catch (error) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(error instanceof Error ? error.message : t('header.services.remoteUpdate.error'));
-    } finally {
-      setRemoteUpdateChecking(false);
-    }
-  }, [currentInstanceIsLocal, t]);
-
-  React.useEffect(() => {
-    setRemoteUpdateInfo(null);
-    setRemoteUpdateError(null);
-    setRemoteUpdateDialogOpen(false);
-  }, [currentInstanceIsLocal, currentInstanceLabel]);
-
-  React.useEffect(() => {
-    if (!isDesktopApp || currentInstanceIsLocal) {
-      return;
-    }
-
-    const initialDelayMs = 3000;
-    const intervalMs = 60 * 60 * 1000;
-    let disposed = false;
-    let timer: number | null = null;
-
-    const schedule = (delayMs: number) => {
-      timer = window.setTimeout(() => {
-        if (disposed || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
-          schedule(intervalMs);
-          return;
-        }
-        void checkRemoteInstanceUpdate().finally(() => {
-          if (!disposed) {
-            schedule(intervalMs);
-          }
-        });
-      }, delayMs);
-    };
-
-    schedule(initialDelayMs);
-
-    return () => {
-      disposed = true;
-      if (timer !== null) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [checkRemoteInstanceUpdate, currentInstanceIsLocal, currentInstanceLabel, isDesktopApp]);
-
-  const openRemoteInstanceUpdate = React.useCallback(() => {
-    if (remoteUpdateInfo?.available) {
-      setRemoteUpdateDialogOpen(true);
-      return;
-    }
-    void checkRemoteInstanceUpdate();
-  }, [checkRemoteInstanceUpdate, remoteUpdateInfo?.available]);
-
   useQuotaAutoRefresh();
   const {
-    servicesTabs,
-    servicesTabItems,
-    quotaDisplayTabItems,
     rateLimitGroups,
     hasRateLimits,
     expandedFamilies,
@@ -1661,63 +1131,6 @@ export const Header: React.FC<HeaderProps> = ({
     }
   }, [activeMainTab, isMobile, setActiveMainTab]);
 
-  const showDevShutdown = React.useMemo(() => {
-    if (typeof window === 'undefined') return false;
-    if (isDesktopApp) return false;
-    if (isVSCode) return false;
-    const host = window.location.hostname;
-    return host === 'localhost' || host === '127.0.0.1' || host === '::1';
-  }, [isDesktopApp, isVSCode]);
-
-  const handleDevShutdown = React.useCallback(async () => {
-    if (isDevShutdownInFlight) return;
-    setIsDevShutdownInFlight(true);
-    setIsDesktopServicesOpen(false);
-
-    const previewUrls: string[] = [];
-    let shutdownRequested = false;
-    try {
-      try {
-        for (const [, dirState] of useTerminalStore.getState().sessions.entries()) {
-          for (const tab of dirState.tabs) {
-            if (tab.previewUrl) {
-              previewUrls.push(tab.previewUrl);
-            }
-          }
-        }
-      } catch {
-        // ignore
-      }
-
-      try {
-        // Ensure preview/dev terminals don't linger.
-        await forceKillTerminal({});
-      } catch {
-        // ignore
-      }
-
-      try {
-        const devRes = await runtimeFetch('/api/system/dev-shutdown', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ previewUrls }),
-        });
-        if (devRes.ok) {
-          shutdownRequested = true;
-        } else {
-          const shutdownRes = await runtimeFetch('/api/system/shutdown', { method: 'POST' });
-          shutdownRequested = shutdownRes.ok;
-        }
-      } catch {
-        // ignore
-      }
-    } finally {
-      if (!shutdownRequested) {
-        setIsDevShutdownInFlight(false);
-      }
-    }
-  }, [isDevShutdownInFlight, setIsDesktopServicesOpen]);
-
   const mobileServicesTabItems = React.useMemo<SortableTabsStripItem[]>(() => {
     return [
       { id: 'usage', label: t('layout.services.usage'), icon: <Icon name="timer" className="h-3.5 w-3.5" /> },
@@ -1745,43 +1158,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const toggleServicesCombo = getEffectiveShortcutCombo('toggle_services_menu', shortcutOverrides);
-      if (eventMatchesShortcut(e, toggleServicesCombo)) {
-        e.preventDefault();
-
-        if (isDesktopServicesOpen) {
-          setIsDesktopServicesOpen(false);
-        } else {
-          setIsDesktopServicesOpen(true);
-          void refreshCurrentInstanceLabel();
-          if (desktopServicesTab === 'usage' && quotaResults.length === 0) {
-            void fetchAllQuotas();
-          }
-        }
-        return;
-      }
-
-      const cycleServicesCombo = getEffectiveShortcutCombo('cycle_services_tab', shortcutOverrides);
-      if (eventMatchesShortcut(e, cycleServicesCombo)) {
-        e.preventDefault();
-
-        const tabValues = servicesTabs.map((tab) => tab.value) as Array<'instance' | 'usage' | 'mcp'>;
-        if (tabValues.length === 0) {
-          return;
-        }
-
-        const currentIndex = tabValues.indexOf(desktopServicesTab);
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % tabValues.length;
-        const nextTab = tabValues[nextIndex];
-        setDesktopServicesTab(nextTab);
-        setIsDesktopServicesOpen(true);
-        void refreshCurrentInstanceLabel();
-        if (nextTab === 'usage' && quotaResults.length === 0) {
-          void fetchAllQuotas();
-        }
-        return;
-      }
-
       const toggleContextPlanCombo = getEffectiveShortcutCombo('toggle_context_plan', shortcutOverrides);
       if (eventMatchesShortcut(e, toggleContextPlanCombo)) {
         e.preventDefault();
@@ -1791,16 +1167,7 @@ export const Header: React.FC<HeaderProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    shortcutOverrides,
-    isDesktopServicesOpen,
-    desktopServicesTab,
-    servicesTabs,
-    quotaResults.length,
-    fetchAllQuotas,
-    refreshCurrentInstanceLabel,
-    handleOpenContextPlan,
-  ]);
+  }, [shortcutOverrides, handleOpenContextPlan]);
 
   const renderTab = (tab: TabConfig) => {
     const isActive = activeMainTab === tab.id;
@@ -1894,41 +1261,6 @@ export const Header: React.FC<HeaderProps> = ({
           </Tooltip>
       )}
       <OpenInAppButton directory={actionDirectory} className="mr-1" />
-      <DesktopServicesMenu
-        isDesktopApp={isDesktopApp}
-        currentInstanceLabel={currentInstanceLabel}
-        compactCurrentInstanceLabel={compactCurrentInstanceLabel}
-        currentInstanceIsLocal={currentInstanceIsLocal}
-        isDesktopServicesOpen={isDesktopServicesOpen}
-        setIsDesktopServicesOpen={setIsDesktopServicesOpen}
-        refreshCurrentInstanceLabel={refreshCurrentInstanceLabel}
-        desktopServicesTab={desktopServicesTab}
-        setDesktopServicesTab={setDesktopServicesTab}
-        quotaResultsLength={quotaResults.length}
-        fetchAllQuotas={fetchAllQuotas}
-        servicesTabItems={servicesTabItems}
-        quotaLastUpdated={quotaLastUpdated}
-        quotaDisplayMode={quotaDisplayMode}
-        showPredValues={showPredValues}
-        quotaDisplayTabItems={quotaDisplayTabItems}
-        handleDisplayModeChange={handleDisplayModeChange}
-        handleUsageRefresh={handleUsageRefresh}
-        isQuotaLoading={isQuotaLoading}
-        isUsageRefreshSpinning={isUsageRefreshSpinning}
-        hasRateLimits={hasRateLimits}
-        rateLimitGroups={rateLimitGroups}
-        expandedFamilies={expandedFamilies}
-        toggleFamilyExpanded={toggleFamilyExpanded}
-        shortcutLabel={shortcutLabel}
-        showDevShutdown={showDevShutdown}
-        isDevShutdownInFlight={isDevShutdownInFlight}
-        onDevShutdown={handleDevShutdown}
-        remoteUpdateInfo={remoteUpdateInfo}
-        remoteUpdateChecking={remoteUpdateChecking}
-        remoteUpdateError={remoteUpdateError}
-        onOpenRemoteUpdate={openRemoteInstanceUpdate}
-        timeFormatPreference={timeFormatPreference}
-      />
       <HeaderIconActionButton
         title={t('header.actions.terminalPanelWithShortcut', { shortcut: shortcutLabel('toggle_terminal') })}
         ariaLabel={t('header.actions.toggleTerminalPanelAria')}
@@ -2506,18 +1838,6 @@ export const Header: React.FC<HeaderProps> = ({
       >
         {isMobile ? renderMobile() : renderDesktop()}
       </header>
-      <UpdateDialog
-        open={remoteUpdateDialogOpen}
-        onOpenChange={setRemoteUpdateDialogOpen}
-        info={remoteUpdateInfo}
-        downloading={false}
-        downloaded={false}
-        progress={null}
-        error={remoteUpdateError}
-        onDownload={() => {}}
-        onRestart={() => {}}
-        runtimeType="web"
-      />
     </>
   );
 };
