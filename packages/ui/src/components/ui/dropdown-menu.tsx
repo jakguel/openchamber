@@ -94,6 +94,7 @@ type ContentProps = {
   align?: "start" | "center" | "end";
   side?: "top" | "right" | "bottom" | "left";
   alignOffset?: number;
+  anchor?: React.ComponentProps<typeof BaseMenu.Positioner>["anchor"];
   portalToBody?: boolean;
   positionerClassName?: string;
   style?: React.CSSProperties;
@@ -108,6 +109,7 @@ function DropdownMenuContent({
   align,
   side,
   alignOffset,
+  anchor,
   portalToBody = false,
   positionerClassName,
   style,
@@ -125,6 +127,7 @@ function DropdownMenuContent({
         align={align}
         side={side}
         alignOffset={alignOffset}
+        anchor={anchor}
         className={cn("app-region-no-drag z-50", positionerClassName)}
       >
         <BaseMenu.Popup
