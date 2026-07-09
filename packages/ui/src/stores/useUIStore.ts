@@ -11,7 +11,7 @@ import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobi
 import { getRuntimeKey } from '@/lib/runtime-switch';
 
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
-export type RightSidebarTab = 'git' | 'files' | 'context';
+export type RightSidebarTab = 'git' | 'files';
 export type ContextPanelMode = 'diff' | 'file' | 'context' | 'plan' | 'chat' | 'preview' | 'browser';
 export type MermaidRenderingMode = 'svg' | 'ascii';
 export type PlantumlTheme = 'none' | 'plain' | 'mono' | 'sunlust' | 'toy' | 'reddress-lightblue';
@@ -893,7 +893,7 @@ export const useUIStore = create<UIStore>()(
         isRightSidebarOpen: false,
         rightSidebarWidth: RIGHT_SIDEBAR_MIN_WIDTH,
         hasManuallyResizedRightSidebar: false,
-        rightSidebarTab: 'git',
+        rightSidebarTab: 'files',
         contextPanelByDirectory: {},
         isBottomTerminalOpen: false,
         isBottomTerminalExpanded: false,
@@ -2356,9 +2356,9 @@ export const useUIStore = create<UIStore>()(
 
           if (
             typeof state.rightSidebarTab !== 'string'
-            || (state.rightSidebarTab !== 'git' && state.rightSidebarTab !== 'files' && state.rightSidebarTab !== 'context')
+            || (state.rightSidebarTab !== 'git' && state.rightSidebarTab !== 'files')
           ) {
-            state.rightSidebarTab = 'git';
+            state.rightSidebarTab = 'files';
           }
 
           state.contextPanelByDirectory = sanitizeContextPanelByDirectory(state.contextPanelByDirectory);
