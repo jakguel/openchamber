@@ -289,14 +289,20 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
             }
           }
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn(
+          '[FooterServicesMenu] dev-shutdown: collecting terminal preview URLs failed (best-effort, continuing)',
+          err,
+        );
       }
 
       try {
         await forceKillTerminal({});
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn(
+          '[FooterServicesMenu] dev-shutdown: forceKillTerminal failed (best-effort, continuing)',
+          err,
+        );
       }
 
       try {
@@ -311,8 +317,11 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
           const shutdownRes = await runtimeFetch('/api/system/shutdown', { method: 'POST' });
           shutdownRequested = shutdownRes.ok;
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        console.warn(
+          '[FooterServicesMenu] dev-shutdown: shutdown request (/api/system/dev-shutdown -> /api/system/shutdown) failed (best-effort, continuing)',
+          err,
+        );
       }
     } finally {
       if (!shutdownRequested) {
