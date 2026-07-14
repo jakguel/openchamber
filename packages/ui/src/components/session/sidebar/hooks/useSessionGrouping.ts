@@ -12,6 +12,7 @@ import {
 import { formatDirectoryName, formatPathForDisplay } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
+import { partitionSessionTree } from '../sessionTree';
 
 type Args = {
   homeDirectory: string | null;
@@ -20,8 +21,6 @@ type Args = {
   gitBranches: Map<string, string | null>;
   isVSCode: boolean;
 };
-
-const isArchivedSession = (session: Session): boolean => Boolean(session.time?.archived);
 
 export const useSessionGrouping = (args: Args) => {
   const { t } = useI18n();
@@ -70,20 +69,7 @@ export const useSessionGrouping = (args: Args) => {
       const sortedProjectSessions = dedupeSessionsById(projectSessions)
         .sort((a, b) => compareSessionsByPinnedAndTime(a, b, args.pinnedSessionIds));
 
-      const sessionMap = new Map(sortedProjectSessions.map((session) => [session.id, session]));
-      const childrenMap = new Map<string, Session[]>();
-      sortedProjectSessions.forEach((session) => {
-        const parentID = (session as Session & { parentID?: string | null }).parentID;
-        if (!parentID) return;
-        const parentSession = sessionMap.get(parentID);
-        if (!parentSession || isArchivedSession(parentSession) !== isArchivedSession(session)) {
-          return;
-        }
-        const collection = childrenMap.get(parentID) ?? [];
-        collection.push(session);
-        childrenMap.set(parentID, collection);
-      });
-      childrenMap.forEach((list) => list.sort((a, b) => compareSessionsByPinnedAndTime(a, b, args.pinnedSessionIds)));
+      const { roots, childrenByParentId } = partitionSessionTree(sortedProjectSessions, args.pinnedSessionIds);
 
       const worktreeByPath = new Map<string, WorktreeMetadata>();
       availableWorktrees.forEach((meta) => {
@@ -107,17 +93,9 @@ export const useSessionGrouping = (args: Args) => {
       };
 
       const buildProjectNode = (session: Session): SessionNode => {
-        const children = childrenMap.get(session.id) ?? [];
+        const children = childrenByParentId.get(session.id) ?? [];
         return { session, children: children.map((child) => buildProjectNode(child)), worktree: getSessionWorktree(session) };
       };
-
-      const roots = sortedProjectSessions.filter((session) => {
-        const parentID = (session as Session & { parentID?: string | null }).parentID;
-        if (!parentID) return true;
-        const parentSession = sessionMap.get(parentID);
-        if (!parentSession) return true;
-        return isArchivedSession(parentSession) !== isArchivedSession(session);
-      });
 
       const groupedNodes = new Map<string, SessionNode[]>();
       const archivedKey = '__archived__';
