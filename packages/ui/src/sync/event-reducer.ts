@@ -772,12 +772,25 @@ function trimSessions(draft: State) {
       .filter(([, perms]) => perms && perms.length > 0)
       .map(([sessionID]) => sessionID),
   )
+  // Keep sessions that have pending questions too. A subagent child session may
+  // carry a question but no permission; QuestionRequest has no parentID, so the
+  // scoped selector resolves subtree membership from the session store. Evicting
+  // the session here would permanently drop its question from the UI.
+  const hasQuestion = new Set(
+    Object.entries(draft.question ?? {})
+      .filter(([, questions]) => questions && questions.length > 0)
+      .map(([sessionID]) => sessionID),
+  )
   while (draft.session.length > draft.limit) {
     // Remove from the beginning (oldest by sorted ID)
     const candidate = draft.session[0]
-    if (hasPermission.has(candidate.id)) break
+    if (hasPermission.has(candidate.id) || hasQuestion.has(candidate.id)) break
     draft.session.shift()
   }
+  // Oracle #5: an already-evicted session whose question.asked arrives later is
+  // intentionally hidden by the scoped selector until the session (re)appears.
+  // trimSessions never mutates draft.question, so the retained question self-heals
+  // when the session syncs back into the store.
 }
 
 function cleanupSessionCaches(

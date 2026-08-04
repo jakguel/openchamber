@@ -51,4 +51,34 @@ describe("scoped blocking requests", () => {
     expect(areRequestArraysReferentiallyEqual([first, second], [second, first])).toBe(false)
     expect(areRequestArraysReferentiallyEqual([first], [{ id: "perm_1" }])).toBe(false)
   })
+
+  test("self-heals: a question surfaces once its child session syncs into the store", () => {
+    const question = { id: "que_child" }
+    const empty: Array<typeof question> = []
+
+    // The question.asked landed before the child session synced. The child is
+    // absent from the session store, so membership cannot be resolved and the
+    // question is intentionally NOT returned (QuestionRequest carries no parentID).
+    const before = collectScopedBlockingRequests([session("ses_root")], { ses_child: [question] }, "ses_root", empty)
+    expect(before).toBe(empty)
+
+    // Once the child session (parentID -> root) arrives, the same question becomes
+    // reachable through the subtree. The selector re-runs on the new session
+    // reference, so the question self-heals into the result with no timing field.
+    const after = collectScopedBlockingRequests(
+      [session("ses_root"), session("ses_child", "ses_root")],
+      { ses_child: [question] },
+      "ses_root",
+      empty,
+    )
+    expect(after).toEqual([question])
+  })
+
+  test("never returns an orphan question whose session is absent from the store", () => {
+    const question = { id: "que_orphan" }
+    const empty: Array<typeof question> = []
+
+    const result = collectScopedBlockingRequests([session("ses_root")], { ses_orphan: [question] }, "ses_root", empty)
+    expect(result).toBe(empty)
+  })
 })

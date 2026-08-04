@@ -5,9 +5,11 @@ import type {
   Part,
   PermissionRequest,
   QuestionRequest,
+  Session,
   SessionStatus,
 } from "@opencode-ai/sdk/v2/client"
 import { applyDirectoryEvent, applyOptimisticQuestionAction, finalizeOrphanedRunningParts, hasAnyRunningPart } from "../event-reducer"
+import { collectScopedBlockingRequests } from "../scoped-blocking-requests"
 import { INITIAL_STATE, type State } from "../types"
 
 function state(overrides: Partial<State> = {}): State {
@@ -449,6 +451,93 @@ describe("applyOptimisticQuestionAction", () => {
 
     expect(draft.question.ses_1).toHaveLength(1)
     expect(draft.question.ses_1.map((q) => q.id)).toEqual(["que_1"])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// trimSessions: subagent question-drop repro + blocking-request preservation.
+// Real reducer code (applyDirectoryEvent -> trimSessions) + real State fixtures.
+// No mocks: these are pure store/reducer tests.
+// ---------------------------------------------------------------------------
+
+describe("trimSessions preserves blocking-request-bearing sessions", () => {
+  const sessionInfo = (id: string, parentID?: string): Session => ({ id, parentID }) as Session
+
+  const createSession = (draft: State, id: string, parentID?: string) =>
+    applyDirectoryEvent(draft, {
+      type: "session.created",
+      properties: { info: sessionInfo(id, parentID) },
+    } as Event)
+
+  test("spares a question-bearing subagent child session from eviction (repro: subagent question drop)", () => {
+    // A subagent child session (parentID -> root) carries a pending question but
+    // NO permission, and is the oldest (lowest id) session, so it is the trim
+    // candidate. Before the fix, trimSessions spared ONLY permission-bearing
+    // sessions -> the child was evicted and its question became unreachable
+    // (QuestionRequest has no parentID; subtree membership comes from the session
+    // store). Classification: CASE B (trimSessions eviction).
+    const question = { id: "que_child", sessionID: "ses_0child" } as QuestionRequest
+    const draft = state({
+      limit: 3,
+      session: [sessionInfo("ses_0child", "ses_root"), sessionInfo("ses_1"), sessionInfo("ses_2")],
+      question: { ses_0child: [question] },
+    })
+
+    // A new root session pushes the store over its limit and triggers trimSessions.
+    createSession(draft, "ses_root")
+
+    // The question-bearing child must survive the trim...
+    expect(draft.session.map((s) => s.id)).toContain("ses_0child")
+    // ...and stay reachable through the scoped selector for the root subtree.
+    const scoped = collectScopedBlockingRequests(draft.session, draft.question, "ses_root", [])
+    expect(scoped).toEqual([question])
+  })
+
+  test("still spares a permission-bearing session (no regression to hasPermission guard)", () => {
+    const permission = { id: "perm_child", sessionID: "ses_0perm" } as PermissionRequest
+    const draft = state({
+      limit: 3,
+      session: [sessionInfo("ses_0perm", "ses_root"), sessionInfo("ses_1"), sessionInfo("ses_2")],
+      permission: { ses_0perm: [permission] },
+    })
+
+    createSession(draft, "ses_root")
+
+    expect(draft.session.map((s) => s.id)).toContain("ses_0perm")
+  })
+
+  test("still evicts the oldest session with no pending question or permission", () => {
+    const draft = state({
+      limit: 3,
+      session: [sessionInfo("ses_0plain"), sessionInfo("ses_1"), sessionInfo("ses_2")],
+    })
+
+    createSession(draft, "ses_root")
+
+    expect(draft.session.map((s) => s.id)).not.toContain("ses_0plain")
+    expect(draft.session).toHaveLength(3)
+  })
+
+  test("Oracle #5: a session evicted before its question arrives stays hidden, then self-heals when it reappears", () => {
+    // Evict the plain oldest session first.
+    const draft = state({
+      limit: 3,
+      session: [sessionInfo("ses_0plain"), sessionInfo("ses_1"), sessionInfo("ses_2")],
+    })
+    createSession(draft, "ses_root")
+    expect(draft.session.map((s) => s.id)).not.toContain("ses_0plain")
+
+    // A late question.asked arrives for the already-evicted session. trimSessions
+    // never mutates draft.question, so the data is retained, but with no matching
+    // session in the store the scoped selector intentionally hides it (orphan).
+    const orphan = { id: "que_orphan", sessionID: "ses_0plain" } as QuestionRequest
+    applyDirectoryEvent(draft, { type: "question.asked", properties: orphan } as Event)
+    expect(collectScopedBlockingRequests(draft.session, draft.question, "ses_root", [])).toEqual([])
+
+    // When the session (re)appears as a child of the root, its retained question
+    // self-heals into the scoped result — no arrival timestamp / sequence needed.
+    createSession(draft, "ses_0plain", "ses_root")
+    expect(collectScopedBlockingRequests(draft.session, draft.question, "ses_root", [])).toEqual([orphan])
   })
 })
 
