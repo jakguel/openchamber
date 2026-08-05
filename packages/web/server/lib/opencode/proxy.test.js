@@ -1,6 +1,12 @@
+import http from 'node:http';
+
 import { describe, expect, it } from 'vitest';
 
-import { createDirectoryQueryCanonicalizer } from './proxy.js';
+import {
+  createDirectoryQueryCanonicalizer,
+  createUpstreamAgent,
+  isRetryableUpstreamError,
+} from './proxy.js';
 
 describe('createDirectoryQueryCanonicalizer', () => {
   it('canonicalizes directory query params and preserves other params', async () => {
@@ -68,5 +74,60 @@ describe('createDirectoryQueryCanonicalizer', () => {
     });
 
     await expect(canonicalize('/session?foo=1')).resolves.toBe('/session?foo=1');
+  });
+});
+
+describe('createUpstreamAgent', () => {
+  it('returns a Node http.Agent', () => {
+    const agent = createUpstreamAgent();
+    expect(agent).toBeInstanceOf(http.Agent);
+  });
+
+  it('disables keep-alive so idle-killed sockets are never reused', () => {
+    const agent = createUpstreamAgent();
+    expect(agent.options.keepAlive).toBe(false);
+    expect(agent.keepAlive).toBe(false);
+  });
+
+  it('constructs a fresh agent per call (no module-load side effect / shared singleton)', () => {
+    const first = createUpstreamAgent();
+    const second = createUpstreamAgent();
+    expect(first).not.toBe(second);
+  });
+});
+
+describe('isRetryableUpstreamError', () => {
+  it('is true for the HTTP parser constant error (idle-killed keep-alive socket)', () => {
+    expect(isRetryableUpstreamError({ code: 'HPE_INVALID_CONSTANT' })).toBe(true);
+  });
+
+  it('is true when the message reports an unexpected HTTP preamble', () => {
+    expect(
+      isRetryableUpstreamError({ message: 'Parse Error: Expected HTTP/, RTSP/ or ICE/' }),
+    ).toBe(true);
+  });
+
+  it('is true for a reset connection', () => {
+    expect(isRetryableUpstreamError({ code: 'ECONNRESET' })).toBe(true);
+  });
+
+  it('is true for a socket hang up', () => {
+    expect(isRetryableUpstreamError({ message: 'socket hang up' })).toBe(true);
+  });
+
+  it('is false for an unrelated upstream error code', () => {
+    expect(isRetryableUpstreamError({ code: 'EBADREQUEST' })).toBe(false);
+  });
+
+  it('is false for a generic Error', () => {
+    expect(isRetryableUpstreamError(new Error('boom'))).toBe(false);
+  });
+
+  it('is false for undefined without throwing', () => {
+    expect(isRetryableUpstreamError(undefined)).toBe(false);
+  });
+
+  it('is false for null without throwing', () => {
+    expect(isRetryableUpstreamError(null)).toBe(false);
   });
 });

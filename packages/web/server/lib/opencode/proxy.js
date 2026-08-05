@@ -1,3 +1,5 @@
+import http from 'node:http';
+
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
 import {
@@ -6,6 +8,44 @@ import {
   shouldForwardProxyResponseHeader,
 } from '../../proxy-headers.js';
 import { createRealpathCache } from '../path-realpath-cache.js';
+
+// Upstream HTTP agent for the OpenCode proxy.
+//
+// The generic /api/* proxy talks to a locally managed OpenCode server. Node's
+// default keep-alive pool reuses idle sockets, but OpenCode closes idle
+// keep-alive connections server-side; a low-frequency background poll then
+// reuses one of those already-closed sockets and the HTTP parser throws
+// `Parse Error: Expected HTTP/, RTSP/ or ICE/` (HPE_INVALID_CONSTANT),
+// surfacing to the client as a 503.
+//
+// keepAlive:false eliminates the failure mode entirely: every request gets a
+// fresh socket that is closed after the response, so a stale/idle-killed socket
+// can never be picked up. The extra TCP handshake is negligible for a loopback
+// proxy, and the poll that triggers the bug runs only every ~24 minutes, where
+// connection reuse offers no benefit anyway. Constructed lazily (per call) so
+// there is no side effect at module load.
+export const createUpstreamAgent = () => new http.Agent({ keepAlive: false });
+
+// Pure predicate: does this upstream error indicate a transient, stale-socket
+// style failure that a single retry on a fresh connection could recover from?
+// Returns false (never throws) for undefined/null and any non-matching error.
+export const isRetryableUpstreamError = (err) => {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const code = typeof err.code === 'string' ? err.code : '';
+  if (code === 'HPE_INVALID_CONSTANT' || code === 'ECONNRESET') {
+    return true;
+  }
+
+  const message = typeof err.message === 'string' ? err.message : '';
+  if (message.includes('Expected HTTP') || message.includes('socket hang up')) {
+    return true;
+  }
+
+  return false;
+};
 
 export const createDirectoryQueryCanonicalizer = ({ realpath, ...cacheOptions } = {}) => {
   const realpathCache = createRealpathCache({ fallbackOnError: true, realpath, ...cacheOptions });
