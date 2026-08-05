@@ -308,8 +308,6 @@ This module provides OpenCode server integration utilities for the web server ru
 
 ## Public exports (openchamber-routes.js)
 - `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
-  - `GET /api/openchamber/update-check`
-  - `POST /api/openchamber/update-install`
   - `GET /api/openchamber/models-metadata`
   - `GET /api/zen/models`
 
