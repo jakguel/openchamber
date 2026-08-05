@@ -236,9 +236,21 @@ const ChatViewport = React.memo(({
                         />
                         {(sessionQuestions.length > 0 || sessionPermissions.length > 0) && (
                             <div>
-                                {sessionQuestions.map((question) => (
-                                    <QuestionCard key={question.id} question={question} />
-                                ))}
+                                {/*
+                                 * One-at-a-time question queue: render ONLY the head (sessionQuestions[0]).
+                                 * useScopedBlockingQuestions still returns the FULL scoped array — the
+                                 * length gating, referential cache, and ChatViewport React.memo all depend
+                                 * on that reference, so only the VIEW renders the head. The head is stable
+                                 * mid-answer because opencode mints question ids via Identifier.ascending,
+                                 * so a newer question always sorts AFTER the head and appends; answering or
+                                 * dismissing shrinks state.question and advances the head (store-driven, not
+                                 * QuestionCard hasResponded). key={head.id} prevents QuestionCard's local
+                                 * answer/selection state from leaking onto the next head on advance.
+                                 * Permissions remain stacked (unchanged).
+                                 */}
+                                {sessionQuestions.length > 0 && (
+                                    <QuestionCard key={sessionQuestions[0].id} question={sessionQuestions[0]} />
+                                )}
                                 {sessionPermissions.map((permission) => (
                                     <PermissionCard key={permission.id} permission={permission} />
                                 ))}

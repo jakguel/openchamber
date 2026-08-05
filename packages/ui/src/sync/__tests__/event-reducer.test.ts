@@ -542,6 +542,80 @@ describe("trimSessions preserves blocking-request-bearing sessions", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Question queue (Part 2): FIFO head ordering + out-of-order/duplicate SSE races.
+// Real reducer code (applyDirectoryEvent) + collectScopedBlockingRequests for the
+// head the view renders. No mocks: pure store/reducer tests.
+// ---------------------------------------------------------------------------
+
+describe("question queue: FIFO head ordering + out-of-order SSE races", () => {
+  const sessionInfo = (id: string, parentID?: string): Session => ({ id, parentID }) as Session
+  const ask = (draft: State, id: string, sessionID: string) =>
+    applyDirectoryEvent(draft, { type: "question.asked", properties: { id, sessionID } as QuestionRequest } as Event)
+  const reply = (draft: State, sessionID: string, requestID: string) =>
+    applyDirectoryEvent(draft, { type: "question.replied", properties: { sessionID, requestID } } as Event)
+  const reject = (draft: State, sessionID: string, requestID: string) =>
+    applyDirectoryEvent(draft, { type: "question.rejected", properties: { sessionID, requestID } } as Event)
+  const head = (draft: State) =>
+    collectScopedBlockingRequests(draft.session, draft.question, "ses_root", [] as QuestionRequest[])[0]
+
+  test("Oracle #1: ascending ids keep the head stable — a newer question appends, never preempts", () => {
+    // opencode mints question ids via Identifier.ascending, so a later question has
+    // a lexicographically GREATER id. The reducer inserts via Binary.search
+    // (ascending), so a newer question lands at the TAIL and the head (index 0)
+    // stays put — no view-local sticky head needed.
+    const draft = state({ session: [sessionInfo("ses_root")], question: {} })
+    // Arrive out of order: higher id first, then lower id.
+    ask(draft, "que_b", "ses_root")
+    ask(draft, "que_a", "ses_root")
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_a", "que_b"])
+    expect(head(draft)?.id).toBe("que_a")
+
+    // A brand-new (highest id) question appends; the head does not change.
+    ask(draft, "que_c", "ses_root")
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_a", "que_b", "que_c"])
+    expect(head(draft)?.id).toBe("que_a")
+  })
+
+  test("answering the head advances to the next head; the tail is never skipped", () => {
+    const draft = state({ session: [sessionInfo("ses_root")], question: {} })
+    ask(draft, "que_a", "ses_root")
+    ask(draft, "que_b", "ses_root")
+    expect(head(draft)?.id).toBe("que_a")
+
+    // question.replied removes ONLY the head; the next question becomes the head.
+    expect(reply(draft, "ses_root", "que_a")).toBe(true)
+    expect(head(draft)?.id).toBe("que_b")
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+  })
+
+  test("Oracle #2: a duplicate question.replied for an already-answered head is a no-op (no resurrect, no skip)", () => {
+    const draft = state({ session: [sessionInfo("ses_root")], question: {} })
+    ask(draft, "que_a", "ses_root")
+    ask(draft, "que_b", "ses_root")
+    expect(reply(draft, "ses_root", "que_a")).toBe(true)
+
+    // Duplicate/out-of-order replied for the already-removed head: the reducer
+    // reports no change and does NOT resurrect que_a; the unanswered que_b stays head.
+    expect(reply(draft, "ses_root", "que_a")).toBe(false)
+    expect(head(draft)?.id).toBe("que_b")
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+  })
+
+  test("Oracle #2: a stale question.rejected racing after question.replied neither resurrects nor skips", () => {
+    const draft = state({ session: [sessionInfo("ses_root")], question: {} })
+    ask(draft, "que_a", "ses_root")
+    ask(draft, "que_b", "ses_root")
+    // Head answered via replied...
+    expect(reply(draft, "ses_root", "que_a")).toBe(true)
+    // ...then a duplicate/out-of-order rejected for the same (gone) request arrives.
+    expect(reject(draft, "ses_root", "que_a")).toBe(false)
+    // que_a is not resurrected; que_b (unanswered) remains the head.
+    expect(head(draft)?.id).toBe("que_b")
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // WI1: finalizeOrphanedRunningParts + hasAnyRunningPart
 // Pure-helper tests. No mocks: real reducer code, real State/Part fixtures.
 // ---------------------------------------------------------------------------
