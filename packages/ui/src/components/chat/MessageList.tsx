@@ -20,56 +20,12 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionParts } from '@/sync/sync-context';
 import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { type TurnUiState, createTurnUiStates, resolveTurnUiState, toggleTurnUiState } from './turnUiState';
+import { estimateHistoryEntryHeight, readTimelineCache, writeTimelineCache } from './timelineCache';
 
 const MESSAGE_LIST_VIRTUALIZE_THRESHOLD = 5;
 const EMPTY_STATIC_ENTRY_MESSAGES: ChatMessageEntry[] = [];
 const EMPTY_UNGROUPED_MESSAGE_IDS = new Set<string>();
 const MESSAGE_LIST_BUFFER_SIZE = 900;
-const TIMELINE_CACHE_LIMIT = 16;
-
-const estimateHistoryEntryHeight = (entry: RenderEntry | undefined): number => {
-    if (!entry) {
-        return 160;
-    }
-
-    if (entry.kind === 'turn') {
-        return 180 + Math.min(entry.turn.assistantMessages.length, 4) * 100;
-    }
-
-    return 140;
-};
-
-const sameKeys = (a: readonly string[] | undefined, b: readonly string[] | undefined): boolean => {
-    if (a === b) return true;
-    if (!a || !b) return false;
-    if (a.length !== b.length) return false;
-    return a.every((key, index) => key === b[index]);
-};
-
-const timelineCache = new Map<string, { keys: readonly string[]; cache: CacheSnapshot }>();
-
-const readTimelineCache = (sessionKey: string, keys: readonly string[]): CacheSnapshot | undefined => {
-    const entry = timelineCache.get(sessionKey);
-    if (!entry) return undefined;
-    if (sameKeys(entry.keys, keys)) return entry.cache;
-    timelineCache.delete(sessionKey);
-    return undefined;
-};
-
-const writeTimelineCache = (
-    sessionKey: string,
-    keys: readonly string[],
-    handle: VirtualizerHandle | null | undefined,
-): void => {
-    if (!handle || keys.length === 0) return;
-    timelineCache.delete(sessionKey);
-    timelineCache.set(sessionKey, { keys: keys.slice(), cache: handle.cache });
-    while (timelineCache.size > TIMELINE_CACHE_LIMIT) {
-        const oldest = timelineCache.keys().next().value;
-        if (typeof oldest !== 'string') break;
-        timelineCache.delete(oldest);
-    }
-};
 
 const useStableEvent = <TArgs extends unknown[], TResult>(handler: (...args: TArgs) => TResult) => {
     const handlerRef = React.useRef(handler);
@@ -380,7 +336,7 @@ export interface MessageListHandle {
     scrollToBottom: () => void;
 }
 
-type RenderEntry =
+export type RenderEntry =
     | {
         kind: 'ungrouped';
         key: string;
