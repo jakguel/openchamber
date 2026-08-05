@@ -9,8 +9,7 @@
   "dependencies": {
     "@openchamber/web": "workspace:*",
     "electron-context-menu": "^4.1.2",
-    "electron-log": "^5.4.3",
-    "electron-updater": "^6.8.3"
+    "electron-log": "^5.4.3"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",
@@ -31,7 +30,6 @@
     "generate:macos-icon": "node ./scripts/generate-macos-icon-assets.cjs",
     "rebuild:native": "node ./scripts/rebuild-native.mjs",
     "package": "bun run build:web-assets && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs --publish never",
-    "finalize:latest-yml": "node ./scripts/finalize-latest-yml.mjs",
     "type-check": "node --check ./main.mjs && node --check ./preload.mjs",
     "lint": "node -e \"process.exit(0)\""
   },
@@ -85,7 +83,6 @@
       "target": [
         "nsis"
       ],
-      "verifyUpdateCodeSignature": false,
       "artifactName": "${productName}-${version}-win-${arch}.${ext}"
     },
     "nsis": {
@@ -118,11 +115,6 @@
           "path": "/Applications"
         }
       ]
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "openchamber",
-      "repo": "openchamber"
     }
   }
 }
