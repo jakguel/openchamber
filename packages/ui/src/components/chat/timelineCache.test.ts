@@ -1,22 +1,45 @@
 import { describe, expect, test } from 'bun:test';
+import type { Message, Part } from '@opencode-ai/sdk/v2';
 
 import { deriveColdItemSize, estimateHistoryEntryHeight } from './timelineCache';
+import type { ChatMessageEntry, TurnRecord } from './lib/turns/types';
 import type { RenderEntry } from './MessageList';
 
-// Minimal stub factories — only access the fields estimateHistoryEntryHeight reads.
+// Typed fixtures following the repo convention (streamingTailEntry.test.ts,
+// projectTurnRecords.test.ts): real ChatMessageEntry shapes + `satisfies TurnRecord`
+// so the full RenderEntry/TurnRecord structure is type-checked, not erased.
+const message = (id: string, role: 'user' | 'assistant'): ChatMessageEntry => ({
+    info: { id, role, sessionID: 'ses_1', time: { created: 1 } } as Message,
+    parts: [] as Part[],
+});
+
 function makeTurn(assistantCount: number): RenderEntry {
+    const assistantMessages = Array.from({ length: assistantCount }, (_, i) =>
+        message(`assistant_${i}`, 'assistant'),
+    );
     return {
         kind: 'turn',
         key: `turn-${assistantCount}`,
-        turn: {
-            assistantMessages: Array.from({ length: assistantCount }, () => ({}) as never),
-        } as never,
         isLastTurn: false,
+        turn: {
+            turnId: 'user_1',
+            userMessageId: 'user_1',
+            userMessage: message('user_1', 'user'),
+            messages: [],
+            assistantMessageIds: assistantMessages.map((m) => m.info.id),
+            assistantMessages,
+            activityParts: [],
+            activitySegments: [],
+            summary: {},
+            hasTools: false,
+            hasReasoning: false,
+            stream: { isStreaming: false, isRetrying: false },
+        } satisfies TurnRecord,
     };
 }
 
 function makeUngrouped(): RenderEntry {
-    return { kind: 'ungrouped', key: 'ungrouped-1', message: {} as never };
+    return { kind: 'ungrouped', key: 'ungrouped-1', message: message('msg_1', 'assistant') };
 }
 
 // ── estimateHistoryEntryHeight ──────────────────────────────────────────────
