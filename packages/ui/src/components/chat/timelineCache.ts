@@ -2,6 +2,10 @@ import type { CacheSnapshot, VirtualizerHandle } from 'virtua';
 
 import type { RenderEntry } from './MessageList';
 
+export type { CacheSnapshot } from 'virtua';
+
+export type TimelineCacheEntry = { keys: readonly string[]; cache: CacheSnapshot };
+
 export const TIMELINE_CACHE_LIMIT = 16;
 
 export const estimateHistoryEntryHeight = (entry: RenderEntry | undefined): number => {
@@ -23,7 +27,7 @@ const sameKeys = (a: readonly string[] | undefined, b: readonly string[] | undef
     return a.every((key, index) => key === b[index]);
 };
 
-export const timelineCache = new Map<string, { keys: readonly string[]; cache: CacheSnapshot }>();
+export const timelineCache = new Map<string, TimelineCacheEntry>();
 
 export const readTimelineCache = (sessionKey: string, keys: readonly string[]): CacheSnapshot | undefined => {
     const entry = timelineCache.get(sessionKey);
