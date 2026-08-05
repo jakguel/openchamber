@@ -20,7 +20,7 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionParts } from '@/sync/sync-context';
 import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { type TurnUiState, createTurnUiStates, resolveTurnUiState, toggleTurnUiState } from './turnUiState';
-import { estimateHistoryEntryHeight, readTimelineCache, writeTimelineCache } from './timelineCache';
+import { deriveColdItemSize, readTimelineCache, writeTimelineCache } from './timelineCache';
 
 const MESSAGE_LIST_VIRTUALIZE_THRESHOLD = 5;
 const EMPTY_STATIC_ENTRY_MESSAGES: ChatMessageEntry[] = [];
@@ -936,7 +936,7 @@ const StaticHistoryList = React.memo(({ entries, shouldVirtualize, contentRef, s
             ref={virtualizerRef}
             data={entries}
             cache={virtualCache}
-            itemSize={virtualCache ? undefined : estimateHistoryEntryHeight(undefined)}
+            itemSize={virtualCache ? undefined : deriveColdItemSize(entries)}
             bufferSize={MESSAGE_LIST_BUFFER_SIZE}
             shift={shift}
             scrollRef={scrollRef}
