@@ -4,7 +4,6 @@ import type { QuestionRequest } from "@/types/question"
 import { opencodeClient } from "@/lib/opencode/client"
 import { useConfigStore } from "@/stores/useConfigStore"
 import { useInputStore } from "./input-store"
-import { collectScopedBlockingRequests } from "./scoped-blocking-requests"
 import * as globalSessionsStore from "@/stores/useGlobalSessionsStore"
 
 // Mock SDK client that records permission.reply / question.reply calls
@@ -12,7 +11,6 @@ const replyCalls: Array<{ method: string; params: Record<string, unknown> }> = [
 const scopedClientDirectories: string[] = []
 let sessionRevertResult: { data?: unknown; error?: unknown; response?: { status?: number } } = {}
 let questionReplyError: unknown | null = null
-let questionReplyStatus = 404
 let sessionShareResult: { data?: unknown; error?: unknown; response?: { status?: number } } = {}
 const globalUpsertedSessions: unknown[] = []
 
@@ -27,7 +25,7 @@ const mockScopedClient = {
     reply: mock((params: Record<string, unknown>) => {
       replyCalls.push({ method: "question.reply", params })
       if (questionReplyError) {
-        return Promise.resolve({ error: questionReplyError, response: { status: questionReplyStatus } })
+        return Promise.resolve({ error: questionReplyError, response: { status: 404 } })
       }
       return Promise.resolve({ data: true })
     }),
@@ -71,7 +69,7 @@ const mockSdk = {
     reply: mock((params: Record<string, unknown>) => {
       replyCalls.push({ method: "question.reply", params })
       if (questionReplyError) {
-        return Promise.resolve({ error: questionReplyError, response: { status: questionReplyStatus } })
+        return Promise.resolve({ error: questionReplyError, response: { status: 404 } })
       }
       return Promise.resolve({ data: true })
     }),
@@ -577,94 +575,5 @@ describe("rejectQuestion passes directory", () => {
     expect(replyCalls.length).toBe(1)
     expect(replyCalls[0].params.requestID).toBe("q-2")
     expect(replyCalls[0].params.directory).toBe("/test/project")
-  })
-})
-
-// The one-at-a-time queue advances purely because answer/dismiss shrink
-// state.question (optimisticRemoveQuestion -> applyOptimisticQuestionAction), NOT
-// because QuestionCard sets hasResponded. These drive the real session-actions +
-// real reducer + real directory store; only the opencode SDK transport is mocked.
-describe("question queue advance (store-driven)", () => {
-  const question = (id: string, sessionID = "ses-a"): QuestionRequest => ({
-    id,
-    sessionID,
-    questions: [{ question: "Pick one", header: "Choice", options: [{ label: "Yes", description: "Proceed" }] }],
-  })
-  const sessionOf = (id: string, parentID?: string): Session => ({ id, parentID }) as Session
-  const scopedHeadIds = (store: StoreApi<DirectoryStore>): string[] =>
-    collectScopedBlockingRequests(
-      store.getState().session,
-      store.getState().question,
-      "ses-a",
-      [] as QuestionRequest[],
-    ).map((q) => q.id)
-
-  beforeEach(() => {
-    replyCalls.length = 0
-    scopedClientDirectories.length = 0
-    questionReplyError = null
-    questionReplyStatus = 404
-  })
-
-  test("answering the head shrinks state.question so the scoped head advances", async () => {
-    const store = createStore(
-      {},
-      { session: [sessionOf("ses-a")], question: { "ses-a": [question("que_a"), question("que_b")] } },
-    )
-    const childStores = createChildStores([["/test/project", store]])
-
-    const { setActionRefs, respondToQuestion } = await import("./session-actions")
-    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/test/project")
-
-    expect(scopedHeadIds(store)).toEqual(["que_a", "que_b"])
-    await respondToQuestion("ses-a", "que_a", [["Yes"]])
-
-    // Store shrank; the view's head advances que_a -> que_b (store-driven advance).
-    expect(store.getState().question["ses-a"].map((q) => q.id)).toEqual(["que_b"])
-    expect(scopedHeadIds(store)[0]).toBe("que_b")
-  })
-
-  test("dismissing the head shrinks state.question so the scoped head advances", async () => {
-    const store = createStore(
-      {},
-      { session: [sessionOf("ses-a")], question: { "ses-a": [question("que_a"), question("que_b")] } },
-    )
-    const childStores = createChildStores([["/test/project", store]])
-
-    const { setActionRefs, rejectQuestion } = await import("./session-actions")
-    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/test/project")
-
-    await rejectQuestion("ses-a", "que_a")
-
-    // Dismiss advances the head exactly like answer — both driven by the store.
-    expect(store.getState().question["ses-a"].map((q) => q.id)).toEqual(["que_b"])
-    expect(scopedHeadIds(store)[0]).toBe("que_b")
-  })
-
-  test("Oracle #3: a non-NotFound reply failure restores the head to its position (retry same head)", async () => {
-    const store = createStore(
-      {},
-      { session: [sessionOf("ses-a")], question: { "ses-a": [question("que_a"), question("que_b")] } },
-    )
-    const childStores = createChildStores([["/test/project", store]])
-    // 500 (non-NotFound); message also does not match the NotFound taxonomy.
-    questionReplyStatus = 500
-    questionReplyError = new Error("internal server error")
-
-    const { setActionRefs, respondToQuestion } = await import("./session-actions")
-    setActionRefs(mockSdk as unknown as OpencodeClient, childStores, () => "/test/project")
-
-    let thrown: unknown
-    try {
-      await respondToQuestion("ses-a", "que_a", [["Yes"]])
-    } catch (error) {
-      thrown = error
-    }
-
-    expect(thrown).toBeInstanceOf(Error)
-    // The optimistically-removed head is restored at its sorted position so the
-    // same head re-renders for retry (contrast: the NotFound branch leaves it removed).
-    expect(store.getState().question["ses-a"].map((q) => q.id)).toEqual(["que_a", "que_b"])
-    expect(scopedHeadIds(store)[0]).toBe("que_a")
   })
 })

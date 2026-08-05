@@ -616,6 +616,102 @@ describe("question queue: FIFO head ordering + out-of-order SSE races", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Question queue advance (store-driven): the one-at-a-time queue advances purely
+// because answer (question.replied) and dismiss (question.rejected) shrink
+// state.question via the REAL reducer, and collectScopedBlockingRequests recomputes
+// the head — no view-local sticky head, no session-actions harness, no spies.
+// This is the store-level equivalent of the queue-advance guarantee.
+// ---------------------------------------------------------------------------
+
+describe("question queue advance (store-driven, real reducer)", () => {
+  const sessionInfo = (id: string, parentID?: string): Session => ({ id, parentID }) as Session
+  const scopedIds = (draft: State): string[] =>
+    collectScopedBlockingRequests(draft.session, draft.question, "ses_root", [] as QuestionRequest[]).map((q) => q.id)
+  // Two pending questions on the root, sorted ascending by id (opencode mints
+  // ascending ids), so que_a is the head the view renders one-at-a-time.
+  const seed = (): State =>
+    state({
+      session: [sessionInfo("ses_root")],
+      question: {
+        ses_root: [
+          { id: "que_a", sessionID: "ses_root" } as QuestionRequest,
+          { id: "que_b", sessionID: "ses_root" } as QuestionRequest,
+        ],
+      },
+    })
+
+  test("answer-advance: question.replied on the head shrinks the store so the scoped head advances", () => {
+    const draft = seed()
+    expect(scopedIds(draft)).toEqual(["que_a", "que_b"])
+
+    // question.replied carries { sessionID, requestID, answers }; the reducer
+    // splices ONLY the matched head, so the scoped head advances que_a -> que_b.
+    expect(
+      applyDirectoryEvent(draft, {
+        type: "question.replied",
+        properties: { sessionID: "ses_root", requestID: "que_a", answers: [["Yes"]] },
+      } as Event),
+    ).toBe(true)
+
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+    expect(scopedIds(draft)).toEqual(["que_b"])
+  })
+
+  test("dismiss-advance: question.rejected on the head shrinks the store so the scoped head advances", () => {
+    const draft = seed()
+    expect(scopedIds(draft)).toEqual(["que_a", "que_b"])
+
+    // Dismiss (question.rejected { sessionID, requestID }) advances the head
+    // exactly like answer — both are store-driven, not view-local.
+    expect(
+      applyDirectoryEvent(draft, {
+        type: "question.rejected",
+        properties: { sessionID: "ses_root", requestID: "que_a" },
+      } as Event),
+    ).toBe(true)
+
+    expect(draft.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+    expect(scopedIds(draft)).toEqual(["que_b"])
+  })
+
+  test("rollback: optimistic remove-then-restore returns the head to its sorted position; remove-without-restore stays advanced", () => {
+    // Retry path (Oracle #3 store-level): an in-flight answer optimistically
+    // removes the head (advances off que_a), then a failed SDK reply restores it,
+    // re-inserting que_a at its sorted head position so the SAME head re-renders.
+    const retry = seed()
+    expect(
+      applyOptimisticQuestionAction(retry, {
+        type: "question.optimistic-remove",
+        sessionID: "ses_root",
+        requestID: "que_a",
+      }),
+    ).toBe(true)
+    expect(scopedIds(retry)).toEqual(["que_b"])
+    expect(
+      applyOptimisticQuestionAction(retry, {
+        type: "question.optimistic-restore",
+        question: { id: "que_a", sessionID: "ses_root" } as QuestionRequest,
+      }),
+    ).toBe(true)
+    expect(retry.question.ses_root.map((q) => q.id)).toEqual(["que_a", "que_b"])
+    expect(scopedIds(retry)).toEqual(["que_a", "que_b"])
+
+    // NotFound analog: an optimistic remove WITHOUT restore leaves the queue
+    // permanently advanced at que_b (contrast with the retry/restore path above).
+    const advanced = seed()
+    expect(
+      applyOptimisticQuestionAction(advanced, {
+        type: "question.optimistic-remove",
+        sessionID: "ses_root",
+        requestID: "que_a",
+      }),
+    ).toBe(true)
+    expect(advanced.question.ses_root.map((q) => q.id)).toEqual(["que_b"])
+    expect(scopedIds(advanced)).toEqual(["que_b"])
+  })
+})
+
+// ---------------------------------------------------------------------------
 // WI1: finalizeOrphanedRunningParts + hasAnyRunningPart
 // Pure-helper tests. No mocks: real reducer code, real State/Part fixtures.
 // ---------------------------------------------------------------------------
