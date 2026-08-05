@@ -299,4 +299,49 @@ describe('apiProxy stale-socket single retry (integration)', () => {
       upstream.server.close();
     }
   });
+
+  it('does not retry or double-send once upstream headers reached the client (headersSent)', async () => {
+    let count = 0;
+    const upstream = http.createServer((req, res) => {
+      count += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.write('{"partial":true');
+      // Abort mid-body only AFTER headers have streamed through to the client,
+      // so the proxy error handler fires with res.headersSent already true.
+      setTimeout(() => res.socket?.destroy(), 50);
+    });
+    const upstreamPort = await new Promise((resolve) => {
+      upstream.listen(0, '127.0.0.1', () => resolve(upstream.address().port));
+    });
+    const server = http.createServer(buildApp(upstreamPort));
+    const appPort = await new Promise((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve(server.address().port));
+    });
+    try {
+      const status = await new Promise((resolve) => {
+        let captured;
+        const timer = setTimeout(() => resolve(captured), 500);
+        const settle = (value) => { clearTimeout(timer); resolve(value); };
+        const clientReq = http.request(
+          { host: '127.0.0.1', port: appPort, path: '/api/ping', method: 'GET' },
+          (res) => {
+            captured = res.statusCode;
+            res.on('data', () => {});
+            const finish = () => settle(res.statusCode);
+            res.on('end', finish);
+            res.on('aborted', finish);
+            res.on('close', finish);
+            res.on('error', finish);
+          },
+        );
+        clientReq.on('error', () => settle(captured));
+        clientReq.end();
+      });
+      expect(status).toBe(200);
+      expect(count).toBe(1);
+    } finally {
+      server.close();
+      upstream.close();
+    }
+  }, 15000);
 });
