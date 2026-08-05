@@ -4,7 +4,6 @@ import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
 import { McpIcon } from '@/components/icons/McpIcon';
 import { McpDropdownContent } from '@/components/mcp/McpDropdown';
-import { AboutSettings } from '@/components/sections/openchamber/AboutSettings';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
@@ -20,7 +19,6 @@ import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
 import { preloadProviderLogos } from '@/hooks/useProviderLogo';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useRouter } from '@/hooks/useRouter';
-import { useUpdatePolling } from '@/hooks/useUpdatePolling';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { opencodeClient } from '@/lib/opencode/client';
 import type { ProjectEntry, RuntimeAPIs } from '@/lib/api/types';
@@ -44,7 +42,6 @@ import { listProjectWorktrees } from '@/lib/worktrees/worktreeManager';
 import type { QuotaProviderId, UsageWindow } from '@/types';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
-import { useUpdateStore } from '@/stores/useUpdateStore';
 import { useSelectionStore } from '@/sync/selection-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { SyncProvider, useSession, useSessionMessages } from '@/sync/sync-context';
@@ -103,7 +100,7 @@ const getProjectLabel = (path: string): string => {
 };
 
 type OverflowItem = {
-  key: 'files' | 'changes' | 'mcp' | 'update' | 'settings';
+  key: 'files' | 'changes' | 'mcp' | 'settings';
   icon?: IconName;
   iconNode?: React.ReactNode;
   label: string;
@@ -795,15 +792,12 @@ const MobileShell: React.FC = () => {
   const [mcpOpen, setMcpOpen] = React.useState(false);
   const [isMcpRefreshing, setIsMcpRefreshing] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [updateOpen, setUpdateOpen] = React.useState(false);
   const [settingsInitialMobileStage, setSettingsInitialMobileStage] = React.useState<'nav' | 'page-content'>('nav');
   const [overflowOpen, setOverflowOpen] = React.useState(false);
   // When set, the Changes surface opens directly into the per-file diff for this path.
   const [pendingChangesDiff, setPendingChangesDiff] = React.useState<{ path: string; staged: boolean } | null>(null);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
-  const updateAvailable = useUpdateStore((state) => state.available);
-  const updateRuntimeType = useUpdateStore((state) => state.runtimeType);
   const mcpServers = useMcpConfigStore((state) => state.mcpServers);
   const setMcpDraft = useMcpConfigStore((state) => state.setMcpDraft);
   const setSelectedMcp = useMcpConfigStore((state) => state.setSelectedMcp);
@@ -831,8 +825,6 @@ const MobileShell: React.FC = () => {
     setChangesOpen(false);
     setPendingChangesDiff(null);
   }, []);
-
-  const showUpdateItem = updateAvailable && (updateRuntimeType === 'desktop' || updateRuntimeType === 'web');
 
   const openMcpCreateSettings = React.useCallback(() => {
     const baseName = 'new-mcp-server';
@@ -901,12 +893,6 @@ const MobileShell: React.FC = () => {
         label: t('mobile.menu.mcp'),
         onSelect: () => setMcpOpen(true),
       },
-      ...(showUpdateItem ? [{
-        key: 'update' as const,
-        icon: 'download' as const,
-        label: t('mobile.menu.update'),
-        onSelect: () => setUpdateOpen(true),
-      }] : []),
       {
         key: 'settings',
         icon: 'settings-3',
@@ -917,7 +903,7 @@ const MobileShell: React.FC = () => {
         },
       },
     ],
-    [dirtyChangeCount, showUpdateItem, t],
+    [dirtyChangeCount, t],
   );
 
   return (
@@ -1055,20 +1041,6 @@ const MobileShell: React.FC = () => {
           </MobileSurfaceShell>
         ) : null}
 
-        {updateOpen ? (
-          <MobileSurfaceShell
-            open
-            onClose={() => setUpdateOpen(false)}
-            ariaLabel={t('mobile.menu.update')}
-            title={t('mobile.menu.update')}
-          >
-            <ErrorBoundary>
-              <div className="h-full overflow-auto px-5 py-4">
-                <AboutSettings initialUpdateDialogOpen />
-              </div>
-            </ErrorBoundary>
-          </MobileSurfaceShell>
-        ) : null}
       </div>
     </DedicatedMobileAppProvider>
   );
@@ -1189,7 +1161,6 @@ export function MobileApp({ apis }: MobileAppProps) {
 
   useAppFontEffects();
   usePushVisibilityBeacon({ enabled: true });
-  useUpdatePolling();
   useWindowTitle();
   useRouter();
 

@@ -7,19 +7,13 @@
  * AC7 on two concrete issues: (1) three empty `catch { // ignore }` blocks in
  * handleDevShutdown (fixed in the same commit as this suite — replaced with
  * contextual best-effort console.warn logging, control flow unchanged) and
- * (2) the file adds boundary I/O (remote update-check runtimeFetch, dev-shutdown /
- * system shutdown runtimeFetch, and forceKillTerminal) with only typecheck/lint
- * evidence. This suite is that missing runtime evidence.
+ * (2) the file adds boundary I/O (dev-shutdown / system shutdown runtimeFetch, and
+ * forceKillTerminal) with only typecheck/lint evidence. This suite is that missing
+ * runtime evidence.
  *
  * WHAT IS PROVEN (the REAL FooterServicesMenu, real stores, real provider stack;
  * ONLY the true HTTP/terminal network boundary is stubbed via page.route — no src/
  * module is mocked):
- *
- *   (a) Mounting FooterServicesMenu as an Electron shell pointed at a REMOTE instance
- *       fires the remote update-check runtimeFetch to
- *       GET /api/openchamber/update-check?appType=web&instanceMode=remote.
- *       Non-vacuous: the assertion checks the method + the exact query shape, so it
- *       fails if the update-check call were removed or its params changed.
  *
  *   (b) Invoking the dev-shutdown menu item (web + localhost surface) fires the three
  *       cleanup boundary calls: POST /api/terminal/force-kill (forceKillTerminal),
@@ -38,9 +32,9 @@
  * — the modules are bundled with Vite (extension-less virtual entry so Vite compiles it;
  * hence React.createElement, no JSX) and mounted with page.addScriptTag. The ONLY injected
  * values are the RuntimeAPIs external-I/O stub and the SyncProvider sdk stub; every
- * quota / desktop-detection / shutdown / update-check code path is the real production code.
- * The two runtime surfaces are selected purely by window globals + navigation origin set
- * BEFORE mount (Electron+remote vs web+localhost), never by mocking a src/ module.
+ * quota / desktop-detection / shutdown code path is the real production code. The web+localhost
+ * runtime surface is selected purely by window globals + navigation origin set BEFORE mount,
+ * never by mocking a src/ module.
  *
  * WHY chromium only: this is store + fetch + DOM-interaction behavior, not a
  * browser-engine-specific layout concern, so a single engine is sufficient.
@@ -60,7 +54,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uiRoot = path.resolve(__dirname, '..');
 const uiSrc = path.resolve(uiRoot, 'src');
 
-const ORIGIN_DESKTOP = 'https://svc-e2e.local';
 const ORIGIN_WEB = 'http://localhost:7317';
 
 // The virtual entry mounts the REAL FooterServicesMenu inside the REAL provider stack
@@ -170,7 +163,6 @@ interface RecordedRequest {
 }
 
 interface HarnessHandle {
-    updateCheckRequests: RecordedRequest[];
     quotaRequests: RecordedRequest[];
     forceKillRequests: RecordedRequest[];
     devShutdownRequests: RecordedRequest[];
@@ -190,7 +182,6 @@ interface HarnessConfig {
 async function mountHarness(page: Page, config: HarnessConfig): Promise<HarnessHandle> {
     const bundle = await getHarnessBundle();
     const handle: HarnessHandle = {
-        updateCheckRequests: [],
         quotaRequests: [],
         forceKillRequests: [],
         devShutdownRequests: [],
@@ -207,11 +198,6 @@ async function mountHarness(page: Page, config: HarnessConfig): Promise<HarnessH
     // the real network. Registered FIRST so the specific routes below take precedence.
     await page.route('**/api/**', (route) =>
         route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }),
-    );
-
-    // (a) remote update-check endpoint.
-    await page.route('**/api/openchamber/update-check**', (route) =>
-        record(handle.updateCheckRequests, route, JSON.stringify({ available: false, currentVersion: '0.0.0' })),
     );
 
     // (c) provider quota-fetch endpoint.
@@ -270,43 +256,13 @@ async function mountHarness(page: Page, config: HarnessConfig): Promise<HarnessH
     return handle;
 }
 
-const DESKTOP_REMOTE: HarnessConfig = {
-    origin: ORIGIN_DESKTOP,
-    globals: {
-        __OPENCHAMBER_ELECTRON__: { runtime: 'electron' },
-        __OPENCHAMBER_API_BASE_URL__: 'https://remote.example',
-        __OPENCHAMBER_LOCAL_ORIGIN__: ORIGIN_DESKTOP,
-    },
-};
-
 const WEB_LOCALHOST: HarnessConfig = {
     origin: ORIGIN_WEB,
     globals: {},
 };
 
-test.describe('FooterServicesMenu boundary proof — remote update-check + dev-shutdown fallback + lazy quota fetch (AC7)', () => {
+test.describe('FooterServicesMenu boundary proof — dev-shutdown fallback + lazy quota fetch (AC7)', () => {
     test.describe.configure({ mode: 'serial' });
-
-    test('(a) mounting an Electron+remote FooterServicesMenu fires GET /api/openchamber/update-check with appType=web&instanceMode=remote', async ({ page }) => {
-        const handle = await mountHarness(page, DESKTOP_REMOTE);
-
-        // The remote update-check scheduler fires ~3s after the instance is detected as remote.
-        // If the update-check call were removed, no request ever fires and this times out.
-        await expect
-            .poll(() => handle.updateCheckRequests.length, {
-                message:
-                    'REGRESSION: no GET /api/openchamber/update-check fired on an Electron+remote mount — the remote update-check runtimeFetch was removed or its gating broke.',
-                timeout: 20000,
-            })
-            .toBeGreaterThan(0);
-
-        const req = handle.updateCheckRequests[0];
-        expect(req.method).toBe('GET');
-        // Non-vacuous query-shape assertions — these fail if the call were changed/removed.
-        expect(req.url).toContain('/api/openchamber/update-check');
-        expect(req.url).toContain('appType=web');
-        expect(req.url).toContain('instanceMode=remote');
-    });
 
     test('(b) invoking the dev-shutdown item fires force-kill + dev-shutdown + shutdown-fallback boundary calls', async ({ page }) => {
         const handle = await mountHarness(page, WEB_LOCALHOST);

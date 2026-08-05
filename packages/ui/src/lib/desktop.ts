@@ -10,23 +10,6 @@ export type AssistantNotificationPayload = {
   body?: string;
 };
 
-export type UpdateInfo = {
-  available: boolean;
-  version?: string;
-  currentVersion: string;
-  body?: string;
-  date?: string;
-  nextSuggestedCheckInSec?: number;
-  // Web-specific fields
-  packageManager?: string;
-  updateCommand?: string;
-};
-
-export type UpdateProgress = {
-  downloaded: number;
-  total?: number;
-};
-
 export type SkillCatalogConfig = {
   id: string;
   label: string;
@@ -541,90 +524,6 @@ export const sendAssistantCompletionNotification = async (
   }
 
   return false;
-};
-
-export const checkForDesktopUpdates = async (): Promise<UpdateInfo | null> => {
-  if (!hasDesktopInvoke()) {
-    return null;
-  }
-
-  try {
-    const info = await invokeDesktop<UpdateInfo>('desktop_check_for_updates');
-    return info as UpdateInfo;
-  } catch (error) {
-    console.warn('Failed to check for updates', error);
-    return null;
-  }
-};
-
-export const downloadDesktopUpdate = async (
-  onProgress?: (progress: UpdateProgress) => void
-): Promise<boolean> => {
-  if (!hasDesktopInvoke()) {
-    return false;
-  }
-
-  const bridge = getDesktopBridge();
-  let unlisten: null | (() => void | Promise<void>) = null;
-  let downloaded = 0;
-  let total: number | undefined;
-
-  try {
-    if (typeof onProgress === 'function' && bridge?.listen) {
-      unlisten = await bridge.listen('openchamber:update-progress', (evt) => {
-        const payload = evt?.payload;
-        if (!payload || typeof payload !== 'object') return;
-        const data = payload as { event?: unknown; data?: unknown };
-        const eventName = typeof data.event === 'string' ? data.event : null;
-        const eventData = data.data && typeof data.data === 'object' ? (data.data as Record<string, unknown>) : null;
-
-        if (eventName === 'Started') {
-          downloaded = 0;
-          total = typeof eventData?.contentLength === 'number' ? (eventData.contentLength as number) : undefined;
-          onProgress({ downloaded, total });
-          return;
-        }
-
-        if (eventName === 'Progress') {
-          const d = eventData?.downloaded;
-          const t = eventData?.total;
-          if (typeof d === 'number') downloaded = d;
-          if (typeof t === 'number') total = t;
-          onProgress({ downloaded, total });
-          return;
-        }
-
-        if (eventName === 'Finished') {
-          onProgress({ downloaded, total });
-        }
-      });
-    }
-
-    await invokeDesktop('desktop_download_and_install_update');
-    return true;
-  } catch (error) {
-    console.warn('Failed to download update', error);
-    return false;
-  } finally {
-    if (unlisten) {
-      try {
-        const result = unlisten();
-        if (result instanceof Promise) {
-          await result;
-        }
-      } catch {
-        // ignored
-      }
-    }
-  }
-};
-
-export const restartToApplyUpdate = async (): Promise<boolean> => {
-  if (!hasDesktopInvoke()) {
-    return false;
-  }
-
-  return restartDesktopApp();
 };
 
 export const restartDesktopApp = async (): Promise<boolean> => {

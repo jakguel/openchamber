@@ -36,7 +36,6 @@ Examples:
 - `useUIStore.ts`
 - `useDirectoryStore.ts`
 - `useFeatureFlagsStore.ts`
-- `useUpdateStore.ts`
 
 These stores coordinate visible app state, navigation, selected tabs, dialogs, and lightweight feature flags.
 

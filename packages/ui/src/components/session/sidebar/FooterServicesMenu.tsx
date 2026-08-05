@@ -19,7 +19,6 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
 import { DesktopHostSwitcherDialog } from '@/components/desktop/DesktopHostSwitcher';
-import { UpdateDialog } from '@/components/ui/UpdateDialog';
 
 import { useQuotaStore } from '@/stores/useQuotaStore';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
@@ -39,7 +38,6 @@ import {
   isDesktopLocalOriginActive,
   isDesktopShell,
   isVSCodeRuntime,
-  type UpdateInfo,
 } from '@/lib/desktop';
 import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -68,9 +66,7 @@ const formatTime = (timestamp: number | null, timeFormatPreference: TimeFormatPr
  * to the session list. The popup opens ABOVE the cloud trigger, pinned to the
  * viewport left edge (x~0) via a virtual left-edge anchor + portalToBody.
  *
- * Relocated from Header.tsx's DesktopServicesMenu; the remote-instance
- * UpdateDialog machinery is moved/bridged in here (distinct from the footer
- * Update button).
+ * Relocated from Header.tsx's DesktopServicesMenu.
  */
 export const FooterServicesMenu = React.memo(function FooterServicesMenu(): React.ReactNode {
   const { t } = useI18n();
@@ -128,7 +124,6 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
 
   // --- Instance label (Electron remote/local) -------------------------------
   const [currentInstanceLabel, setCurrentInstanceLabel] = React.useState('Local');
-  const [currentInstanceIsLocal, setCurrentInstanceIsLocal] = React.useState(true);
 
   const refreshCurrentInstanceLabel = React.useCallback(async () => {
     if (typeof window === 'undefined' || !isDesktopApp) {
@@ -138,10 +133,8 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
     try {
       if (isDesktopLocalOriginActive()) {
         setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
         return;
       }
-      setCurrentInstanceIsLocal(false);
 
       const cfg = await desktopHostsGet();
       const localOrigin = window.__OPENCHAMBER_LOCAL_ORIGIN__ || window.location.origin;
@@ -149,7 +142,6 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
 
       if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) {
         setCurrentInstanceLabel('Local');
-        setCurrentInstanceIsLocal(true);
         return;
       }
 
@@ -165,103 +157,12 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
       setCurrentInstanceLabel('Instance');
     } catch {
       setCurrentInstanceLabel('Local');
-      setCurrentInstanceIsLocal(true);
     }
   }, [isDesktopApp]);
 
   useEffect(() => {
     void refreshCurrentInstanceLabel();
   }, [refreshCurrentInstanceLabel]);
-
-  // --- Remote-instance update machinery (bridged from Header) ----------------
-  const [remoteUpdateDialogOpen, setRemoteUpdateDialogOpen] = React.useState(false);
-  const [remoteUpdateInfo, setRemoteUpdateInfo] = React.useState<UpdateInfo | null>(null);
-  const [remoteUpdateChecking, setRemoteUpdateChecking] = React.useState(false);
-  const [remoteUpdateError, setRemoteUpdateError] = React.useState<string | null>(null);
-
-  const checkRemoteInstanceUpdate = React.useCallback(async () => {
-    if (currentInstanceIsLocal) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(null);
-      return;
-    }
-
-    setRemoteUpdateChecking(true);
-    setRemoteUpdateError(null);
-    try {
-      const params = new URLSearchParams({ appType: 'web', instanceMode: 'remote' });
-      const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) {
-        throw new Error(`Server responded with ${response.status}`);
-      }
-      const data = await response.json();
-      setRemoteUpdateInfo({
-        available: data.available ?? false,
-        version: data.version,
-        currentVersion: data.currentVersion ?? 'unknown',
-        body: data.body,
-        nextSuggestedCheckInSec: typeof data.nextSuggestedCheckInSec === 'number' ? data.nextSuggestedCheckInSec : undefined,
-        packageManager: data.packageManager,
-        updateCommand: data.updateCommand,
-      });
-    } catch (error) {
-      setRemoteUpdateInfo(null);
-      setRemoteUpdateError(error instanceof Error ? error.message : t('header.services.remoteUpdate.error'));
-    } finally {
-      setRemoteUpdateChecking(false);
-    }
-  }, [currentInstanceIsLocal, t]);
-
-  useEffect(() => {
-    setRemoteUpdateInfo(null);
-    setRemoteUpdateError(null);
-    setRemoteUpdateDialogOpen(false);
-  }, [currentInstanceIsLocal, currentInstanceLabel]);
-
-  useEffect(() => {
-    if (!isDesktopApp || currentInstanceIsLocal) {
-      return;
-    }
-
-    const initialDelayMs = 3000;
-    const intervalMs = 60 * 60 * 1000;
-    let disposed = false;
-    let timer: number | null = null;
-
-    const schedule = (delayMs: number) => {
-      timer = window.setTimeout(() => {
-        if (disposed || (typeof document !== 'undefined' && document.visibilityState !== 'visible')) {
-          schedule(intervalMs);
-          return;
-        }
-        void checkRemoteInstanceUpdate().finally(() => {
-          if (!disposed) {
-            schedule(intervalMs);
-          }
-        });
-      }, delayMs);
-    };
-
-    schedule(initialDelayMs);
-
-    return () => {
-      disposed = true;
-      if (timer !== null) {
-        window.clearTimeout(timer);
-      }
-    };
-  }, [checkRemoteInstanceUpdate, currentInstanceIsLocal, currentInstanceLabel, isDesktopApp]);
-
-  const openRemoteInstanceUpdate = React.useCallback(() => {
-    if (remoteUpdateInfo?.available) {
-      setRemoteUpdateDialogOpen(true);
-      return;
-    }
-    void checkRemoteInstanceUpdate();
-  }, [checkRemoteInstanceUpdate, remoteUpdateInfo?.available]);
 
   // --- Dev shutdown (web localhost only) ------------------------------------
   const [isDevShutdownInFlight, setIsDevShutdownInFlight] = React.useState(false);
@@ -481,31 +382,6 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
 
           {isDesktopApp && activeTab === 'instance' ? (
             <div>
-              {!currentInstanceIsLocal ? (
-                <div className="border-b border-[var(--interactive-border)] px-4 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="typography-ui-label font-medium text-foreground">{t('header.services.remoteUpdate.title')}</div>
-                      <div className="typography-micro text-muted-foreground">
-                        {remoteUpdateInfo?.available
-                          ? t('header.services.remoteUpdate.available', { version: remoteUpdateInfo.version || '' })
-                          : remoteUpdateChecking
-                            ? t('header.services.remoteUpdate.checking')
-                            : remoteUpdateError || t('header.services.remoteUpdate.upToDate')}
-                      </div>
-                    </div>
-                    {remoteUpdateInfo?.available ? (
-                      <button
-                        type="button"
-                        className="shrink-0 rounded-md bg-[var(--primary-base)] px-3 py-1.5 typography-ui-label font-medium text-[var(--primary-foreground)] hover:opacity-90"
-                        onClick={openRemoteInstanceUpdate}
-                      >
-                        {t('header.services.remoteUpdate.actions.open')}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
               <DesktopHostSwitcherDialog
                 embedded
                 open={isOpen && activeTab === 'instance'}
@@ -688,18 +564,6 @@ export const FooterServicesMenu = React.memo(function FooterServicesMenu(): Reac
           ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
-      <UpdateDialog
-        open={remoteUpdateDialogOpen}
-        onOpenChange={setRemoteUpdateDialogOpen}
-        info={remoteUpdateInfo}
-        downloading={false}
-        downloaded={false}
-        progress={null}
-        error={remoteUpdateError}
-        onDownload={() => {}}
-        onRestart={() => {}}
-        runtimeType="web"
-      />
     </>
   );
 });

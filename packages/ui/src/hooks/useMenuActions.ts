@@ -5,7 +5,6 @@ import { getSyncSessions } from '@/sync/sync-refs';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
-import { useUpdateStore } from '@/stores/useUpdateStore';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { createWorktreeSession } from '@/lib/worktreeSessionCreator';
@@ -54,7 +53,6 @@ const copyCurrentSelectionFallback = async (): Promise<boolean> => {
 };
 
 const MENU_ACTION_EVENT = 'openchamber:menu-action';
-const CHECK_FOR_UPDATES_EVENT = 'openchamber:check-for-updates';
 
 type DesktopBridgeGlobal = {
   listen?: (
@@ -108,34 +106,7 @@ export const useMenuActions = (
   const setRightSidebarTab = useUIStore((s) => s.setRightSidebarTab);
   const toggleBottomTerminal = useUIStore((s) => s.toggleBottomTerminal);
   const setBottomTerminalExpanded = useUIStore((s) => s.setBottomTerminalExpanded);
-  const checkForUpdates = useUpdateStore((state) => state.checkForUpdates);
   const { setThemeMode } = useThemeSystem();
-  const checkUpdatesInFlightRef = React.useRef(false);
-
-  const handleCheckForUpdates = React.useCallback(() => {
-    if (checkUpdatesInFlightRef.current) {
-      return;
-    }
-    checkUpdatesInFlightRef.current = true;
-
-    void checkForUpdates()
-      .then(() => {
-        const { available, error } = useUpdateStore.getState();
-        if (error) {
-          toast.error('Failed to check for updates', {
-            description: error,
-          });
-          return;
-        }
-
-        if (!available) {
-          toast.success('You are on the latest version');
-        }
-      })
-      .finally(() => {
-        checkUpdatesInFlightRef.current = false;
-      });
-  }, [checkForUpdates]);
 
   const handleChangeWorkspace = React.useCallback(() => {
     sessionEvents.requestDirectoryDialog();
@@ -327,17 +298,11 @@ export const useMenuActions = (
       handleAction(action);
     };
 
-    const handleCheckForUpdatesEvent = () => {
-      handleCheckForUpdates();
-    };
-
     window.addEventListener(MENU_ACTION_EVENT, handleMenuAction);
-    window.addEventListener(CHECK_FOR_UPDATES_EVENT, handleCheckForUpdatesEvent);
     return () => {
       window.removeEventListener(MENU_ACTION_EVENT, handleMenuAction);
-      window.removeEventListener(CHECK_FOR_UPDATES_EVENT, handleCheckForUpdatesEvent);
     };
-  }, [handleAction, handleCheckForUpdates]);
+  }, [handleAction]);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -346,7 +311,6 @@ export const useMenuActions = (
     if (typeof listen !== 'function') return;
 
     let unlistenMenu: null | (() => void | Promise<void>) = null;
-    let unlistenUpdate: null | (() => void | Promise<void>) = null;
 
     listen('openchamber:menu-action', (evt) => {
       const action = evt?.payload;
@@ -360,27 +324,11 @@ export const useMenuActions = (
         // ignore
       });
 
-    listen('openchamber:check-for-updates', () => {
-      window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
-    })
-      .then((fn) => {
-        unlistenUpdate = fn;
-      })
-      .catch(() => {
-        // ignore
-      });
-
     return () => {
       const cleanup = async () => {
         try {
           const a = unlistenMenu?.();
           if (a instanceof Promise) await a;
-        } catch {
-          // ignore
-        }
-        try {
-          const b = unlistenUpdate?.();
-          if (b instanceof Promise) await b;
         } catch {
           // ignore
         }

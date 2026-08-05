@@ -19,8 +19,8 @@
  * Both branches are asserted against the SAME real component, so the suite is non-vacuous:
  * it fails if the gate were removed (button would appear in the mobile branch) or inverted
  * (button would vanish in the desktop branch). To isolate the Services trigger, the footer's
- * other buttons are disabled (showRuntimeButtons=false, showUpdateButton=false) so the ONLY
- * possible button is the FooterServicesMenu cloud trigger — presence/absence is unambiguous.
+ * other buttons are disabled (showRuntimeButtons=false) so the ONLY possible button is the
+ * FooterServicesMenu cloud trigger — presence/absence is unambiguous.
  *
  * Runtime BEHAVIOR of the popup/shortcut/lazy-fetch is intentionally OUT OF SCOPE here and
  * deferred to task openchamber-5ki.48.17 (full acceptance e2e). This suite proves placement
@@ -87,9 +87,7 @@ const VIRTUAL_ENTRY = [
     "                onOpenSettings: noop,",
     "                onOpenShortcuts: noop,",
     "                onOpenAbout: noop,",
-    "                onOpenUpdate: noop,",
     "                showRuntimeButtons: false,",
-    "                showUpdateButton: false,",
     "                mobileVariant: mobileVariant,",
     "              }))))));",
     "    createRoot(container).render(tree);",

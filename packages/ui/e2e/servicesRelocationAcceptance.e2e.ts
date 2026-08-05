@@ -30,11 +30,6 @@
  *        NOT again on a cached re-open. Non-vacuous: 0 quota requests before, one batch after, and
  *        no growth on the seeded re-open.
  *
- *   NO-DOUBLE-POLL (deferred here from task .15): with BOTH the real Header AND the real
- *        FooterServicesMenu mounted in a DESKTOP + REMOTE config, the remote update-check endpoint
- *        (/api/openchamber/update-check) is requested by EXACTLY ONE owner — count === 1. If the
- *        Header's old poll had survived .15, a second owner would fire and this count would be 2.
- *
  * WHY a self-contained in-memory-bundled harness (no live server / no agent): identical technique
  * to servicesMenuModelBoundary.e2e.ts (.12), footerServicesMenuBoundary.e2e.ts (.14),
  * footerServicesPlacement.e2e.ts (.15), and sessionSwitchFlicker.e2e.ts — the modules are bundled
@@ -63,7 +58,6 @@ const uiRoot = path.resolve(__dirname, '..');
 const uiSrc = path.resolve(uiRoot, 'src');
 
 const ORIGIN_WEB = 'http://localhost:7319';
-const ORIGIN_DESKTOP = 'https://svc-reloc-e2e.local';
 
 // Web (non-Electron) aria-label used by the FooterServicesMenu cloud trigger — see
 // packages/ui/src/lib/i18n/messages/en.ts 'header.services.open'.
@@ -202,7 +196,6 @@ interface RecordedRequest {
 }
 
 interface HarnessHandle {
-    updateCheckRequests: RecordedRequest[];
     quotaRequests: RecordedRequest[];
 }
 
@@ -216,18 +209,6 @@ const WEB_LOCALHOST: HarnessConfig = {
     globals: {},
 };
 
-// Electron shell pointed at a REMOTE instance — this is the surface that owned the old Header
-// Services button and that activates the remote update-check poll. Same globals proven by
-// footerServicesMenuBoundary.e2e.ts (task .14) to fire the update-check.
-const DESKTOP_REMOTE: HarnessConfig = {
-    origin: ORIGIN_DESKTOP,
-    globals: {
-        __OPENCHAMBER_ELECTRON__: { runtime: 'electron' },
-        __OPENCHAMBER_API_BASE_URL__: 'https://remote.example',
-        __OPENCHAMBER_LOCAL_ORIGIN__: ORIGIN_DESKTOP,
-    },
-};
-
 /**
  * Register the true-network-boundary stubs (page.route) BEFORE mount, inject the window globals
  * that select the runtime surface, then bundle+inject the real assembled composition and mount it.
@@ -235,24 +216,13 @@ const DESKTOP_REMOTE: HarnessConfig = {
  */
 async function mountHarness(page: Page, config: HarnessConfig, layout: 'assembled' | 'footer-bottom'): Promise<HarnessHandle> {
     const bundle = await getHarnessBundle();
-    const handle: HarnessHandle = { updateCheckRequests: [], quotaRequests: [] };
+    const handle: HarnessHandle = { quotaRequests: [] };
 
     // Lowest priority: swallow any other /api/** so background provider-stack traffic does not hit
     // the real network. Registered FIRST so the specific routes below take precedence.
     await page.route('**/api/**', (route) =>
         route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }),
     );
-
-    // Remote update-check endpoint (the single-owner poll under the no-double-poll assertion).
-    await page.route('**/api/openchamber/update-check**', (route) => {
-        const req = route.request();
-        handle.updateCheckRequests.push({ method: req.method(), url: req.url() });
-        void route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({ available: false, currentVersion: '0.0.0' }),
-        });
-    });
 
     // Provider quota-fetch endpoint (the lazy fetch-on-open under AC3).
     await page.route('**/api/quota/**', (route) => {
@@ -478,32 +448,5 @@ test.describe('services relocation acceptance — real Header + real SidebarFoot
             handle.quotaRequests.length,
             'REGRESSION: re-opening with a populated quota store re-fetched — the cached-guard (quotaResults.length === 0) was removed.',
         ).toBe(afterFirstOpen);
-    });
-
-    test('NO-DOUBLE-POLL — real Header + real FooterServicesMenu (Desktop+remote) poll the remote update-check exactly once (single owner)', async ({ page }) => {
-        const handle = await mountHarness(page, DESKTOP_REMOTE, 'assembled');
-
-        // The single remote update-check poll fires ~3s after the instance is detected as remote.
-        await expect
-            .poll(() => handle.updateCheckRequests.length, {
-                message: 'REGRESSION: no GET /api/openchamber/update-check fired — the single remote update-check poll is gone.',
-                timeout: 20000,
-            })
-            .toBeGreaterThan(0);
-
-        // Grace window: a second (regressed) owner — e.g. the Header's old poll — would also fire
-        // its ~3s initial poll by now. If the Header still polled, this count would be 2.
-        await page.waitForTimeout(3000);
-        expect(
-            handle.updateCheckRequests.length,
-            'REGRESSION: the remote update-check was polled by more than one owner — the Header\'s old poll survived the .15 relocation (double-poll).',
-        ).toBe(1);
-
-        // Non-vacuous shape: the surviving single poll is the expected remote update-check call.
-        const req = handle.updateCheckRequests[0];
-        expect(req.method).toBe('GET');
-        expect(req.url).toContain('/api/openchamber/update-check');
-        expect(req.url).toContain('appType=web');
-        expect(req.url).toContain('instanceMode=remote');
     });
 });
