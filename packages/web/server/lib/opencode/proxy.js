@@ -47,6 +47,29 @@ export const isRetryableUpstreamError = (err) => {
   return false;
 };
 
+// Idempotent methods are the only ones safe to transparently re-forward once on
+// a fresh socket after a retryable upstream error; a non-idempotent method
+// (POST/PUT/PATCH/DELETE) must never be silently replayed.
+const IDEMPOTENT_UPSTREAM_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+// Pure decision helper: should the generic /api proxy transparently re-forward
+// this request exactly once after an upstream error? True only when the error is
+// retryable AND the method is idempotent AND it has not already been retried AND
+// nothing has been sent to the client yet. Never throws.
+export const shouldRetryUpstreamRequest = ({ err, method, alreadyRetried, headersSent } = {}) => {
+  if (alreadyRetried === true) {
+    return false;
+  }
+  if (headersSent === true) {
+    return false;
+  }
+  const normalizedMethod = typeof method === 'string' ? method.toUpperCase() : '';
+  if (!IDEMPOTENT_UPSTREAM_METHODS.has(normalizedMethod)) {
+    return false;
+  }
+  return isRetryableUpstreamError(err);
+};
+
 export const createDirectoryQueryCanonicalizer = ({ realpath, ...cacheOptions } = {}) => {
   const realpathCache = createRealpathCache({ fallbackOnError: true, realpath, ...cacheOptions });
 
@@ -679,9 +702,13 @@ export const registerOpenCodeProxy = (app, deps) => {
     return forwardSanitizedSessionListRequest(req, res, next, 'experimental.session');
   });
 
-  // Generic proxy for non-SSE OpenCode API routes.
+  // Generic proxy for non-SSE OpenCode API routes. A single stale-safe agent
+  // (keepAlive disabled) is constructed once and shared: every request gets a
+  // fresh socket, so an idle-killed upstream socket can never be reused.
+  const upstreamAgent = createUpstreamAgent();
   const apiProxy = createProxyMiddleware({
     target: resolveProxyTarget(),
+    agent: upstreamAgent,
     changeOrigin: true,
     pathRewrite: { '^/api': '' },
     // Dynamic target — port can change after restart
@@ -707,7 +734,24 @@ export const registerOpenCodeProxy = (app, deps) => {
           }
         }
       },
-      error: (err, _req, res) => {
+      error: (err, req, res) => {
+        if (
+          res &&
+          typeof res.status === 'function' &&
+          shouldRetryUpstreamRequest({
+            err,
+            method: req?.method,
+            alreadyRetried: req?.__opencodeProxyRetried === true,
+            headersSent: res.headersSent === true,
+          })
+        ) {
+          req.__opencodeProxyRetried = true;
+          console.warn(
+            `[proxy] retryable upstream error on ${req.method} ${req.url || ''}; retrying once on a fresh socket: ${err.message}`,
+          );
+          apiProxy(req, res, () => {});
+          return;
+        }
         console.error('[proxy] OpenCode proxy error:', err.message);
         if (res && !res.headersSent && typeof res.status === 'function') {
           res.status(503).json({ error: 'OpenCode service unavailable' });

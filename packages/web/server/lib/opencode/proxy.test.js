@@ -1,11 +1,18 @@
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
+import express from 'express';
+import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
 import {
   createDirectoryQueryCanonicalizer,
   createUpstreamAgent,
   isRetryableUpstreamError,
+  registerOpenCodeProxy,
+  shouldRetryUpstreamRequest,
 } from './proxy.js';
 
 describe('createDirectoryQueryCanonicalizer', () => {
@@ -129,5 +136,167 @@ describe('isRetryableUpstreamError', () => {
 
   it('is false for null without throwing', () => {
     expect(isRetryableUpstreamError(null)).toBe(false);
+  });
+});
+
+describe('shouldRetryUpstreamRequest', () => {
+  it('retries a retryable error on an idempotent GET that has not yet been retried or responded', () => {
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { code: 'ECONNRESET' },
+        method: 'GET',
+        alreadyRetried: false,
+        headersSent: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('retries HEAD and OPTIONS as well, case-insensitively', () => {
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { code: 'HPE_INVALID_CONSTANT' },
+        method: 'head',
+        alreadyRetried: false,
+        headersSent: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { message: 'socket hang up' },
+        method: 'OPTIONS',
+        alreadyRetried: false,
+        headersSent: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('never retries non-idempotent methods, even for a retryable error', () => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      expect(
+        shouldRetryUpstreamRequest({
+          err: { code: 'ECONNRESET' },
+          method,
+          alreadyRetried: false,
+          headersSent: false,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('never retries a request that was already retried once', () => {
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { code: 'ECONNRESET' },
+        method: 'GET',
+        alreadyRetried: true,
+        headersSent: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('never retries once the response has started (headersSent)', () => {
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { code: 'ECONNRESET' },
+        method: 'GET',
+        alreadyRetried: false,
+        headersSent: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('never retries a non-retryable error on an idempotent method', () => {
+    expect(
+      shouldRetryUpstreamRequest({
+        err: { code: 'EBADREQUEST' },
+        method: 'GET',
+        alreadyRetried: false,
+        headersSent: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('is false (never throws) for missing or garbage input', () => {
+    expect(shouldRetryUpstreamRequest()).toBe(false);
+    expect(shouldRetryUpstreamRequest({})).toBe(false);
+  });
+});
+
+// Integration: exercises the REAL apiProxy (registerOpenCodeProxy) against a
+// REAL upstream HTTP server that destroys the socket mid-request to reproduce
+// the stale-keep-alive failure (proxy client sees ECONNRESET / socket hang up).
+// The upstream is the external I/O boundary — no internal module is mocked.
+describe('apiProxy stale-socket single retry (integration)', () => {
+  const makeUpstream = (behavior) => {
+    let count = 0;
+    const server = http.createServer((req, res) => {
+      count += 1;
+      if (behavior(count) === 'destroy') {
+        // Simulate an idle-killed / reset upstream socket: no response, hang up.
+        req.socket.destroy();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, hit: count }));
+    });
+    return { server, getCount: () => count };
+  };
+
+  const startUpstream = (upstream) =>
+    new Promise((resolve) => {
+      upstream.server.listen(0, '127.0.0.1', () => resolve(upstream.server.address().port));
+    });
+
+  const buildApp = (port) => {
+    const app = express();
+    registerOpenCodeProxy(app, {
+      fs,
+      os,
+      path,
+      OPEN_CODE_READY_GRACE_MS: 0,
+      getRuntime: () => ({ openCodePort: port, openCodeBaseUrl: `http://127.0.0.1:${port}` }),
+      getOpenCodeAuthHeaders: () => ({}),
+      buildOpenCodeUrl: () => `http://127.0.0.1:${port}/`,
+      ensureOpenCodeApiPrefix: (value) => value,
+    });
+    return app;
+  };
+
+  it('retries an idempotent GET exactly once on a fresh socket, then succeeds', async () => {
+    const upstream = makeUpstream((n) => (n === 1 ? 'destroy' : 'ok'));
+    const port = await startUpstream(upstream);
+    try {
+      const res = await request(buildApp(port)).get('/api/ping');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, hit: 2 });
+      expect(upstream.getCount()).toBe(2);
+    } finally {
+      upstream.server.close();
+    }
+  });
+
+  it('gives up with 503 after a second failure (exactly one retry, no loop)', async () => {
+    const upstream = makeUpstream(() => 'destroy');
+    const port = await startUpstream(upstream);
+    try {
+      const res = await request(buildApp(port)).get('/api/ping');
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ error: 'OpenCode service unavailable' });
+      expect(upstream.getCount()).toBe(2);
+    } finally {
+      upstream.server.close();
+    }
+  });
+
+  it('never retries a non-idempotent POST — immediate 503 after a single upstream hit', async () => {
+    const upstream = makeUpstream(() => 'destroy');
+    const port = await startUpstream(upstream);
+    try {
+      const res = await request(buildApp(port)).post('/api/ping').send({ hello: 'world' });
+      expect(res.status).toBe(503);
+      expect(upstream.getCount()).toBe(1);
+    } finally {
+      upstream.server.close();
+    }
   });
 });
