@@ -4,6 +4,7 @@ import { Icon } from "@/components/icon/Icon";
 import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { resolveOpenCodeVersion } from '@/lib/opencode/resolveOpenCodeVersion';
 
 const GITHUB_URL = 'https://github.com/openchamber/openchamber';
 const DISCORD_URL = 'https://discord.gg/ZYRSdnwwKA';
@@ -54,10 +55,8 @@ export const AboutSettings: React.FC = () => {
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) return;
-        const data = await response.json().catch(() => null) as { version?: unknown } | null;
-        const version = typeof data?.version === 'string' && data.version.trim().length > 0
-          ? data.version.trim()
-          : null;
+        const data = await response.json().catch(() => null);
+        const version = resolveOpenCodeVersion(data);
         if (!cancelled) setOpenCodeVersion(version);
       } catch {
         if (!cancelled) setOpenCodeVersion(null);

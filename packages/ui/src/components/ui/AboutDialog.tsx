@@ -11,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { getDesktopAppVersion } from '@/lib/desktopNative';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { resolveOpenCodeVersion } from '@/lib/opencode/resolveOpenCodeVersion';
 
 interface AboutDialogProps {
   open: boolean;
@@ -93,8 +94,8 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) return;
-        const data = await response.json().catch(() => null) as null | { version?: unknown };
-        const version = typeof data?.version === 'string' ? data.version.trim() : '';
+        const data = await response.json().catch(() => null);
+        const version = resolveOpenCodeVersion(data);
         if (!cancelled && version) {
           setOpenCodeVersion(version);
         }
