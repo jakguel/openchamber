@@ -21,6 +21,7 @@ import { extractTerminalPreviewUrl, isTerminalPreviewUrlAvailable } from '@/lib/
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_ACTION_ICON_MAP, type ProjectActionIconKey } from '@/lib/projectActions';
 import { shouldTeardownStreamOnCleanup, type TerminalStreamContext } from './terminalStreamTeardown';
+import { shouldKeepCreatedSession, shouldStartTerminalCreation } from './terminalCreationGuard';
 
 type Modifier = 'ctrl' | 'cmd';
 type MobileKey =
@@ -180,6 +181,7 @@ export const TerminalView: React.FC = () => {
     const prevIsTerminalVisibleRef = React.useRef(false);
     const nudgeOnConnectTerminalIdRef = React.useRef<string | null>(null);
     const rehydratedTerminalIdsRef = React.useRef<Set<string>>(new Set());
+    const creationInFlightRef = React.useRef<Set<string>>(new Set());
     const rehydratedSnapshotTakenRef = React.useRef(false);
     const previewScanTailRef = React.useRef('');
     const pendingPreviewProbeUrlsRef = React.useRef<Set<string>>(new Set());
@@ -590,10 +592,31 @@ export const TerminalView: React.FC = () => {
                     return;
                 }
 
+                // In-flight guard: this effect re-runs rapidly while
+                // viewportSizeVersion bumps during open/fit, and the store
+                // sessionId is only written after the await, so without a
+                // per-key guard each run fires its own createSession (burst ->
+                // MAX_TERMINAL_SESSIONS -> 429).
+                const key = `${directory}::${tabId}`;
+                if (
+                    !shouldStartTerminalCreation({
+                        key,
+                        inFlightSet: creationInFlightRef.current,
+                        terminalId,
+                        lifecycle: terminalLifecycle,
+                        isActionTab,
+                        hasBufferedOutput,
+                    })
+                ) {
+                    return;
+                }
+
                 setConnectionError(null);
                 setIsFatalError(false);
                 setIsReconnectPending(false);
                 setConnecting(directory, tabId, true);
+
+                creationInFlightRef.current.add(key);
                 try {
                     const session = await terminal.createSession({
                         cwd: directory,
@@ -601,12 +624,18 @@ export const TerminalView: React.FC = () => {
                         rows: size?.rows,
                     });
 
-                    const stillActive =
-                        !cancelled &&
-                        directoryRef.current === directory &&
-                        activeTabIdRef.current === tabId;
+                    // Keep-vs-close is target-identity based (NOT the per-run
+                    // `cancelled` flag) so a session for the still-current
+                    // dir+tab survives the originating run's cleanup; only a
+                    // genuine target switch orphans it.
+                    const shouldKeep = shouldKeepCreatedSession({
+                        currentDirectory: directoryRef.current,
+                        currentTabId: activeTabIdRef.current,
+                        targetDirectory: directory,
+                        targetTabId: tabId,
+                    });
 
-                    if (!stillActive) {
+                    if (!shouldKeep) {
                         try {
                             await terminal.close(session.sessionId);
                         } catch { /* ignored */ }
@@ -627,6 +656,8 @@ export const TerminalView: React.FC = () => {
                         setConnecting(directory, tabId, false);
                     }
                     return;
+                } finally {
+                    creationInFlightRef.current.delete(key);
                 }
             }
 
