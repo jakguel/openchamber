@@ -9,7 +9,6 @@ import path from 'node:path';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { createTrayController } from './tray.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
@@ -154,15 +153,12 @@ const LOCAL_HOST_ID = 'local';
 const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 const ENV_OVERRIDE_HOST_ID = '__env';
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/openchamber/openchamber/main/CHANGELOG.md';
 const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
 const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml';
 const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
 const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
 const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
 const OPENCODE_SHUTDOWN_GRACE_MS = 100;
-
-const { autoUpdater } = updaterPkg;
 
 const state = {
   serverHandle: null,
@@ -179,8 +175,6 @@ const state = {
   quitConfirmationPending: false,
   backgroundShutdownComplete: false,
   sshShutdownPromise: null,
-  installingUpdate: false,
-  pendingUpdate: null,
   unreachableHosts: new Set(),
   windowCounter: 1,
   focusedWindowIds: new Set(),
@@ -226,7 +220,6 @@ const quitConfirmationMessage = () => {
 const shutdownBackgroundServices = () => {
   if (state.backgroundShutdownComplete) return;
   state.backgroundShutdownComplete = true;
-  if (state.installingUpdate) return;
   killSidecar();
   setImmediate(() => {
     void shutdownSshSessions();
@@ -248,10 +241,9 @@ const shutdownSshSessions = async () => {
   await state.sshShutdownPromise;
 };
 
-const prepareForQuit = ({ installingUpdate = false } = {}) => {
+const prepareForQuit = () => {
   state.quitRequested = true;
   state.quitConfirmed = true;
-  state.installingUpdate = installingUpdate;
   state.quitConfirmationPending = false;
 
   if (state.trayController) {
@@ -267,11 +259,6 @@ const prepareForQuit = ({ installingUpdate = false } = {}) => {
       debounceWindowStatePersist(state.mainWindow, true);
     } catch {
     }
-  }
-
-  if (installingUpdate) {
-    state.backgroundShutdownComplete = true;
-    return;
   }
 
   shutdownBackgroundServices();
@@ -992,11 +979,6 @@ const maybeShowNativeNotification = (rawInput) => {
   notification.show();
 };
 
-const mapUpdaterProgressEvent = (payload) => ({
-  event: payload.event,
-  data: payload.data,
-});
-
 const SHELL_ENV_TIMEOUT_MS = 5_000;
 let cachedShellEnv = null;
 let shellEnvProbed = false;
@@ -1593,15 +1575,6 @@ const scheduleMacVibrancyReady = (browserWindow, delayMs = 160) => {
 };
 
 
-const setTaskbarProgress = (value) => {
-  if (process.platform !== 'win32') return;
-  for (const browserWindow of BrowserWindow.getAllWindows()) {
-    if (!browserWindow.isDestroyed()) {
-      browserWindow.setProgressBar(value);
-    }
-  }
-};
-
 const pendingDeepLinks = [];
 
 const parseDeepLink = (raw) => {
@@ -1829,13 +1802,6 @@ const dispatchOpenMiniChat = (browserWindow) => {
   if (target) emitToWindow(target, 'openchamber:open-mini-chat');
 };
 
-const dispatchCheckForUpdates = () => {
-  emitToAllWindows('openchamber:check-for-updates');
-  for (const browserWindow of BrowserWindow.getAllWindows()) {
-    dispatchDomEventToWindow(browserWindow, 'openchamber:check-for-updates');
-  }
-};
-
 const reloadMenuTargetWindow = () => {
   const target = getMenuTargetWindow();
   if (!target || target.isDestroyed()) return;
@@ -2040,11 +2006,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     }
     if (BrowserWindow.getAllWindows().length === 0) {
       if (process.platform !== 'darwin') {
-        if (state.installingUpdate) {
-          app.quit();
-        } else {
-          performConfirmedQuit();
-        }
+        performConfirmedQuit();
       }
     }
   });
@@ -2452,96 +2414,6 @@ const resolveInitialUrl = async () => {
   });
 
   return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken };
-};
-
-const compareSemver = (left, right) => {
-  const a = String(left || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const b = String(right || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-};
-
-const parseGithubRepo = () => {
-  return { owner: 'openchamber', repo: 'openchamber' };
-};
-
-const isOpenChamberUpdateDisabled = () => {
-  const raw = process.env.OPENCHAMBER_NO_UPDATE;
-  if (typeof raw !== 'string') return false;
-  const value = raw.trim().toLowerCase();
-  return value !== '' && value !== '0' && value !== 'false';
-};
-
-const setupAutoUpdater = () => {
-  if (isOpenChamberUpdateDisabled()) {
-    return;
-  }
-  if (!app.isPackaged) {
-    return;
-  }
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.fullChangelog = true;
-  autoUpdater.disableWebInstaller = false;
-  autoUpdater.logger = log;
-
-  const { owner, repo } = parseGithubRepo();
-  autoUpdater.setFeedURL({
-    provider: 'github',
-    owner,
-    repo,
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    const total = Number(progress.total || 0);
-    const transferred = Number(progress.transferred || 0);
-    setTaskbarProgress(total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01);
-    emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-      event: 'Progress',
-      data: {
-        chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
-        downloaded: Math.round(progress.transferred || 0),
-        total: Math.round(progress.total || 0),
-      },
-    }));
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    log.info(`[electron] update-downloaded version=${info?.version || 'unknown'}`);
-    setTaskbarProgress(-1);
-    if (state.pendingUpdate) {
-      state.pendingUpdate.downloaded = true;
-    }
-  });
-
-  autoUpdater.on('error', (err) => {
-    setTaskbarProgress(-1);
-    log.error('[electron] autoUpdater error', err);
-  });
-};
-
-const parseRelevantChangelogNotes = async (fromVersion, toVersion) => {
-  try {
-    const response = await fetch(CHANGELOG_URL, { signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) return null;
-    const changelog = await response.text();
-    const sections = changelog.split(/^##\s+\[/m).slice(1);
-    const relevant = [];
-    for (const section of sections) {
-      const version = section.split(']')[0];
-      if (compareSemver(version, fromVersion) > 0 && compareSemver(version, toVersion) <= 0) {
-        relevant.push(`## [${section}`.trim());
-      }
-    }
-    return relevant.length > 0 ? relevant.join('\n\n') : null;
-  } catch {
-    return null;
-  }
 };
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
@@ -3512,128 +3384,15 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { enabled, requiresRestart: true };
     }
 
-    case 'desktop_check_for_updates': {
-      const currentVersion = APP_VERSION;
-      if (isOpenChamberUpdateDisabled()) {
-        state.pendingUpdate = null;
-        return {
-          available: false,
-          currentVersion,
-          version: null,
-          body: null,
-          date: null,
-        };
-      }
-      let updateResult = null;
-      try {
-        updateResult = await autoUpdater.checkForUpdates();
-      } catch {
-      }
-
-      const updateInfo = updateResult?.updateInfo;
-      const nextVersion =
-        (typeof updateInfo?.version === 'string' && updateInfo.version) ||
-        currentVersion;
-      const available = compareSemver(nextVersion, currentVersion) > 0;
-      const body =
-        (typeof updateInfo?.releaseNotes === 'string' && updateInfo.releaseNotes.trim() ? updateInfo.releaseNotes : null) ||
-        await parseRelevantChangelogNotes(currentVersion, nextVersion);
-      state.pendingUpdate = available ? { version: nextVersion, electronUpdate: updateResult } : null;
-      return {
-        available,
-        currentVersion,
-        version: available ? nextVersion : null,
-        body: body || null,
-        date:
-          (typeof updateInfo?.releaseDate === 'string' && updateInfo.releaseDate) ||
-          null,
-      };
-    }
-
-    case 'desktop_download_and_install_update':
-      if (!state.pendingUpdate) {
-        throw new Error('No pending update');
-      }
-      setTaskbarProgress(0.01);
-      emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-        event: 'Started',
-        data: {
-          contentLength: null,
-        },
-      }));
-      try {
-        if (!state.pendingUpdate.electronUpdate) {
-          throw new Error('Electron updater metadata is not available for this build');
-        }
-        if (!state.pendingUpdate.downloaded) {
-          await new Promise((resolve, reject) => {
-            let settled = false;
-            const cleanup = () => {
-              autoUpdater.off('update-downloaded', onDownloaded);
-              autoUpdater.off('error', onError);
-            };
-            const finish = (callback, value) => {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              callback(value);
-            };
-            const onDownloaded = () => finish(resolve, null);
-            const onError = (error) => finish(reject, error);
-            autoUpdater.on('update-downloaded', onDownloaded);
-            autoUpdater.on('error', onError);
-            Promise.resolve(autoUpdater.downloadUpdate()).catch((error) => finish(reject, error));
-          });
-        }
-        emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-          event: 'Finished',
-          data: {},
-        }));
-        return null;
-      } finally {
-        setTaskbarProgress(-1);
-      }
-
     case 'desktop_restart': {
-      const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
-      log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
-      if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
-        try {
-          if (!app.isInApplicationsFolder()) {
-            throw new Error('Desktop update requires OpenChamber.app to be installed in /Applications');
-          }
-        } catch (error) {
-          log.warn('[electron] desktop_restart blocked', error);
-          throw error;
-        }
-      }
-      if (applyUpdate) {
-        // Match the working updater pattern closely: only bypass the macOS
-        // hide-on-close / quit-confirmation guards, leave the rest of the
-        // updater-driven quit/install sequence alone.
-        state.quitRequested = true;
-        state.installingUpdate = true;
-        state.quitConfirmationPending = false;
-        if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-          try {
-            debounceWindowStatePersist(state.mainWindow, true);
-          } catch {
-          }
-        }
-      }
       // Defer so the IPC reply flushes before the app starts shutting down.
-      // Without this, quitAndInstall() can race with the renderer's pending
+      // Without this, the relaunch can race with the renderer's pending
       // invoke and the restart appears to do nothing from the UI side.
       setImmediate(() => {
         try {
-          if (applyUpdate) {
-            killSidecar();
-            autoUpdater.quitAndInstall();
-          } else {
-            prepareForQuit();
-            app.relaunch();
-            app.exit(0);
-          }
+          prepareForQuit();
+          app.relaunch();
+          app.exit(0);
         } catch (err) {
           log.error('[electron] desktop_restart failed', err);
         }
@@ -3822,10 +3581,6 @@ const buildMacMenu = () => {
       label: app.name,
       submenu: [
         { label: 'About OpenChamber', click: () => dispatchAction('about') },
-        {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
-        },
         { type: 'separator' },
         { label: 'Settings', accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
         { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
@@ -3927,10 +3682,6 @@ const buildAutoHiddenMenu = () => {
       label: 'OpenChamber',
       submenu: [
         { label: 'About OpenChamber', click: () => dispatchAction('about') },
-        {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
-        },
         { type: 'separator' },
         { label: 'Settings', accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
         { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
@@ -4360,20 +4111,12 @@ app.on('window-all-closed', () => {
   }
 
   if (process.platform !== 'darwin') {
-    if (state.installingUpdate) {
-      app.quit();
-    } else {
-      performConfirmedQuit();
-    }
+    performConfirmedQuit();
   }
 });
 
 app.on('before-quit', (event) => {
   state.quitRequested = true;
-
-  if (state.installingUpdate) {
-    return;
-  }
 
   if (process.platform === 'darwin' && !state.quitConfirmed) {
     event.preventDefault();
@@ -4442,7 +4185,6 @@ app.whenReady().then(async () => {
   });
   nativeTheme.themeSource = readThemeSource();
   registerPackagedUiProtocol();
-  setupAutoUpdater();
 
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(buildMacMenu());

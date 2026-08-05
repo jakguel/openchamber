@@ -138,8 +138,8 @@ const setVibrancyReady = (ready) => {
   }
 };
 
-// Main-process events are read-only notifications (update progress,
-// window focus, etc.) — safe to deliver to any page rendered in this
+// Main-process events are read-only notifications (window focus, native
+// state changes, etc.) — safe to deliver to any page rendered in this
 // webContents. The events themselves don't grant capability.
 ipcRenderer.on('openchamber:emit', (_evt, payload) => {
   if (!payload || typeof payload !== 'object') {
