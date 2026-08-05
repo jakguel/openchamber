@@ -775,5 +775,12 @@ export const registerOpenCodeProxy = (app, deps) => {
     next();
   });
 
+  // OpenChamber owns the /api/openchamber namespace. Any unmatched route here
+  // (e.g. removed endpoints) must return 404 rather than being transparently
+  // forwarded to the OpenCode upstream by the generic /api proxy below.
+  app.use('/api/openchamber', (_req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+
   app.use('/api', apiProxy);
 };
