@@ -1,7 +1,5 @@
 import { spawnSync } from 'child_process';
-import crypto from 'crypto';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -10,136 +8,10 @@ const __dirname = path.dirname(__filename);
 
 const PACKAGE_NAME = '@openchamber/web';
 const PACKAGE_PATH_SEGMENTS = PACKAGE_NAME.split('/');
-const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}`;
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/btriapitsyn/openchamber/main/CHANGELOG.md';
 let cachedDetectedPm = null;
 
 function getSpawnSyncBaseOptions() {
   return process.platform === 'win32' ? { windowsHide: true } : {};
-}
-const UPDATE_CHECK_URL = process.env.OPENCHAMBER_UPDATE_API_URL || 'https://api.openchamber.dev/v1/update/check';
-
-export function isOpenChamberUpdateDisabled() {
-  const raw = process.env.OPENCHAMBER_NO_UPDATE;
-  if (typeof raw !== 'string') return false;
-  const value = raw.trim().toLowerCase();
-  return value !== '' && value !== '0' && value !== 'false';
-}
-
-function getOpenChamberConfigDir() {
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA;
-    if (appData) return path.join(appData, 'openchamber');
-  }
-
-  return path.join(os.homedir(), '.config', 'openchamber');
-}
-
-function sanitizeInstallScope(scope) {
-  if (scope === 'desktop-electron' || scope === 'vscode' || scope === 'web') return scope;
-  return 'web';
-}
-
-function getOrCreateInstallId(scope = 'web') {
-  const configDir = getOpenChamberConfigDir();
-  const normalizedScope = sanitizeInstallScope(scope);
-  const idPath = path.join(configDir, `install-id-${normalizedScope}`);
-
-  try {
-    const existing = fs.readFileSync(idPath, 'utf8').trim();
-    if (existing) return existing;
-  } catch {
-    // Generate new id.
-  }
-
-  const installId = crypto.randomUUID();
-  fs.mkdirSync(configDir, { recursive: true });
-  fs.writeFileSync(idPath, `${installId}\n`, { encoding: 'utf8', mode: 0o600 });
-  return installId;
-}
-
-function mapPlatform(value) {
-  if (value === 'darwin') return 'macos';
-  if (value === 'win32') return 'windows';
-  if (value === 'linux') return 'linux';
-  return 'web';
-}
-
-function mapArch(value) {
-  if (value === 'arm64' || value === 'aarch64') return 'arm64';
-  if (value === 'x64' || value === 'amd64') return 'x64';
-  return 'unknown';
-}
-
-function normalizeAppType(value) {
-  if (value === 'web' || value === 'desktop-electron' || value === 'vscode') return value;
-  return 'web';
-}
-
-function normalizeDeviceClass(value) {
-  if (value === 'mobile' || value === 'tablet' || value === 'desktop' || value === 'unknown') return value;
-  return 'unknown';
-}
-
-function normalizePlatform(value) {
-  if (value === 'macos' || value === 'windows' || value === 'linux' || value === 'web') return value;
-  return mapPlatform(process.platform);
-}
-
-function normalizeArch(value) {
-  if (value === 'arm64' || value === 'x64' || value === 'unknown') return value;
-  return mapArch(process.arch);
-}
-
-async function checkForUpdatesFromApi(currentVersion, options = {}) {
-  try {
-    const appType = normalizeAppType(options.appType);
-    const hostPlatform = mapPlatform(process.platform);
-    const hostArch = mapArch(process.arch);
-    const platform = appType === 'vscode' ? normalizePlatform(options.platform) : hostPlatform;
-    const arch = appType === 'vscode' ? normalizeArch(options.arch) : hostArch;
-    const payload = {
-      appType,
-      deviceClass: normalizeDeviceClass(options.deviceClass),
-      platform,
-      arch,
-      channel: 'stable',
-      currentVersion,
-      installId: getOrCreateInstallId(appType),
-      instanceMode: options.instanceMode || 'unknown',
-      reportUsage: options.reportUsage !== false,
-    };
-
-    const response = await fetch(UPDATE_CHECK_URL, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) return null;
-    const data = await response.json();
-    if (typeof data?.latestVersion !== 'string') return null;
-
-    const versionComparison = compareVersions(data.latestVersion, currentVersion);
-    if (versionComparison < 0) return null;
-
-    return {
-      available: Boolean(data.updateAvailable) && versionComparison > 0,
-      version: data.latestVersion,
-      currentVersion,
-      body: typeof data.releaseNotes === 'string' ? data.releaseNotes : undefined,
-      nextSuggestedCheckInSec:
-        typeof data.nextSuggestedCheckInSec === 'number' && Number.isFinite(data.nextSuggestedCheckInSec)
-          ? data.nextSuggestedCheckInSec
-          : undefined,
-    };
-  } catch {
-    return null;
-  }
 }
 
 function normalizePathForComparison(filePath) {
@@ -553,15 +425,6 @@ function resolvePackageManagerCommand(pm) {
   return pm;
 }
 
-function quoteCommand(command) {
-  if (!command) return command;
-  if (!/\s/.test(command)) return command;
-  if (process.platform === 'win32') {
-    return `"${command.replace(/"/g, '""')}"`;
-  }
-  return `'${command.replace(/'/g, "'\\''")}'`;
-}
-
 function isCommandAvailable(command) {
   try {
     const result = spawnSync(command, ['--version'], {
@@ -609,23 +472,6 @@ function isPackageInstalledWith(pm) {
 }
 
 /**
- * Get the update command for the detected package manager
- */
-export function getUpdateCommand(pm = detectPackageManager()) {
-  const pmCommand = quoteCommand(resolvePackageManagerCommand(pm));
-  switch (pm) {
-    case 'pnpm':
-      return `${pmCommand} add -g ${PACKAGE_NAME}@latest`;
-    case 'yarn':
-      return `${pmCommand} global add ${PACKAGE_NAME}@latest`;
-    case 'bun':
-      return `${pmCommand} add -g ${PACKAGE_NAME}@latest`;
-    default:
-      return `${pmCommand} install -g ${PACKAGE_NAME}@latest`;
-  }
-}
-
-/**
  * Get current installed version from package.json
  */
 export function getCurrentVersion() {
@@ -636,170 +482,4 @@ export function getCurrentVersion() {
   } catch {
     return 'unknown';
   }
-}
-
-/**
- * Fetch latest version from npm registry
- */
-export async function getLatestVersion() {
-  try {
-    const response = await fetch(NPM_REGISTRY_URL, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Registry responded with ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data['dist-tags']?.latest || null;
-  } catch (error) {
-    return null;
-  }
-}
-
-/**
- * Compare semver-like version strings.
- */
-function parseVersionForComparison(value) {
-  const normalized = String(value || '').replace(/^v/, '').split('+')[0];
-  const prereleaseIndex = normalized.indexOf('-');
-  const core = prereleaseIndex >= 0 ? normalized.slice(0, prereleaseIndex) : normalized;
-  const parts = core.split('.').map((part) => {
-    const parsed = Number.parseInt(part || '0', 10);
-    return Number.isFinite(parsed) ? parsed : 0;
-  });
-
-  return {
-    parts,
-    prerelease: prereleaseIndex >= 0,
-  };
-}
-
-function compareVersions(left, right) {
-  const a = parseVersionForComparison(left);
-  const b = parseVersionForComparison(right);
-  const length = Math.max(a.parts.length, b.parts.length);
-
-  for (let index = 0; index < length; index += 1) {
-    const diff = (a.parts[index] || 0) - (b.parts[index] || 0);
-    if (diff !== 0) return diff;
-  }
-
-  if (a.prerelease !== b.prerelease) {
-    return a.prerelease ? -1 : 1;
-  }
-
-  return 0;
-}
-
-/**
- * Fetch changelog notes between versions
- */
-export async function fetchChangelogNotes(fromVersion, toVersion) {
-  try {
-    const response = await fetch(CHANGELOG_URL, {
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) return undefined;
-
-    const changelog = await response.text();
-    const sections = changelog.split(/^## /m).slice(1);
-
-    const relevantSections = sections.filter((section) => {
-      const match = section.match(/^\[(\d+\.\d+\.\d+)\]/);
-      if (!match) return false;
-      return compareVersions(match[1], fromVersion) > 0 && compareVersions(match[1], toVersion) <= 0;
-    });
-
-    if (relevantSections.length === 0) return undefined;
-
-    return relevantSections
-      .map((s) => '## ' + s.trim())
-      .join('\n\n');
-  } catch {
-    return undefined;
-  }
-}
-
-export async function checkForUpdates(options = {}) {
-  const currentVersion = options.currentVersion || getCurrentVersion();
-  const pm = detectPackageManager();
-  const appType = normalizeAppType(options.appType);
-
-  if (isOpenChamberUpdateDisabled()) {
-    return {
-      available: false,
-      currentVersion,
-      packageManager: pm,
-      updateCommand: 'openchamber update',
-    };
-  }
-
-  if (currentVersion !== 'unknown') {
-    const remote = await checkForUpdatesFromApi(currentVersion, options);
-    if (remote) {
-      if (remote.available && appType === 'web') {
-        const npmLatest = await getLatestVersion();
-        if (!npmLatest || compareVersions(npmLatest, remote.version) < 0) {
-          remote.available = false;
-        }
-      }
-      return {
-        ...remote,
-        packageManager: pm,
-        updateCommand: 'openchamber update',
-      };
-    }
-  }
-
-  const latestVersion = await getLatestVersion();
-
-  if (!latestVersion || currentVersion === 'unknown') {
-    return {
-      available: false,
-      currentVersion,
-      error: 'Unable to determine versions',
-    };
-  }
-
-  const available = compareVersions(latestVersion, currentVersion) > 0;
-  let changelog;
-  if (available) {
-    changelog = await fetchChangelogNotes(currentVersion, latestVersion);
-  }
-
-  return {
-    available,
-    version: latestVersion,
-    currentVersion,
-    body: changelog,
-    packageManager: pm,
-    // Show our CLI command, not raw package manager command
-    updateCommand: 'openchamber update',
-  };
-}
-
-/**
- * Execute the update (used by CLI)
- */
-export function executeUpdate(pm = detectPackageManager(), options = {}) {
-  const command = getUpdateCommand(pm);
-  if (!options?.silent) {
-    console.log(`Updating ${PACKAGE_NAME} using ${pm}...`);
-    console.log(`Running: ${command}`);
-  }
-
-  const result = spawnSync(command, {
-    stdio: 'inherit',
-    shell: true,
-    ...getSpawnSyncBaseOptions(),
-  });
-
-  return {
-    success: result.status === 0,
-    exitCode: result.status,
-  };
 }
