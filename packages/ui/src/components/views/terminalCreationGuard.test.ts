@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { shouldKeepCreatedSession, shouldStartTerminalCreation } from './terminalCreationGuard';
+import {
+    runTerminalSessionCreation,
+    shouldKeepCreatedSession,
+    shouldStartTerminalCreation,
+    type RunTerminalSessionCreationDeps,
+} from './terminalCreationGuard';
 
 describe('shouldStartTerminalCreation', () => {
     test('starts creation on the first idle run (empty in-flight set, no terminal id)', () => {
@@ -158,5 +163,158 @@ describe('shouldKeepCreatedSession', () => {
                 targetTabId: 'tab-1',
             })
         ).toBe(false);
+    });
+});
+
+describe('runTerminalSessionCreation', () => {
+    type Recorder = {
+        createCount: number;
+        createArgs: Array<{ cwd: string; cols?: number; rows?: number }>;
+        bindCalls: string[];
+        closeCalls: string[];
+    };
+
+    const makeDeps = (
+        overrides: Partial<RunTerminalSessionCreationDeps> = {}
+    ): { deps: RunTerminalSessionCreationDeps; rec: Recorder } => {
+        const rec: Recorder = { createCount: 0, createArgs: [], bindCalls: [], closeCalls: [] };
+        const deps: RunTerminalSessionCreationDeps = {
+            key: '/proj-a::tab-1',
+            inFlightSet: new Set<string>(),
+            terminalId: null,
+            lifecycle: 'idle',
+            isActionTab: false,
+            hasBufferedOutput: false,
+            directory: '/proj-a',
+            tabId: 'tab-1',
+            getCurrentDirectory: () => '/proj-a',
+            getCurrentTabId: () => 'tab-1',
+            createSession: async (opts) => {
+                rec.createCount += 1;
+                rec.createArgs.push(opts);
+                return { sessionId: 'sess-1' };
+            },
+            closeSession: async (id) => {
+                rec.closeCalls.push(id);
+            },
+            bindSession: (id) => {
+                rec.bindCalls.push(id);
+            },
+            ...overrides,
+        };
+        return { deps, rec };
+    };
+
+    test('storm prevention: two concurrent invocations sharing the same key create the session EXACTLY ONCE', async () => {
+        const inFlightSet = new Set<string>();
+        let resolveCreate: (value: { sessionId: string }) => void = () => {};
+        const pendingCreate = new Promise<{ sessionId: string }>((resolve) => {
+            resolveCreate = resolve;
+        });
+        let createCount = 0;
+        const bindCalls: string[] = [];
+        const closeCalls: string[] = [];
+
+        const baseDeps: RunTerminalSessionCreationDeps = {
+            key: '/proj-a::tab-1',
+            inFlightSet,
+            terminalId: null,
+            lifecycle: 'idle',
+            isActionTab: false,
+            hasBufferedOutput: false,
+            directory: '/proj-a',
+            tabId: 'tab-1',
+            getCurrentDirectory: () => '/proj-a',
+            getCurrentTabId: () => 'tab-1',
+            createSession: async () => {
+                createCount += 1;
+                return pendingCreate;
+            },
+            closeSession: async (id) => {
+                closeCalls.push(id);
+            },
+            bindSession: (id) => {
+                bindCalls.push(id);
+            },
+        };
+
+        // First invocation registers the in-flight key synchronously, then parks
+        // on the pending createSession promise.
+        const first = runTerminalSessionCreation(baseDeps);
+        // Second concurrent invocation for the SAME key must short-circuit.
+        const second = runTerminalSessionCreation(baseDeps);
+
+        expect(await second).toEqual({ created: false, sessionId: null, kept: false });
+        expect(createCount).toBe(1);
+
+        resolveCreate({ sessionId: 'sess-1' });
+        expect(await first).toEqual({ created: true, sessionId: 'sess-1', kept: true });
+        expect(createCount).toBe(1);
+        expect(bindCalls).toEqual(['sess-1']);
+        expect(closeCalls).toEqual([]);
+        expect(inFlightSet.size).toBe(0);
+    });
+
+    test('binds (keeps) the created session and passes cwd/cols/rows when the target is unchanged', async () => {
+        const { deps, rec } = makeDeps({ cols: 120, rows: 40 });
+
+        const result = await runTerminalSessionCreation(deps);
+
+        expect(result).toEqual({ created: true, sessionId: 'sess-1', kept: true });
+        expect(rec.createCount).toBe(1);
+        expect(rec.createArgs).toEqual([{ cwd: '/proj-a', cols: 120, rows: 40 }]);
+        expect(rec.bindCalls).toEqual(['sess-1']);
+        expect(rec.closeCalls).toEqual([]);
+        expect(deps.inFlightSet.size).toBe(0);
+    });
+
+    test('closes the orphaned session (no bind, no leak) when the target tab switched during creation', async () => {
+        let currentTabId = 'tab-1';
+        const { deps, rec } = makeDeps({
+            getCurrentTabId: () => currentTabId,
+            createSession: async () => {
+                currentTabId = 'tab-2';
+                return { sessionId: 'sess-1' };
+            },
+        });
+
+        const result = await runTerminalSessionCreation(deps);
+
+        expect(result).toEqual({ created: true, sessionId: 'sess-1', kept: false });
+        expect(rec.closeCalls).toEqual(['sess-1']);
+        expect(rec.bindCalls).toEqual([]);
+        expect(deps.inFlightSet.size).toBe(0);
+    });
+
+    test('releases the in-flight key and propagates the error when createSession throws', async () => {
+        const inFlightSet = new Set<string>();
+        const { deps } = makeDeps({
+            inFlightSet,
+            createSession: async () => {
+                throw new Error('boom');
+            },
+        });
+
+        let thrown: unknown;
+        try {
+            await runTerminalSessionCreation(deps);
+        } catch (error) {
+            thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toBe('boom');
+        expect(inFlightSet.has('/proj-a::tab-1')).toBe(false);
+        expect(inFlightSet.size).toBe(0);
+    });
+
+    test('does not create when the entry guard rejects (existing terminal id) — no I/O issued', async () => {
+        const { deps, rec } = makeDeps({ terminalId: 'sess-existing' });
+
+        const result = await runTerminalSessionCreation(deps);
+
+        expect(result).toEqual({ created: false, sessionId: null, kept: false });
+        expect(rec.createCount).toBe(0);
+        expect(rec.bindCalls).toEqual([]);
+        expect(rec.closeCalls).toEqual([]);
     });
 });

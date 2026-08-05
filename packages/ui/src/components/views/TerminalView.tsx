@@ -21,7 +21,7 @@ import { extractTerminalPreviewUrl, isTerminalPreviewUrlAvailable } from '@/lib/
 import { useI18n } from '@/lib/i18n';
 import { PROJECT_ACTION_ICON_MAP, type ProjectActionIconKey } from '@/lib/projectActions';
 import { shouldTeardownStreamOnCleanup, type TerminalStreamContext } from './terminalStreamTeardown';
-import { shouldKeepCreatedSession, shouldStartTerminalCreation } from './terminalCreationGuard';
+import { runTerminalSessionCreation, shouldStartTerminalCreation } from './terminalCreationGuard';
 
 type Modifier = 'ctrl' | 'cmd';
 type MobileKey =
@@ -616,34 +616,30 @@ export const TerminalView: React.FC = () => {
                 setIsReconnectPending(false);
                 setConnecting(directory, tabId, true);
 
-                creationInFlightRef.current.add(key);
                 try {
-                    const session = await terminal.createSession({
-                        cwd: directory,
+                    const result = await runTerminalSessionCreation({
+                        key,
+                        inFlightSet: creationInFlightRef.current,
+                        terminalId,
+                        lifecycle: terminalLifecycle,
+                        isActionTab,
+                        hasBufferedOutput,
+                        directory,
+                        tabId,
+                        getCurrentDirectory: () => directoryRef.current,
+                        getCurrentTabId: () => activeTabIdRef.current,
+                        createSession: (opts) => terminal.createSession(opts),
+                        closeSession: (id) => terminal.close(id),
+                        bindSession: (id) => setTabSessionId(directory, tabId, id),
                         cols: size?.cols,
                         rows: size?.rows,
                     });
 
-                    // Keep-vs-close is target-identity based (NOT the per-run
-                    // `cancelled` flag) so a session for the still-current
-                    // dir+tab survives the originating run's cleanup; only a
-                    // genuine target switch orphans it.
-                    const shouldKeep = shouldKeepCreatedSession({
-                        currentDirectory: directoryRef.current,
-                        currentTabId: activeTabIdRef.current,
-                        targetDirectory: directory,
-                        targetTabId: tabId,
-                    });
-
-                    if (!shouldKeep) {
-                        try {
-                            await terminal.close(session.sessionId);
-                        } catch { /* ignored */ }
+                    if (!result.created || !result.kept || !result.sessionId) {
                         return;
                     }
 
-                    setTabSessionId(directory, tabId, session.sessionId);
-                    terminalId = session.sessionId;
+                    terminalId = result.sessionId;
                 } catch (error) {
                     if (!cancelled) {
                         setConnectionError(
@@ -656,8 +652,6 @@ export const TerminalView: React.FC = () => {
                         setConnecting(directory, tabId, false);
                     }
                     return;
-                } finally {
-                    creationInFlightRef.current.delete(key);
                 }
             }
 
