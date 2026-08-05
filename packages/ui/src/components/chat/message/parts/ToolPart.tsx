@@ -186,62 +186,13 @@ const LiveDuration: React.FC<{ start: number; end?: number; active: boolean }> =
     return <>{formatDuration(start, end, now)}</>;
 };
 
-const deferredToolBodyMounts: Array<{ active: boolean; fn: () => void }> = [];
-let deferredToolBodyFrame: number | undefined;
-
-const flushDeferredToolBodyMounts = () => {
-    while (deferredToolBodyMounts.length > 0) {
-        const item = deferredToolBodyMounts.pop();
-        if (!item) {
-            break;
-        }
-        if (item.active) {
-            item.fn();
-            deferredToolBodyFrame = deferredToolBodyMounts.length > 0
-                ? window.requestAnimationFrame(flushDeferredToolBodyMounts)
-                : undefined;
-            return;
-        }
-    }
-
-    deferredToolBodyFrame = undefined;
-};
-
-const scheduleDeferredToolBodyMount = (fn: () => void) => {
-    if (typeof window === 'undefined') {
-        fn();
-        return () => undefined;
-    }
-
-    const item = { active: true, fn };
-    deferredToolBodyMounts.push(item);
-
-    if (deferredToolBodyFrame === undefined) {
-        deferredToolBodyFrame = window.requestAnimationFrame(() => {
-            deferredToolBodyFrame = window.requestAnimationFrame(flushDeferredToolBodyMounts);
-        });
-    }
-
-    return () => {
-        item.active = false;
-    };
-};
-
+// Tool bodies render synchronously in the same commit. The former module-global
+// one-mount-per-rAF stagger was removed (it caused a visible staggered build-up
+// when switching into a tool-heavy session); never re-introduce requestAnimationFrame
+// here — if a one-frame mount spike is ever observed, reduce mounted bodies via the
+// cold-buffer lever instead.
 const useDeferredExpandedContent = (isExpanded: boolean) => {
-    const [shouldRender, setShouldRender] = React.useState(false);
-
-    React.useEffect(() => {
-        if (!isExpanded) {
-            setShouldRender(false);
-            return;
-        }
-
-        return scheduleDeferredToolBodyMount(() => {
-            setShouldRender(true);
-        });
-    }, [isExpanded]);
-
-    return shouldRender;
+    return isExpanded;
 };
 
 const parseDiffStats = (metadata?: Record<string, unknown>): { added: number; removed: number } | null => {
