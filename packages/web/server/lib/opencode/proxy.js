@@ -782,5 +782,13 @@ export const registerOpenCodeProxy = (app, deps) => {
     res.status(404).json({ error: 'Not found' });
   });
 
+  // The OpenCode-upgrade capability was removed. /api/opencode/* is otherwise a
+  // shared proxy-passthrough namespace, so scope the 404 to ONLY the two removed
+  // paths (never a blanket /api/opencode guard, which would break legitimate
+  // upstream proxying). app.all covers both the removed GET upgrade-status and
+  // POST upgrade regardless of method.
+  app.all('/api/opencode/upgrade-status', (_req, res) => res.status(404).json({ error: 'Not found' }));
+  app.all('/api/opencode/upgrade', (_req, res) => res.status(404).json({ error: 'Not found' }));
+
   app.use('/api', apiProxy);
 };
