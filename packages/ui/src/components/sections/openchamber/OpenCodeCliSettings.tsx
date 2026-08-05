@@ -1,13 +1,11 @@
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { isDesktopShell, requestFileAccess } from '@/lib/desktop';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
-import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 
@@ -16,8 +14,6 @@ export const OpenCodeCliSettings: React.FC = () => {
   const [value, setValue] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
-  const showOpenCodeUpdateNotifications = useUIStore((state) => state.showOpenCodeUpdateNotifications);
-  const setShowOpenCodeUpdateNotifications = useUIStore((state) => state.setShowOpenCodeUpdateNotifications);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -82,11 +78,6 @@ export const OpenCodeCliSettings: React.FC = () => {
     }
   }, [t, value]);
 
-  const handleShowUpdateNotificationsChange = React.useCallback((enabled: boolean) => {
-    setShowOpenCodeUpdateNotifications(enabled);
-    void updateDesktopSettings({ showOpenCodeUpdateNotifications: enabled });
-  }, [setShowOpenCodeUpdateNotifications]);
-
   return (
     <div className="mb-8">
       <div className="mb-1 px-1">
@@ -148,17 +139,6 @@ export const OpenCodeCliSettings: React.FC = () => {
             {'.'}
           </div>
         </div>
-
-        <label data-settings-item="sessions.opencode-update-notifications" className="flex cursor-pointer items-center gap-2 py-1.5">
-          <Checkbox
-            checked={showOpenCodeUpdateNotifications}
-            onChange={handleShowUpdateNotificationsChange}
-            ariaLabel={t('settings.openchamber.opencodeCli.field.showUpdateNotificationsAria')}
-          />
-          <span className="typography-ui-label text-foreground">
-            {t('settings.openchamber.opencodeCli.field.showUpdateNotifications')}
-          </span>
-        </label>
 
         <div className="flex justify-start py-1.5">
           <Button

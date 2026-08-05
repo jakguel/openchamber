@@ -105,14 +105,6 @@ const persistToLocalStorage = (settings: DesktopSettings) => {
   if (typeof settings.mobileKeyboardMode === 'string') {
     setStoredMobileKeyboardMode(settings.mobileKeyboardMode);
   }
-  if (typeof settings.openCodeUpdateToastDismissedVersion === 'string') {
-    const version = settings.openCodeUpdateToastDismissedVersion.trim();
-    if (version) {
-      localStorage.setItem('opencode-update-toast-dismissed-version', version);
-    } else {
-      localStorage.removeItem('opencode-update-toast-dismissed-version');
-    }
-  }
   if (settings.sttProvider === 'browser' || settings.sttProvider === 'server') {
     localStorage.setItem('sttProvider', settings.sttProvider);
   }
@@ -452,12 +444,6 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
   }
   if (typeof settings.inputSpellcheckEnabled === 'boolean' && settings.inputSpellcheckEnabled !== store.inputSpellcheckEnabled) {
     store.setInputSpellcheckEnabled(settings.inputSpellcheckEnabled);
-  }
-  if (
-    typeof settings.showOpenCodeUpdateNotifications === 'boolean'
-    && settings.showOpenCodeUpdateNotifications !== store.showOpenCodeUpdateNotifications
-  ) {
-    store.setShowOpenCodeUpdateNotifications(settings.showOpenCodeUpdateNotifications);
   }
   if (typeof settings.showToolFileIcons === 'boolean' && settings.showToolFileIcons !== store.showToolFileIcons) {
     store.setShowToolFileIcons(settings.showToolFileIcons);
@@ -949,12 +935,6 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
 
   if (typeof candidate.inputSpellcheckEnabled === 'boolean') {
     result.inputSpellcheckEnabled = candidate.inputSpellcheckEnabled;
-  }
-  if (typeof candidate.showOpenCodeUpdateNotifications === 'boolean') {
-    result.showOpenCodeUpdateNotifications = candidate.showOpenCodeUpdateNotifications;
-  }
-  if (typeof candidate.openCodeUpdateToastDismissedVersion === 'string') {
-    result.openCodeUpdateToastDismissedVersion = candidate.openCodeUpdateToastDismissedVersion.trim().slice(0, 128);
   }
   if (typeof candidate.showToolFileIcons === 'boolean') {
     result.showToolFileIcons = candidate.showToolFileIcons;
