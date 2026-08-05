@@ -26,6 +26,12 @@ const MESSAGE_LIST_VIRTUALIZE_THRESHOLD = 5;
 const EMPTY_STATIC_ENTRY_MESSAGES: ChatMessageEntry[] = [];
 const EMPTY_UNGROUPED_MESSAGE_IDS = new Set<string>();
 const MESSAGE_LIST_BUFFER_SIZE = 900;
+// Cold (cache-miss) overscan. On a keyed remount virtua mounts + measures `bufferSize` px of
+// extra rows in the first commit; at 900 that is ~900px of markdown/Shiki rows rebuilt on every
+// session switch (the visible top-to-bottom cascade). The cold path uses ~one extra viewport
+// instead, collapsing that first-commit mount storm. The warm (cache-hit) path keeps 900 —
+// heights are already cached there, so wide overscan is cheap.
+const COLD_BUFFER_SIZE = 250;
 
 const useStableEvent = <TArgs extends unknown[], TResult>(handler: (...args: TArgs) => TResult) => {
     const handlerRef = React.useRef(handler);
@@ -937,7 +943,7 @@ const StaticHistoryList = React.memo(({ entries, shouldVirtualize, contentRef, s
             data={entries}
             cache={virtualCache}
             itemSize={virtualCache ? undefined : deriveColdItemSize(entries)}
-            bufferSize={MESSAGE_LIST_BUFFER_SIZE}
+            bufferSize={virtualCache ? MESSAGE_LIST_BUFFER_SIZE : COLD_BUFFER_SIZE}
             shift={shift}
             scrollRef={scrollRef}
         >
