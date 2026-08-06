@@ -7,7 +7,7 @@ OpenChamber provides UI runtimes (web/desktop/VS Code) for interacting with an O
 ## Runtime architecture (IMPORTANT)
 
 - `Desktop` (Electron) boots the web server **in the same Node process** as the Electron main, then loads the web UI from `http://127.0.0.1:<port>`. No sidecar subprocess.
-- Backend/domain logic lives in `packages/web/server/*` (and `packages/vscode/*` for VS Code bridge/runtime parity). Electron owns the desktop shell/security boundary: windows, menus, dialogs, notifications, updater, deep-links, runtime host switching, local IPC gates, and SSH/tunnel management.
+- Backend/domain logic lives in `packages/web/server/*`. Electron owns the desktop shell/security boundary: windows, menus, dialogs, notifications, updater, deep-links, runtime host switching, local IPC gates, and SSH/tunnel management.
 - Do not add OpenCode feature backends to the native shell. Shared UI features should remain server/runtime APIs unless the capability is inherently native.
 
 ### Desktop Shell
@@ -26,7 +26,6 @@ OpenChamber provides UI runtimes (web/desktop/VS Code) for interacting with an O
 - UI primitives: Base UI (`@base-ui/react`, primary source for dropdown/select/dialog/menu/tooltip/etc. — wrappers live in `packages/ui/src/components/ui/`), Radix UI (`package.json` deps, legacy usages being migrated), HeroUI (`package.json` deps), Remixicon as SVG sprite source only (use shared `Icon`, never direct `@remixicon/react` imports)
 - Server: Express (`packages/web/server/index.js`)
 - Desktop: Electron 41 (`packages/electron/`)
-- VS Code: extension + webview (`packages/vscode/`)
 
 ## Monorepo layout
 
@@ -35,7 +34,6 @@ Workspaces are `packages/*` (see `package.json`).
 - Shared UI: `packages/ui`
 - Web app + server + CLI: `packages/web`
 - Desktop shell: `packages/electron`
-- VS Code extension: `packages/vscode`
 
 ## Documentation map
 
@@ -169,7 +167,6 @@ All scripts are in `package.json`.
 - Build all: `bun run build`
 - Desktop build (Electron — primary): `bun run electron:build`
 - Desktop dev (Electron): `bun run electron:dev`
-- VS Code build: `bun run vscode:build`
 - Release smoke build: `bun run release:test` (shell script: `scripts/test-release-build.sh`)
 
 ## Runtime entry points
@@ -178,8 +175,6 @@ All scripts are in `package.json`.
 - Web server: `packages/web/server/index.js`
 - Web CLI: `packages/web/bin/cli.js` (package bin: `packages/web/package.json`)
 - Desktop: `packages/electron/main.mjs` (boots the web server in-process via `startWebUiServer`, loads web UI over loopback; preload at `packages/electron/preload.mjs` exposes the desktop IPC bridge)
-- VS Code extension host: `packages/vscode/src/extension.ts`
-- VS Code webview bootstrap: `packages/vscode/webview/main.tsx`
 
 ## OpenCode integration
 

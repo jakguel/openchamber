@@ -21,7 +21,6 @@
 ![Tool Output](docs/references/tool_output_example.png)
 ![Settings](docs/references/settings_example.png)
 ![Diff View](docs/references/diff_example.png)
-![VS Code Extension](packages/vscode/extension.jpg)
 
 <p>
 <img src="docs/references/pwa_chat_example.png" width="45%" alt="PWA Chat">
@@ -71,14 +70,6 @@
 - Deep-link connections for joining remote OpenChamber from a link
 - SSH remote access with host import, connection management, and port forwarding
 
-### VS Code Extension
-
-- Editor-native workflow: open files directly from tool output and keep sessions beside your code
-- Agent Manager for parallel multi-model runs from a single prompt
-- Right-click actions to add context, explain selections, and improve code in-place
-- In-extension settings, responsive layout, and theme mapping that matches your editor
-- Hardened runtime lifecycle and health checks for faster startup and fewer stuck reconnect states
-
 ### Custom Themes
 
 - **Use it from anywhere** - Cloudflare tunnel with QR code onboarding. Scan, connect, code from your couch.
@@ -93,9 +84,6 @@
 
 ### **Desktop (macOS + Windows)**
 Download from [Releases](https://github.com/btriapitsyn/openchamber/releases).
-
-### **VS Code**
-Install from [Marketplace](https://marketplace.visualstudio.com/items?itemName=fedaykindev.openchamber) or search "OpenChamber" in Extensions.
 
 ### **CLI (Web + PWA)**
 _requires Node.js 22+_
@@ -365,17 +353,6 @@ chown -R 1000:1000 data/
 - Convenient tunnel management without manual setup
 - Deep-link connections for joining remote OpenChamber from a link
 - SSH remote access with host import, connection management, and port forwarding
-
-</details>
-
-<details>
-<summary><strong>VS Code Extension</strong></summary>
-
-- Editor-native: open files from tool output, keep sessions beside your code
-- Agent Manager for parallel multi-model runs from a single prompt
-- Right-click actions: add context, explain selections, improve code in-place
-- Session editor panel, responsive layout, and theme mapping to your editor
-- Edit-style tool results open directly in focused diff views
 
 </details>
 
