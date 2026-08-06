@@ -28,15 +28,19 @@ function fail(message) {
 function findHostArchDmg() {
   if (!fs.existsSync(distDir)) return null;
   const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : process.arch;
-  const allDmgs = fs.readdirSync(distDir).filter((f) => f.endsWith('.dmg'));
-  const candidates = allDmgs.filter((f) => f.includes(`-mac-${arch}.dmg`));
-  const pick = candidates.length > 0 ? candidates : allDmgs;
-  if (pick.length === 0) return null;
-  pick.sort(
+  // Strict host-arch match for an OpenChamber DMG only. NEVER fall back to a
+  // different architecture or an unrelated DMG: installing a wrong-arch app would
+  // fail opaquely at launch. If nothing matches, return null so the caller fails clearly.
+  const suffix = `-mac-${arch}.dmg`;
+  const candidates = fs
+    .readdirSync(distDir)
+    .filter((f) => f.startsWith('OpenChamber-') && f.endsWith(suffix));
+  if (candidates.length === 0) return null;
+  candidates.sort(
     (a, b) =>
       fs.statSync(path.join(distDir, b)).mtimeMs - fs.statSync(path.join(distDir, a)).mtimeMs,
   );
-  return path.join(distDir, pick[0]);
+  return path.join(distDir, candidates[0]);
 }
 
 function quitRunningApp() {
@@ -69,7 +73,12 @@ function detach(mount) {
   const r = spawnSync('hdiutil', ['detach', mount], { stdio: 'ignore' });
   if (r.status !== 0) {
     // Retry with -force to avoid leaving an orphaned mounted volume.
-    spawnSync('hdiutil', ['detach', mount, '-force'], { stdio: 'ignore' });
+    const forced = spawnSync('hdiutil', ['detach', mount, '-force'], { stdio: 'ignore' });
+    if (forced.status !== 0) {
+      console.warn(
+        `[install] WARNING: could not detach ${mount} even with -force; an orphaned volume may remain. Eject manually: hdiutil detach "${mount}" -force`,
+      );
+    }
   }
 }
 
@@ -115,7 +124,12 @@ function ejectImageMounts(dmgPath) {
     const dev = devMatch[1];
     const r = spawnSync('hdiutil', ['detach', dev], { stdio: 'ignore' });
     if (r.status !== 0) {
-      spawnSync('hdiutil', ['detach', dev, '-force'], { stdio: 'ignore' });
+      const forced = spawnSync('hdiutil', ['detach', dev, '-force'], { stdio: 'ignore' });
+      if (forced.status !== 0) {
+        console.warn(
+          `[install] WARNING: could not detach ${dev} backing ${target} even with -force; an orphaned volume may remain. Eject manually: hdiutil detach ${dev} -force`,
+        );
+      }
     }
   }
 }
