@@ -17,12 +17,11 @@ src/
 
 ## Runtime Entry Points (apps/)
 
-Three `render*` functions, each exported with `initializeSharedPreferences`:
+Two `render*` functions, each exported with `initializeSharedPreferences`:
 
 | Entry | File | Surface |
 |---|---|---|
 | `renderMobileApp` | `apps/renderMobileApp.tsx` | Mobile PWA |
-| `renderVSCodeApp` | `apps/renderVSCodeApp.tsx` | VS Code webview |
 | `renderElectronMiniChatApp` | `apps/renderElectronMiniChatApp.tsx` | Electron mini-chat |
 
 The main web app root is NOT in `apps/` — it's bootstrapped by `packages/web/src/main.tsx`.

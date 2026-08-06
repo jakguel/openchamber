@@ -497,7 +497,7 @@ function App({ apis }: AppProps) {
       return;
     }
 
-    // VS Code runtime loads sessions via VSCodeLayout bootstrap to avoid startup races.
+    // VS Code runtime loads sessions during its own bootstrap to avoid startup races.
     if (isVSCodeRuntime) {
       return;
     }
