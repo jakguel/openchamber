@@ -37,7 +37,6 @@
     "postinstall": "node ./fix-deprecation.js && patch-package",
     "dev:web": "node ./scripts/dev-web-hmr.mjs",
     "run:web": "node ./scripts/dev-web-full.mjs",
-    "pack:web": "bun pm pack --cwd packages/web",
     "dev:electron": "node ./packages/electron/scripts/electron-dev.mjs",
     "package": "bun run --cwd packages/electron package",
     "install-app": "bun run package && node ./packages/electron/scripts/install-dmg.mjs",
@@ -45,10 +44,7 @@
     "doctor": "node scripts/react-doctor.mjs",
     "icons:sprite": "node scripts/generate-file-type-sprite.mjs",
     "icons:generate": "bun run scripts/generate-icon-sprite.mjs",
-    "themes:port:opencode": "tsx scripts/port-opencode-theme.ts",
-    "version:bump": "node scripts/bump-version.mjs",
-    "release:prepare": "bun run build && bun run type-check && bun run lint",
-    "install:bin": "bun install -g ./packages/web"
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",
