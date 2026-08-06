@@ -57,8 +57,6 @@ bun run lint:ui
 | `bun run build:ui` | Build only `packages/ui` |
 | `bun run build:electron` | Run Electron package build script without full packaging |
 | `bun run package` | Build packaged desktop app for the current OS |
-| `bun run vscode:build` | Build the VS Code extension |
-| `bun run vscode:package` | Package the VS Code extension as `.vsix` |
 
 ## Platform Build Notes
 

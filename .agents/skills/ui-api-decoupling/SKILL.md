@@ -1,19 +1,19 @@
 ---
 name: ui-api-decoupling
-description: Use when creating or modifying OpenChamber UI data access, RuntimeAPIs, runtimeFetch/runtime-url auth, authenticated browser assets, OpenCode SDK calls, VS Code bridges, Electron runtime switching, or web server API endpoints.
+description: Use when creating or modifying OpenChamber UI data access, RuntimeAPIs, runtimeFetch/runtime-url auth, authenticated browser assets, OpenCode SDK calls, Electron runtime switching, or web server API endpoints.
 license: MIT
 compatibility: opencode
 ---
 
 ## Overview
 
-OpenChamber shared UI runs against web, Electron desktop, remote server URLs, and VS Code webviews. API code must preserve that runtime boundary.
+OpenChamber shared UI runs against web, Electron desktop, and remote server URLs. API code must preserve that runtime boundary.
 
 **Core principle:** official OpenCode API calls go through `@opencode-ai/sdk/v2` via `opencodeClient`; OpenChamber-owned capabilities go through `RuntimeAPIs` or explicit OpenChamber routes; runtime transport preserves SDK-generated requests exactly.
 
 ## Scope
 
-Use this skill for changes touching UI data loading, session/message operations, provider/auth/config calls, filesystem/git/terminal/settings APIs, runtime switching, desktop/VS Code bridges, or server routes under `/api/*`.
+Use this skill for changes touching UI data loading, session/message operations, provider/auth/config calls, filesystem/git/terminal/settings APIs, runtime switching, desktop bridges, or server routes under `/api/*`.
 
 Do not use this skill for pure visual-only UI work unless the change adds, removes, or reshapes data access.
 
@@ -40,10 +40,10 @@ Before editing, classify every endpoint or capability involved:
 2. **Preserve SDK request fidelity**
    - Runtime transport must preserve `Request` method, body, headers, query string, auth, and abort signal.
    - Do not rebuild a request from only `url` and `init`.
-   - Regression tests belong near `packages/ui/src/lib/runtime-fetch.test.ts`, `packages/vscode/webview/api/bridge.test.ts`, and proxy tests when transport changes.
+   - Regression tests belong near `packages/ui/src/lib/runtime-fetch.test.ts` and proxy tests when transport changes.
 
 3. **Use `RuntimeAPIs` for runtime-owned capabilities**
-   - Files, git, terminal, settings, notifications, GitHub helpers, client auth, editor/VS Code actions, and tools belong in `RuntimeAPIs` when shared UI needs runtime-specific behavior.
+   - Files, git, terminal, settings, notifications, GitHub helpers, client auth, editor actions, and tools belong in `RuntimeAPIs` when shared UI needs runtime-specific behavior.
    - React components use `useRuntimeAPIs()` or `useRuntimeAPI()`.
    - Non-React modules use `getRegisteredRuntimeAPIs()` only when a hook cannot be used.
    - Direct `window.__OPENCHAMBER_RUNTIME_APIS__` reads are entrypoint/legacy escape hatches, not a new feature pattern.
@@ -51,7 +51,7 @@ Before editing, classify every endpoint or capability involved:
 4. **Keep OpenChamber routes explicit**
    - Direct `runtimeFetch` is acceptable for OpenChamber-only routes such as `/api/config/settings`, `/api/config/skills`, `/api/config/commands`, `/api/fs`, `/api/git`, `/api/terminal`, `/api/preview`, `/api/magic-prompts`, `/api/tts`, and `/api/openchamber/tunnel`.
    - Register OpenChamber routes before the generic OpenCode proxy, or the proxy will steal the path.
-   - Shared UI depending on an OC route requires web and VS Code parity, or an explicit deterministic unsupported response.
+   - Shared UI depending on an OC route requires web parity, or an explicit deterministic unsupported response.
 
 5. **Do not hardcode local runtime URLs**
    - Do not infer `localhost`, server ports, or `/api` origins in shared UI.
@@ -149,22 +149,8 @@ When adding a native/per-runtime capability:
 
 1. Add or extend the interface in `packages/ui/src/lib/api/types.ts`.
 2. Implement web HTTP behavior in `packages/web/src/api/*` and compose it in `packages/web/src/api/index.ts`.
-3. Implement VS Code webview API in `packages/vscode/webview/api/*` and compose it in `packages/vscode/webview/api/index.ts`.
-4. Add extension-host handlers in `packages/vscode/src/bridge-*-runtime.ts` when filesystem, git, settings, or OpenCode manager access is required.
-5. Keep Electron shared through the web runtime unless it needs shell-only IPC in `packages/electron/main.mjs` or `packages/electron/preload.mjs`.
-6. Register the runtime APIs through app entrypoints and consume through `RuntimeAPIProvider`.
-
-## VS Code Route Parity
-
-For any shared UI call to `/api/*`, decide the VS Code behavior explicitly:
-
-| Route type | VS Code handling |
-|------------|------------------|
-| OpenChamber local route | Handle in `packages/vscode/webview/main.tsx` and bridge to extension host when needed |
-| Official OpenCode route | Let generic fetch proxy forward to OpenCode via `api:proxy` |
-| SSE route | Use `api:sse:start` / stream messages / `api:sse:stop`, never generic proxy |
-| Session message POST | Use `api:session:message` special proxy path |
-| Unsupported native feature | Return stable 501/unsupported JSON, not silent fallback |
+3. Keep Electron shared through the web runtime unless it needs shell-only IPC in `packages/electron/main.mjs` or `packages/electron/preload.mjs`.
+4. Register the runtime APIs through app entrypoints and consume through `RuntimeAPIProvider`.
 
 ## Electron Security Boundary
 
@@ -185,7 +171,6 @@ Electron exposes API base and shell identity broadly, but privileged local capab
 | `fetch(getRuntimeUrlResolver().health())` | `runtimeFetch('/health')` |
 | `runtimeFetch(getRuntimeUrlResolver().api('/api/foo'))` | `runtimeFetch('/api/foo')` |
 | `runtimeFetch(getRuntimeUrlResolver().rawFile(path))` | `runtimeFetch('/api/fs/raw', { query: { path } })` |
-| New `/api/foo` only in web server | Web + VS Code route decision |
 | Component reads `window.__OPENCHAMBER_RUNTIME_APIS__` | `useRuntimeAPIs()` / `useRuntimeAPI()` |
 | Rebuilding `new Request(newUrl)` only | `new Request(newUrl, oldRequest)` plus merged headers |
 | Returning `[]` on authoritative SDK failure | Throw or return `null` and preserve state |
@@ -201,14 +186,13 @@ Before finalizing a UI/API decoupling change:
 
 1. Official OpenCode routes use SDK wrappers or documented SDK-gap helpers.
 2. OpenChamber routes are registered before the generic proxy.
-3. VS Code has parity, proxy fallback, or explicit unsupported behavior.
-4. Runtime transport preserves body, method, headers, query, auth, and abort signal.
-5. Runtime auth/token handling uses `runtime-auth` and `runtime-url`.
-6. No long-lived client bearer token is placed in a URL; browser/realtime URL auth uses scoped short-lived `oc_url_token` only.
-7. Browser-consumed routes that need `oc_url_token` have narrow server allowlist and tests.
-8. Runtime switch clears or scopes affected client/store/object-URL state.
-9. Authoritative loaders distinguish failure from empty success.
-10. Targeted tests cover changed transport, bridge, proxy, auth allowlist, or runtime API behavior.
+3. Runtime transport preserves body, method, headers, query, auth, and abort signal.
+4. Runtime auth/token handling uses `runtime-auth` and `runtime-url`.
+5. No long-lived client bearer token is placed in a URL; browser/realtime URL auth uses scoped short-lived `oc_url_token` only.
+6. Browser-consumed routes that need `oc_url_token` have narrow server allowlist and tests.
+7. Runtime switch clears or scopes affected client/store/object-URL state.
+8. Authoritative loaders distinguish failure from empty success.
+9. Targeted tests cover changed transport, bridge, proxy, auth allowlist, or runtime API behavior.
 
 ## Implementation Map
 
@@ -252,23 +236,9 @@ Web runtime API implementations are normally HTTP clients for OpenChamber-owned 
 
 `packages/web/server/lib/opencode/proxy.js` is the generic `/api/*` proxy to upstream OpenCode. It strips the `/api` prefix, injects OpenCode auth headers, replays parsed bodies for non-GET requests, handles `/api/event` and `/api/global/event` as SSE, applies readiness gating, and canonicalizes directory query parameters.
 
-OpenChamber-owned routes must be explicit and registered before the proxy. If a route is shared UI contract, add VS Code parity or a deterministic unsupported response.
+OpenChamber-owned routes must be explicit and registered before the proxy. If a route is shared UI contract, add a deterministic unsupported response for runtimes that cannot support it.
 
 If an OpenChamber route is consumed directly by the browser with `oc_url_token`, update the readable/realtime allowlist in `packages/web/server/lib/ui-auth/ui-auth.js` and add tests in `ui-auth.test.js`. Do not use URL tokens as a blanket `/api/*` auth bypass.
-
-### VS Code Runtime
-
-`packages/vscode/webview/api/index.ts` composes VS Code `RuntimeAPIs`. Terminal is a stub; files, git, settings, permissions, notifications, GitHub, tools, editor, and VS Code actions use the bridge.
-
-`packages/vscode/webview/main.tsx` installs `window.__OPENCHAMBER_RUNTIME_APIS__` and overrides `window.fetch`. It handles OpenChamber local routes, then proxies generic OpenCode `/api/*` calls to the extension host. It has special branches for SSE and session message POST.
-
-`packages/vscode/webview/requestBodyTransport.ts` extracts request bodies from SDK-style `Request` objects and `init.body` without losing bytes.
-
-`packages/vscode/webview/api/bridge.ts` sends bridge messages, supports abort propagation, exposes `proxyApiRequest`, `proxySessionMessageRequest`, and SSE start/stop helpers.
-
-`packages/vscode/src/bridge-proxy-runtime.ts` forwards generic OpenCode proxy requests to the live OpenCode API URL, merges sanitized headers with OpenCode auth, forwards body bytes, and rejects SSE through the generic proxy.
-
-`packages/vscode/src/bridge-config-runtime.ts`, `bridge-fs-runtime.ts`, `bridge-git-runtime.ts`, and related bridge modules implement OpenChamber-owned route behavior in the extension host.
 
 ### Electron Runtime
 
@@ -288,9 +258,9 @@ Any cache keyed only by session ID, directory, or URL should be reviewed when ru
 
 ### Tests To Prefer
 
-Use targeted transport/auth tests when changing request forwarding or URL auth: `packages/ui/src/lib/runtime-fetch.test.ts`, `packages/ui/src/lib/runtime-url.test.ts`, `packages/ui/src/lib/runtime-auth.test.ts`, `packages/web/server/lib/ui-auth/ui-auth.test.js`, `packages/vscode/webview/api/bridge.test.ts`, `packages/vscode/src/bridge-proxy-runtime.test.js`, `packages/web/server/opencode-proxy.test.js`, and `packages/web/server/lib/preview/proxy-runtime.test.js`.
+Use targeted transport/auth tests when changing request forwarding or URL auth: `packages/ui/src/lib/runtime-fetch.test.ts`, `packages/ui/src/lib/runtime-url.test.ts`, `packages/ui/src/lib/runtime-auth.test.ts`, `packages/web/server/lib/ui-auth/ui-auth.test.js`, `packages/web/server/opencode-proxy.test.js`, and `packages/web/server/lib/preview/proxy-runtime.test.js`.
 
-Use runtime API tests near the implementation when adding or changing per-runtime behavior, for example web API tests under `packages/web/src/api/*.test.ts`, VS Code bridge tests under `packages/vscode/src/*test.js`, and UI wrapper tests under `packages/ui/src/lib/*test.ts`.
+Use runtime API tests near the implementation when adding or changing per-runtime behavior, for example web API tests under `packages/web/src/api/*.test.ts` and UI wrapper tests under `packages/ui/src/lib/*test.ts`.
 
 Run `bun run type-check` and `bun run lint` before finalizing code changes unless the user explicitly narrows validation.
 
@@ -300,7 +270,6 @@ Run `bun run type-check` and `bun run lint` before finalizing code changes unles
 - Runtime fetch/auth/url: `packages/ui/src/lib/runtime-fetch.ts`, `runtime-auth.ts`, `runtime-url.ts`
 - Runtime API contract: `packages/ui/src/lib/api/types.ts`
 - Web API composition: `packages/web/src/api/index.ts`, `packages/web/src/runtimeConfig.ts`
-- VS Code bridge/proxy: `packages/vscode/webview/main.tsx`, `packages/vscode/webview/api/bridge.ts`, `packages/vscode/src/bridge-proxy-runtime.ts`
 - Server proxy: `packages/web/server/lib/opencode/proxy.js`, `packages/web/server/lib/opencode/core-routes.js`
 - UI auth and URL-token allowlists: `packages/web/server/lib/ui-auth/ui-auth.js`
 - Preview proxy and rewritten browser subresources: `packages/web/server/lib/preview/proxy-runtime.js`
