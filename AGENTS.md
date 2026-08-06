@@ -165,8 +165,8 @@ All scripts are in `package.json`.
 
 - Validate: `bun run type-check`, `bun run lint`
 - Build all: `bun run build`
-- Desktop build (Electron — primary): `bun run electron:build`
-- Desktop dev (Electron): `bun run electron:dev`
+- Desktop build (Electron — primary): `bun run package`
+- Desktop dev (Electron): `bun run dev:electron`
 - Release smoke build: `bun run release:test` (shell script: `scripts/test-release-build.sh`)
 
 ## Runtime entry points

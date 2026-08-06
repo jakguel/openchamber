@@ -17,8 +17,8 @@ Run commands from the project root unless a section says otherwise.
 | Script | Description | Ports |
 |--------|-------------|-------|
 | `bun run dev` | Default web HMR dev flow. | auto-selected dev ports |
-| `bun run dev:web:full` | Build watcher + Express server. No HMR — manual refresh after changes. | `3001` (server + static) |
-| `bun run dev:web:hmr` | Vite dev server + Express API. **Open the Vite URL for HMR**, not the backend. | `5180` (Vite HMR), `3902` (API) |
+| `bun run run:web` | Build watcher + Express server. No HMR — manual refresh after changes. | `3001` (server + static) |
+| `bun run dev:web` | Vite dev server + Express API. **Open the Vite URL for HMR**, not the backend. | `5180` (Vite HMR), `3902` (API) |
 | `bun run start:web` | Start the packaged web server. | `3000` by default |
 
 Both are configurable via env vars: `OPENCHAMBER_PORT`, `OPENCHAMBER_HMR_UI_PORT`, `OPENCHAMBER_HMR_API_PORT`.
@@ -26,9 +26,9 @@ Both are configurable via env vars: `OPENCHAMBER_PORT`, `OPENCHAMBER_HMR_UI_PORT
 ### Desktop (Electron)
 
 ```bash
-bun run electron:dev          # HMR web UI + Electron shell
-bun run electron:dev:bundled  # Electron shell using built web assets
-bun run electron:build        # Package desktop app for the current platform
+bun run dev:electron          # HMR web UI + Electron shell
+bun run dev:electron:bundled  # Electron shell using built web assets
+bun run package        # Package desktop app for the current platform
 ```
 
 Desktop supports macOS and Windows. The build output is written to `packages/electron/dist`.
@@ -71,7 +71,7 @@ bun run lint:ui
 | `bun run build:web` | Build only `packages/web` |
 | `bun run build:ui` | Build only `packages/ui` |
 | `bun run build:electron` | Run Electron package build script without full packaging |
-| `bun run electron:build` | Build packaged desktop app for the current OS |
+| `bun run package` | Build packaged desktop app for the current OS |
 | `bun run vscode:build` | Build the VS Code extension |
 | `bun run vscode:package` | Package the VS Code extension as `.vsix` |
 | `bun run pack:web` | Create a package archive for `@openchamber/web` |
@@ -83,7 +83,7 @@ You usually build desktop installers on the target platform.
 macOS:
 
 ```bash
-bun run electron:build
+bun run package
 bun run release:test:intel
 bun run release:test:arm
 ```
@@ -91,7 +91,7 @@ bun run release:test:arm
 Windows:
 
 ```bash
-bun run electron:build
+bun run package
 ```
 
 Linux is supported for web/CLI development. A Linux desktop app is still planned, so Electron packaging is mainly macOS and Windows right now.

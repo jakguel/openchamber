@@ -24,7 +24,7 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
 | `scripts/package.mjs` | Runs `electron-builder`; on macOS auto-detects signing/notarization (and notarizes + staples the DMG), on Windows builds unsigned when signing env is missing |
-| `scripts/install-dmg.mjs` | Installs the built host-arch DMG into `/Applications` (macOS only, used by `electron:install`) |
+| `scripts/install-dmg.mjs` | Installs the built host-arch DMG into `/Applications` (macOS only, used by `install:app`) |
 | `resources/` | Packaged web assets, icons, and macOS entitlements |
 
 ## Development
@@ -33,27 +33,27 @@ From the repo root:
 
 ```bash
 bun install
-bun run electron:dev
+bun run dev:electron
 ```
 
-`bun run electron:dev` starts the web dev server with HMR, then launches Electron against `packages/electron/main.mjs`.
+`bun run dev:electron` starts the web dev server with HMR, then launches Electron against `packages/electron/main.mjs`.
 
 Useful variants:
 
 ```bash
-bun run electron:dev:bundled
+bun run dev:electron:bundled
 bun run type-check:electron
 bun run lint:electron
 ```
 
-`electron:dev:bundled` builds and uses packaged web assets instead of the HMR server. Use it when testing behavior closer to a packaged app.
+`dev:electron:bundled` builds and uses packaged web assets instead of the HMR server. Use it when testing behavior closer to a packaged app.
 
 ## Packaging
 
 From the repo root:
 
 ```bash
-bun run electron:build
+bun run package
 ```
 
 That runs, in order:
@@ -101,10 +101,10 @@ A notarytool keychain profile is created once with `xcrun notarytool store-crede
 From the repo root:
 
 ```bash
-bun run electron:install
+bun run install:app
 ```
 
-This runs `electron:build` and then `scripts/install-dmg.mjs`, which:
+This runs `package` and then `scripts/install-dmg.mjs`, which:
 
 1. Picks the newest `OpenChamber-*-mac-<host-arch>.dmg` from `packages/electron/dist`. If no DMG matches the host architecture, it fails with a clear error instead of installing a mismatched build.
 2. Quits a running OpenChamber instance, then replaces `/Applications/OpenChamber.app` using `ditto` so the code signature stays intact.
@@ -177,7 +177,7 @@ Development builds use a separate user data directory named `OpenChamber Dev`, s
 ```bash
 bun run type-check:electron
 bun run lint:electron
-bun run electron:dev:bundled
+bun run dev:electron:bundled
 ```
 
 For full repo validation before shipping:
