@@ -1003,7 +1003,7 @@ const nextRevealIndex = (text: string, start: number): number => {
 // marked->morphdom pipeline (patching changed DOM nodes), with no React tree
 // reconciliation of the markdown body.
 const usePacedText = (content: string, streaming: boolean): string => {
-  const [shown, setShown] = React.useState<number>(() => (streaming ? 0 : content.length));
+  const [shown, setShown] = React.useState<number>(() => content.length);
   const shownRef = React.useRef(shown);
   shownRef.current = shown;
 
@@ -1039,6 +1039,12 @@ const usePacedText = (content: string, streaming: boolean): string => {
   if (!streaming) return content;
   return content.slice(0, Math.min(shown, content.length));
 };
+
+// Exported ONLY for unit tests (MarkdownRendererImpl.pacedText.test.tsx). This
+// module is lazy-loaded, never an HMR route boundary, so react-refresh's
+// single-export constraint (a dev-only fast-refresh hint) does not apply here.
+// eslint-disable-next-line react-refresh/only-export-components
+export { nextRevealIndex, usePacedText };
 
 // Mermaid layout is expensive; `decorate` would otherwise re-render every
 // diagram on every paced-stream step (~40/sec). Memoize by theme+mode+source
