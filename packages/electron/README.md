@@ -23,7 +23,8 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | `scripts/build-web-assets.mjs` | Builds `packages/web` and stages UI assets into `resources/web-dist` |
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
-| `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing |
+| `scripts/package.mjs` | Runs `electron-builder`; on macOS auto-detects signing/notarization (and notarizes + staples the DMG), on Windows builds unsigned when signing env is missing |
+| `scripts/install-dmg.mjs` | Installs the built host-arch DMG into `/Applications` (macOS only, used by `electron:install`) |
 | `resources/` | Packaged web assets, icons, and macOS entitlements |
 
 ## Development
@@ -65,6 +66,53 @@ That runs, in order:
 Build output goes to `packages/electron/dist`.
 
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer.
+
+### macOS signing and notarization
+
+On macOS, `scripts/package.mjs` detects what your machine can do and picks the strongest option automatically. No flags are required.
+
+| Detected on the machine | Result |
+|---|---|
+| `Developer ID Application` identity **and** a working notarytool keychain profile | Signed, then notarized and stapled DMG |
+| `Developer ID Application` identity, but no usable notarytool profile | Signed DMG; notarization skipped with a warning |
+| No `Developer ID Application` identity | Unsigned (ad-hoc) DMG with a warning; build still succeeds |
+
+Details that matter in practice:
+
+- Only a `Developer ID Application` identity counts. An `Apple Development` certificate is deliberately ignored, because it cannot produce distributable builds.
+- Notarization requires signing. An unsigned build is never notarized.
+- Notarization is done by `package.mjs` itself after the build (`xcrun notarytool submit --wait`, then `xcrun stapler staple`). electron-builder's own notarize step is always disabled for local builds, so a keychain profile is enough — no Apple credentials in the environment.
+- All signing decisions are passed as electron-builder CLI overrides. The static `build` config in `package.json` is never modified, because macOS CI depends on it.
+
+Env overrides:
+
+| Variable | Values | Default | Effect |
+|---|---|---|---|
+| `OPENCHAMBER_MAC_SIGN` | `auto` \| `on` \| `off` | `auto` | `on` fails the build (exit 1) when no `Developer ID Application` identity is found instead of falling back to unsigned. `off` forces an unsigned build. |
+| `OPENCHAMBER_NOTARIZE` | `auto` \| `on` \| `off` | `auto` | `on` fails the build (exit 1) when the notarytool profile is unusable instead of skipping. `off` skips notarization. |
+| `OPENCHAMBER_NOTARY_PROFILE` | notarytool keychain profile name | `Default` | Which stored notarytool profile is used for the credential pre-flight and the submission. |
+
+Any value other than `on` or `off` is treated as `auto`.
+
+A notarytool keychain profile is created once with `xcrun notarytool store-credentials`; `package.mjs` then only references it by name, so no credentials are read from the environment or stored in this repo.
+
+### Installing a local build (macOS)
+
+From the repo root:
+
+```bash
+bun run electron:install
+```
+
+This runs `electron:build` and then `scripts/install-dmg.mjs`, which:
+
+1. Picks the newest `OpenChamber-*-mac-<host-arch>.dmg` from `packages/electron/dist`. If no DMG matches the host architecture, it fails with a clear error instead of installing a mismatched build.
+2. Quits a running OpenChamber instance, then replaces `/Applications/OpenChamber.app` using `ditto` so the code signature stays intact.
+3. Staples the notarization ticket to the installed app when the DMG is notarized, so Gatekeeper also validates offline.
+4. Verifies the result with `codesign --verify --deep --strict`.
+5. Ejects the DMG volume afterwards, and warns if a volume cannot be ejected.
+
+Note that this command quits a running OpenChamber — an app in `/Applications` cannot be replaced while it is running.
 
 ## Platform Notes
 
