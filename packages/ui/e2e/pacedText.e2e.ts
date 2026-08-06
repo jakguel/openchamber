@@ -14,9 +14,11 @@
  * effect's 64ms timers run for real. The fixture (fixtures/paced-text) mounts the genuine
  * MarkdownRenderer with app-boundary providers only — NOTHING under src/ is mocked. Every
  * assertion observes the rendered DOM text produced by the real hook, so a regression in the
- * hook (seed back to 0, tick replaced by an immediate full reveal, timer scheduling removed,
- * or the streaming gate ignored) makes a specific assertion fail. This was cross-checked: with
- * the seed reverted to `streaming ? 0` cases (a) and the true->false negative go RED.
+ * hook makes a specific assertion fail. Cross-checked by mutating production:
+ *   - seed -> `streaming ? 0`              => (a) RED
+ *   - tick -> `setShown(content.length)`   => (b) + both negatives RED
+ *   - shrink clamp removed                 => (d) RED (regrow no longer re-paces)
+ *   - effect cleanup removed               => unmount negative RED (tick chain survives)
  *
  * RUN (workspace-local runner — do NOT use bunx playwright, it pulls a mismatched runner):
  *   packages/ui/node_modules/.bin/playwright test --config playwright.config.ts \
@@ -40,6 +42,7 @@ declare global {
         __setDisableAnim?: (b: boolean) => void;
         __setMounted?: (b: boolean) => void;
         __remountWith?: (content: string, streaming: boolean) => void;
+        __pacedTimers?: { scheduled: Array<{ id: number; at: number }>; cleared: number[] };
     }
 }
 
@@ -76,6 +79,29 @@ test.afterAll(async () => {
 async function mount(page: Page): Promise<void> {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__ready === true, { timeout: 20_000 });
+}
+
+// Records every timer scheduled at the production cadence (TEXT_PACE_MS = 64ms) and every
+// clearTimeout, so the unmount test can prove the pending tick was actually CANCELLED and the
+// tick chain stopped — not merely that the node detached. This patches the browser timer API
+// (an external runtime boundary), never a project module; the hook itself runs untouched.
+async function instrumentPacedTimers(page: Page): Promise<void> {
+    await page.addInitScript(() => {
+        const scheduled: Array<{ id: number; at: number }> = [];
+        const cleared: number[] = [];
+        const origSet = window.setTimeout.bind(window);
+        const origClear = window.clearTimeout.bind(window);
+        window.__pacedTimers = { scheduled, cleared };
+        window.setTimeout = ((fn: TimerHandler, delay?: number, ...args: unknown[]) => {
+            const id = origSet(fn, delay as number, ...args);
+            if (delay === 64) scheduled.push({ id: id as unknown as number, at: Date.now() });
+            return id;
+        }) as typeof window.setTimeout;
+        window.clearTimeout = ((id?: number) => {
+            if (typeof id === 'number') cleared.push(id);
+            return origClear(id);
+        }) as typeof window.clearTimeout;
+    });
 }
 
 function readText(page: Page): Promise<string> {
@@ -159,10 +185,15 @@ test.describe('Task .61.1 — usePacedText mount-seed (real Chromium, real hook)
         await waitForText(page, LONG, 1_500);
     });
 
-    // AC1.3d: content shrinking during streaming keeps output bounded — the real hook renders
-    // exactly the shorter content, never a stale/overlong slice.
-    test('(d) content shrink during streaming stays bounded (no overlong slice)', async ({ page }) => {
-        test.setTimeout(60_000);
+    // AC1.3d / AC1.4(iv): content shrinking during streaming keeps output bounded, AND the
+    // shrink clamp (`shownRef.current > content.length -> setShown(content.length)`) actually
+    // RESETS the reveal counter. The reset is only observable on RE-GROWTH: with the clamp the
+    // counter is back at the shorter length so the regrow is paced again (a partial appears);
+    // without it the counter stays stale at the old long length and the regrow jumps straight
+    // to full, so waitForPartial times out. Asserting the shrink alone cannot detect clamp
+    // removal, because the render-time Math.min bounds the slice either way.
+    test('(d) content shrink during streaming stays bounded and re-paces on regrow', async ({ page }) => {
+        test.setTimeout(90_000);
         await mount(page);
         await mountEmptyStreaming(page);
         await page.evaluate((c) => window.__setContent?.(c), LONG);
@@ -172,6 +203,11 @@ test.describe('Task .61.1 — usePacedText mount-seed (real Chromium, real hook)
         await waitForText(page, SHORT, 5_000);
         const shrunk = await readText(page);
         expect(shrunk.length).toBeLessThan(LONG.length);
+        expect(shrunk).toBe(SHORT);
+
+        await page.evaluate((c) => window.__setContent?.(c), LONG);
+        await waitForPartial(page, 5_000);
+        await waitForText(page, LONG, 20_000);
     });
 
     // AC1.3 negative-1: flipping streaming off mid-reveal shows the full text immediately.
@@ -191,22 +227,46 @@ test.describe('Task .61.1 — usePacedText mount-seed (real Chromium, real hook)
     // cleanup clears the timer). Only pageerror (uncaught) is asserted; stub-provider console
     // noise (the fixture's no-op SyncProvider sdk has no real SSE stream, so event-pipeline and
     // favicon/resource 404s log errors) is app-boundary and unrelated to the hook.
-    test('(negative) unmount mid-reveal clears the timer without error', async ({ page }) => {
+    test('(negative) unmount mid-reveal cancels the pending tick and stops the chain', async ({ page }) => {
         test.setTimeout(60_000);
         const pageErrors: string[] = [];
         page.on('pageerror', (err) => pageErrors.push(String(err)));
 
+        await instrumentPacedTimers(page);
         await mount(page);
         await mountEmptyStreaming(page);
         await page.evaluate((c) => window.__setContent?.(c), LONG);
         await waitForPartial(page, 5_000);
 
-        await page.evaluate(() => window.__setMounted?.(false));
+        // A paced tick must actually be in flight, or the cleanup assertion would be vacuous.
+        const beforeUnmount = await page.evaluate(() => {
+            const t = window.__pacedTimers;
+            return { count: t?.scheduled.length ?? 0, lastId: t?.scheduled.at(-1)?.id ?? -1 };
+        });
+        expect(beforeUnmount.count).toBeGreaterThan(0);
+
+        const unmountAt = await page.evaluate(() => {
+            window.__setMounted?.(false);
+            return Date.now();
+        });
         await page.waitForSelector('[data-harness-unmounted="true"]', { state: 'attached', timeout: 10_000 });
         await page.waitForSelector(TEXT_SEL, { state: 'detached', timeout: 10_000 });
 
-        // Give any errant pending tick a chance to fire against the unmounted tree.
-        await page.waitForTimeout(400);
+        // Give any errant pending tick time to fire and reschedule against the unmounted tree.
+        await page.waitForTimeout(500);
+
+        const after = await page.evaluate((since) => {
+            const t = window.__pacedTimers;
+            return {
+                clearedLast: t ? t.cleared.includes(t.scheduled.at(-1)?.id ?? -1) : false,
+                scheduledAfterUnmount: t ? t.scheduled.filter((s) => s.at > since).length : -1,
+            };
+        }, unmountAt);
+
+        // The effect cleanup cancelled the in-flight tick...
+        expect(after.clearedLast).toBe(true);
+        // ...and no further paced tick was scheduled, so the chain is genuinely dead.
+        expect(after.scheduledAfterUnmount).toBe(0);
         expect(pageErrors).toEqual([]);
     });
 });
