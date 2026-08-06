@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url';
  * Installs the DMG produced by the intelligent build (see package.mjs) into /Applications.
  *
  * macOS only. Uses Node built-ins + system CLIs (hdiutil, ditto, xcrun, codesign, osascript,
- * pkill) — no new dependencies. Wired via the root `install:app` script:
+ * pkill) — no new dependencies. Wired via the root `install-app` script:
  *   bun run package && node ./packages/electron/scripts/install-dmg.mjs
  */
 
 if (process.platform !== 'darwin') {
-  console.error('[install] install:app is macOS-only.');
+  console.error('[install] install-app is macOS-only.');
   process.exit(1);
 }
 
@@ -83,7 +83,7 @@ function detach(mount) {
 }
 
 function ejectImageMounts(dmgPath) {
-  // `install:app` runs build + install: the electron-builder build step that
+  // `install-app` runs build + install: the electron-builder build step that
   // produces the DMG can leave it mounted, and that mount is not the one our own
   // attach() captured. Sweep every attached device backed by THIS dmg image so the
   // combined command never leaves an orphaned /Volumes entry (regardless of source).
