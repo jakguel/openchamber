@@ -2,7 +2,7 @@
 
 ## Core purpose
 
-OpenChamber provides UI runtimes (web/desktop/VS Code) for interacting with an OpenCode server (local auto-start or remote URL). Official OpenCode traffic goes through `@opencode-ai/sdk`; OpenChamber-owned runtime capabilities go through `RuntimeAPIs`, `runtimeFetch`, and browser/realtime URL helpers.
+OpenChamber provides UI runtimes (web/desktop) for interacting with an OpenCode server (local auto-start or remote URL). Official OpenCode traffic goes through `@opencode-ai/sdk`; OpenChamber-owned runtime capabilities go through `RuntimeAPIs`, `runtimeFetch`, and browser/realtime URL helpers.
 
 ## Runtime architecture (IMPORTANT)
 
@@ -221,7 +221,7 @@ All scripts are in `package.json`.
 
 - Keep diffs tight; avoid drive-by refactors.
 - Follow local precedent; inspect nearby code before introducing new patterns.
-- Backend changes: keep web, desktop, and VS Code behavior consistent when they share contracts.
+- Backend changes: keep web and desktop behavior consistent when they share contracts.
 - TypeScript: avoid `any`, blind casts, and shape guessing.
 - React: prefer function components + hooks; use classes only when required.
 - Control flow: prefer early returns and explicit branching over nested ternaries.
@@ -255,7 +255,7 @@ All scripts are in `package.json`.
 
 ### Cross-runtime parity
 
-- If web defines a route or payload contract that shared UI depends on, keep VS Code and desktop parity where applicable.
+- If web defines a route or payload contract that shared UI depends on, keep desktop parity where applicable.
 - Shared behavior differences must be intentional and visible in code.
 - Do not ship a web-only assumption into shared UI.
 
@@ -330,7 +330,7 @@ Project skills live under `.agents/skills/*/SKILL.md`. Before editing, agents **
 | Work being done | Required skill call |
 |---|---|
 | Terminal CLI commands, prompts, or output formatting, especially `packages/web/bin/*` | `skill({ name: "clack-cli-patterns" })` |
-| Shared UI data access, `RuntimeAPIs`, `runtimeFetch`, `runtime-url`, OpenCode SDK calls, VS Code bridges/proxies, authenticated browser assets, Electron runtime switching, or web server API endpoints | `skill({ name: "ui-api-decoupling" })` |
+| Shared UI data access, `RuntimeAPIs`, `runtimeFetch`, `runtime-url`, OpenCode SDK calls, authenticated browser assets, Electron runtime switching, or web server API endpoints | `skill({ name: "ui-api-decoupling" })` |
 | UI components, styling, visual elements, colors, buttons, or icons | `skill({ name: "theme-system" })` |
 | User-facing UI text: labels, buttons, placeholders, aria labels, empty/error/loading states, toasts, dialogs, settings copy, or navigation labels | `skill({ name: "locale-ui-patterns" })` |
 | Settings pages, settings dialogs, configuration UI, or visual/layout changes inside Settings | `skill({ name: "settings-ui-patterns" })` |
@@ -399,7 +399,7 @@ A single store with N properties means every subscriber re-evaluates on every st
 
 ### Bootstrap resilience
 
-- **Treat startup 502/503 as transient.** Retry bootstrap/session-list flows with bounded retries/intervals, especially in VS Code where API readiness can lag bridge startup.
+- **Treat startup 502/503 as transient.** Retry bootstrap/session-list flows with bounded retries/intervals when API readiness can lag runtime startup.
 - **Use polling recovery when failures are swallowed.** If an async loader resolves without throwing on failure, recover with interval retries gated by loaded-state checks.
 
 ### Scroll and DOM
@@ -441,7 +441,7 @@ A single store with N properties means every subscriber re-evaluates on every st
 - When adding store fields, ask: who reads this, how often does it change, and should it live elsewhere?
 - When touching polling or bootstrap, ask: can a lighter payload erase richer existing data?
 - When handling optimistic updates, ask: where is rollback, reconciliation, and duplicate prevention?
-- When changing shared routes or state contracts, ask: what breaks in web, desktop, and VS Code?
+- When changing shared routes or state contracts, ask: what breaks in web and desktop?
 - When fixing a bug with a heuristic, prefer narrowing the heuristic over widening it.
 
 ## Validation expectations
