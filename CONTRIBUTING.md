@@ -16,10 +16,8 @@ Run commands from the project root unless a section says otherwise.
 
 | Script | Description | Ports |
 |--------|-------------|-------|
-| `bun run dev` | Default web HMR dev flow. | auto-selected dev ports |
 | `bun run run:web` | Build watcher + Express server. No HMR — manual refresh after changes. | `3001` (server + static) |
 | `bun run dev:web` | Vite dev server + Express API. **Open the Vite URL for HMR**, not the backend. | `5180` (Vite HMR), `3902` (API) |
-| `bun run start:web` | Start the packaged web server. | `3000` by default |
 
 Both are configurable via env vars: `OPENCHAMBER_PORT`, `OPENCHAMBER_HMR_UI_PORT`, `OPENCHAMBER_HMR_API_PORT`.
 
@@ -27,7 +25,6 @@ Both are configurable via env vars: `OPENCHAMBER_PORT`, `OPENCHAMBER_HMR_UI_PORT
 
 ```bash
 bun run dev:electron          # HMR web UI + Electron shell
-bun run dev:electron:bundled  # Electron shell using built web assets
 bun run package        # Package desktop app for the current platform
 ```
 
@@ -38,18 +35,6 @@ macOS builds create `dmg` and `zip` files. You need Xcode/build tools for notari
 Windows builds create an NSIS installer. If signing env vars are not set, the build script makes an unsigned installer.
 
 For desktop-specific details, see [`packages/electron/README.md`](./packages/electron/README.md).
-
-### VS Code Extension
-
-```bash
-bun run vscode:dev      # Watch mode + Extension Development Host
-bun run vscode:build    # Build extension + webview
-bun run vscode:package  # Create a local .vsix package
-```
-
-`bun run vscode:dev` opens an Extension Development Host automatically. You can override the editor or workspace with `OPENCHAMBER_VSCODE_BIN` and `OPENCHAMBER_VSCODE_DEV_WORKSPACE`.
-
-Example: `OPENCHAMBER_VSCODE_BIN=cursor bun run vscode:dev`.
 
 ### Shared UI (`packages/ui`)
 
@@ -74,7 +59,6 @@ bun run lint:ui
 | `bun run package` | Build packaged desktop app for the current OS |
 | `bun run vscode:build` | Build the VS Code extension |
 | `bun run vscode:package` | Package the VS Code extension as `.vsix` |
-| `bun run pack:web` | Create a package archive for `@openchamber/web` |
 
 ## Platform Build Notes
 
@@ -133,7 +117,6 @@ packages/
   ui/        Shared React components, hooks, stores, and theme system
   web/       Web server (Express) + frontend (Vite) + CLI
   electron/  Electron desktop shell
-  vscode/    VS Code extension (extension host + webview)
 ```
 
 See [AGENTS.md](./AGENTS.md) for detailed architecture reference.

@@ -46,7 +46,6 @@ Any non-user-visible `child_process` call on Windows MUST use `windowsHide: true
 ```bash
 bun run dev:electron        # Dev mode
 bun run package             # Production package (primary release target)
-bun run dev:electron:bundled  # Dev with bundled server
 ```
 
 ## Where to Look

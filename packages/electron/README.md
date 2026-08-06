@@ -24,7 +24,7 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
 | `scripts/package.mjs` | Runs `electron-builder`; on macOS auto-detects signing/notarization (and notarizes + staples the DMG), on Windows builds unsigned when signing env is missing |
-| `scripts/install-dmg.mjs` | Installs the built host-arch DMG into `/Applications` (macOS only, used by `install:app`) |
+| `scripts/install-dmg.mjs` | Installs the built host-arch DMG into `/Applications` (macOS only, used by `install-app`) |
 | `resources/` | Packaged web assets, icons, and macOS entitlements |
 
 ## Development
@@ -41,12 +41,9 @@ bun run dev:electron
 Useful variants:
 
 ```bash
-bun run dev:electron:bundled
 bun run type-check:electron
 bun run lint:electron
 ```
-
-`dev:electron:bundled` builds and uses packaged web assets instead of the HMR server. Use it when testing behavior closer to a packaged app.
 
 ## Packaging
 
@@ -101,7 +98,7 @@ A notarytool keychain profile is created once with `xcrun notarytool store-crede
 From the repo root:
 
 ```bash
-bun run install:app
+bun run install-app
 ```
 
 This runs `package` and then `scripts/install-dmg.mjs`, which:
@@ -177,7 +174,6 @@ Development builds use a separate user data directory named `OpenChamber Dev`, s
 ```bash
 bun run type-check:electron
 bun run lint:electron
-bun run dev:electron:bundled
 ```
 
 For full repo validation before shipping:

@@ -23,4 +23,4 @@ bun run icons:sprite
 The command regenerates both `sprite.svg` and `packages/ui/src/lib/fileTypeIconIds.ts`.
 Both generated files are committed and consumed automatically by app builds.
 
-If you only run `bun run dev`, `bun run build`, `bun run lint`, or `bun run type-check`, no extra sprite step is needed unless the source icon files changed.
+If you only run `bun run dev:web`, `bun run build`, `bun run lint`, or `bun run type-check`, no extra sprite step is needed unless the source icon files changed.
